@@ -1,0 +1,12 @@
+# Credenziali e API
+credenziali.json
+chiave_api.txt
+.streamlit/
+
+# Immagini e log (non servono al server web)
+schedine_whatsapp/
+giocate_completate.txt
+
+# File di sistema Mac e cache
+.DS_Store
+__pycache__/
