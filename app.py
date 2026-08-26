@@ -87,16 +87,14 @@ def normalizza_nome_squadra(squadra_raw, lista_ufficiali):
     squadra_clean = squadra_raw.lower()
     for uff in lista_ufficiali:
         uff_clean = uff.lower()
-        # Se la squadra ufficiale è contenuta nel testo o viceversa (es. 'atalanta' in 'atalanta calcio')
-        # Escludiamo corrispondenze troppo corte per evitare falsi positivi
-        parole_uff = set(uff_clean.split()) - {"fc", "calcio", "ac", "as", "ss", "cd", "bologna", "inter", "milan"} # parole chiave pulite
+        parole_uff = set(uff_clean.split()) - {"fc", "calcio", "ac", "as", "ss", "cd", "bologna", "inter", "milan"}
         parole_raw = set(squadra_clean.split()) - {"fc", "calcio", "ac", "as", "ss", "cd"}
         
         if uff_clean in squadra_clean or squadra_clean in uff_clean:
             return uff
-        if parole_uff & parole_raw: # Intersezione tra parole significative
+        if parole_uff & parole_raw:
             return uff
-    return squadra_raw.title() # Fallback se non trova match
+    return squadra_raw.title()
 
 def normalizza_partita_completa(partita_sheet, partite_ufficiali):
     """Prende la stringa dello Sheet e la mappa esattamente sulla partita ufficiale della Serie A."""
@@ -109,9 +107,8 @@ def normalizza_partita_completa(partita_sheet, partite_ufficiali):
         
     casa_raw, ospite_raw = parti[0].strip(), parti[1].strip()
     
-    # Estraiamo le liste pulite delle squadre di casa e ospite ufficiali della giornata
-     case_ufficiali = [p[0] for p in partite_ufficiali]
-     ospiti_ufficiali = [p[1] for p in partite_ufficiali]
+    case_ufficiali = [p[0] for p in partite_ufficiali]
+    ospiti_ufficiali = [p[1] for p in partite_ufficiali]
     
     casa_norm = normalizza_nome_squadra(casa_raw, case_ufficiali)
     ospite_norm = normalizza_nome_squadra(ospite_raw, ospiti_ufficiali)
@@ -278,7 +275,6 @@ with tab_confronto:
                 giornata_num_api = str(giornata_selezionata_comp).lower().replace("giornata", "").strip()
                 partite_ufficiose, _ = scarica_risultati_api(giornata_num_api)
                 
-                # Normalizziamo le partite prima del Pivot per evitare qualsiasi sdoppiamento
                 df_giornata['Partita_Pulita'] = df_giornata['Partita'].apply(lambda x: normalizza_partita_completa(str(x), partite_ufficiose))
                 
                 def formatta_giocata(row):
