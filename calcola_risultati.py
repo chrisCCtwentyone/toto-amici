@@ -1,13 +1,23 @@
 import os
 import re
+import sys
 import requests
+from dotenv import load_dotenv  # <-- LIBRERIA AGGIUNTA
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-# --- SETUP CREDENZIALI E API ---
-SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
+# --- CARICA LE VARIABILI DAL FILE .env ---
+load_dotenv()
+
+# --- SETUP CREDENZIALI E API (BLINDATE) ---
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY")
 SERVICE_ACCOUNT_FILE = 'credenziali.json'
-FOOTBALL_DATA_KEY = "ef8a4016b5ab4f90a486ea0fea46fd1f"
+
+if not SPREADSHEET_ID or not FOOTBALL_DATA_KEY:
+    print("⚠️ ERRORE CRITICO: Chiavi segrete non trovate!")
+    print("Assicurati di aver creato il file .env con SPREADSHEET_ID e FOOTBALL_DATA_KEY.")
+    sys.exit(1)
 
 def connetti_sheets():
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
@@ -27,7 +37,6 @@ def scarica_giornata_footballdata(giornata):
         return None
 
 def controlla_esito(pronostico, gol_casa, gol_ospite):
-    # Controllo se la partita è stata annullata dal bot per eccesso limiti
     if "ANNULLATA" in pronostico: return "➖ ANNULLATA"
 
     tot_gol = gol_casa + gol_ospite

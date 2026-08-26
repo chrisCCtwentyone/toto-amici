@@ -2,6 +2,7 @@
 credenziali.json
 chiave_api.txt
 .streamlit/
+.env
 
 # Immagini e log (non servono al server web)
 schedine_whatsapp/
