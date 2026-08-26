@@ -16,12 +16,14 @@ from googleapiclient.discovery import build
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 
-TOKEN = "8996951565:AAGbxyDm4ZuA_Wntv1Vv_IoxQPS-Hvf7euw"
-ADMIN_ID = 173820382
-
-SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
+# ==========================================
+# VARIABILI D'AMBIENTE (SICUREZZA CLOUD)
+# ==========================================
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
+FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY")
 SERVICE_ACCOUNT_FILE = 'credenziali.json'
-FOOTBALL_DATA_KEY = "ef8a4016b5ab4f90a486ea0fea46fd1f"
 
 GIOCATORI = [
     "cecilia", "dario", "davide", "fazio", 
@@ -36,6 +38,9 @@ LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
 MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY = range(7)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
+    logging.warning("⚠️ ATTENZIONE: Variabili d'ambiente mancanti. Il bot potrebbe non funzionare correttamente!")
 
 # ==========================================
 # SERVER WEB PER MANTENERE IL BOT SVEGLIO (TRUCCO RENDER)
@@ -444,6 +449,11 @@ async def post_init(application: Application):
     ])
 
 def main():
+    # Se le variabili d'ambiente non ci sono (es. testing locale), il bot si ferma qui per evitare errori.
+    if not TOKEN:
+        logging.error("ERRORE: Variabile TELEGRAM_TOKEN non trovata. Impossibile avviare il bot.")
+        return
+
     # AVVIO DEL FINTO SITO WEB IN BACKGROUND PER RENDER
     threading.Thread(target=run_web_server, daemon=True).start()
 
