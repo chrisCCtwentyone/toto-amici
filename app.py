@@ -18,10 +18,15 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- COSTANTI E CHIAVI ---
-SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
+# --- COSTANTI E CHIAVI (BLINDATE) ---
+try:
+    SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
+    FOOTBALL_DATA_KEY = st.secrets["FOOTBALL_DATA_KEY"]
+except KeyError:
+    st.error("⚠️ Chiavi segrete mancanti! Configurale su Streamlit Cloud nei Secrets.")
+    st.stop()
+
 OBIETTIVO_CASSA = 3200.0 # Il vostro traguardo per coprire i premi
-FOOTBALL_DATA_KEY = "ef8a4016b5ab4f90a486ea0fea46fd1f"
 
 # --- FUNZIONI DI CARICAMENTO DATI ---
 @st.cache_data(ttl=60)
