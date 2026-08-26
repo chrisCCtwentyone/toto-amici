@@ -50,9 +50,10 @@ def carica_dati_da_sheets(range_name):
 
 @st.cache_data(ttl=60)
 def scarica_risultati_api(giornata):
-    """Chiama le API per ottenere i risultati in tempo reale della giornata."""
+    """Chiama le API per ottenere i risultati in tempo reale e i nomi ufficiali della giornata."""
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
     headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
+    partite_ufficiali = []
     risultati_mappati = {}
     
     try:
@@ -60,34 +61,62 @@ def scarica_risultati_api(giornata):
         if res.status_code == 200:
             matches = res.json().get("matches", [])
             for m in matches:
-                casa = str(m["homeTeam"]["name"]).lower()
-                ospite = str(m["awayTeam"]["name"]).lower()
-                short_casa = str(m["homeTeam"].get("shortName", casa)).lower()
-                short_ospite = str(m["awayTeam"].get("shortName", ospite)).lower()
+                casa_full = m["homeTeam"]["name"]
+                ospite_full = m["awayTeam"]["name"]
+                nome_ufficiale = f"{casa_full} - {ospite_full}"
+                partite_ufficiali.append((casa_full, ospite_full, nome_ufficiale))
                 
                 status = m["status"]
                 if status in ["FINISHED", "IN_PLAY", "PAUSED"]:
                     h_score = m["score"]["fullTime"]["home"] if m["score"]["fullTime"]["home"] is not None else 0
                     a_score = m["score"]["fullTime"]["away"] if m["score"]["fullTime"]["away"] is not None else 0
-                    
-                    if status == "FINISHED":
-                        score_str = f"{h_score} - {a_score}"
-                    else:
-                        score_str = f"{h_score} - {a_score} (In Corso)"
+                    score_str = f"{h_score} - {a_score}" if status == "FINISHED" else f"{h_score} - {a_score} (In Corso)"
                 elif status in ["TIMED", "SCHEDULED"]:
                     score_str = "Da giocare"
                 else:
                     score_str = "Rinviata/Altro"
                     
-                # Creiamo chiavi flessibili per incrociare i nomi con lo sheet (prime 5 lettere)
-                key1 = f"{casa[:5]}-{ospite[:5]}"
-                key2 = f"{short_casa[:5]}-{short_ospite[:5]}"
-                risultati_mappati[key1] = score_str
-                risultati_mappati[key2] = score_str
+                risultati_mappati[nome_ufficiale] = score_str
     except:
         pass
         
-    return risultati_mappati
+    return partite_ufficiali, risultati_mappati
+
+def normalizza_nome_squadra(squadra_raw, lista_ufficiali):
+    """Trova la squadra ufficiale corrispondente ignorando acronimi superflui come FC, Calcio, AC, ecc."""
+    squadra_clean = squadra_raw.lower()
+    for uff in lista_ufficiali:
+        uff_clean = uff.lower()
+        # Se la squadra ufficiale è contenuta nel testo o viceversa (es. 'atalanta' in 'atalanta calcio')
+        # Escludiamo corrispondenze troppo corte per evitare falsi positivi
+        parole_uff = set(uff_clean.split()) - {"fc", "calcio", "ac", "as", "ss", "cd", "bologna", "inter", "milan"} # parole chiave pulite
+        parole_raw = set(squadra_clean.split()) - {"fc", "calcio", "ac", "as", "ss", "cd"}
+        
+        if uff_clean in squadra_clean or squadra_clean in uff_clean:
+            return uff
+        if parole_uff & parole_raw: # Intersezione tra parole significative
+            return uff
+    return squadra_raw.title() # Fallback se non trova match
+
+def normalizza_partita_completa(partita_sheet, partite_ufficiali):
+    """Prende la stringa dello Sheet e la mappa esattamente sulla partita ufficiale della Serie A."""
+    if "-" not in partita_sheet:
+        return partita_sheet
+    
+    parti = partita_sheet.split("-")
+    if len(parti) != 2:
+        return partita_sheet
+        
+    casa_raw, ospite_raw = parti[0].strip(), parti[1].strip()
+    
+    # Estraiamo le liste pulite delle squadre di casa e ospite ufficiali della giornata
+     case_ufficiali = [p[0] for p in partite_ufficiali]
+     ospiti_ufficiali = [p[1] for p in partite_ufficiali]
+    
+    casa_norm = normalizza_nome_squadra(casa_raw, case_ufficiali)
+    ospite_norm = normalizza_nome_squadra(ospite_raw, ospiti_ufficiali)
+    
+    return f"{casa_norm} - {ospite_norm}"
 
 # --- CARICAMENTO DATI FOGLI ---
 df_classifica = carica_dati_da_sheets("Classifica!A:Z")
@@ -121,7 +150,6 @@ with tab_classifica:
             df_classifica = df_classifica.sort_values(by='Punti Totali', ascending=False).reset_index(drop=True)
             df_compatta = df_classifica[['Giocatore', 'Punti Totali']].copy()
             
-            # ASSEGNAZIONE MEDAGLIE PODIO
             if len(df_compatta) > 0: df_compatta.loc[0, 'Giocatore'] = "🥇 " + str(df_compatta.loc[0, 'Giocatore'])
             if len(df_compatta) > 1: df_compatta.loc[1, 'Giocatore'] = "🥈 " + str(df_compatta.loc[1, 'Giocatore'])
             if len(df_compatta) > 2: df_compatta.loc[2, 'Giocatore'] = "🥉 " + str(df_compatta.loc[2, 'Giocatore'])
@@ -180,9 +208,8 @@ with tab_live:
         with col_f1: giornata_selezionata = st.selectbox("📅 Giornata", giornate_disponibili, index=len(giornate_disponibili)-1 if giornate_disponibili else 0)
         with col_f2: giocatore_selezionato = st.selectbox("👤 Giocatore", giocatori_disponibili)
         
-        # Scarichiamo i risultati in tempo reale solo per la giornata selezionata
         giornata_num_api = str(giornata_selezionata).lower().replace("giornata", "").strip()
-        risultati_live = scarica_risultati_api(giornata_num_api)
+        partite_ufficiose, risultati_live = scarica_risultati_api(giornata_num_api)
         
         df_filtrato = df_giocate[(df_giocate['Giornata'] == giornata_selezionata) & (df_giocate['Giocatore'] == giocatore_selezionato)]
         
@@ -200,24 +227,19 @@ with tab_live:
                 esito = str(row.get('Esito', ''))
                 partita_nome = str(row.get('Partita', ''))
                 
-                # Cerca il risultato nel dizionario API
-                partita_key_parts = [s.strip()[:5].lower() for s in partita_nome.split('-')]
-                risultato_match = ""
-                if len(partita_key_parts) == 2:
-                    key_ricerca = f"{partita_key_parts[0]}-{partita_key_parts[1]}"
-                    risultato_match = risultati_live.get(key_ricerca, "")
+                partita_normalizzata = normalizza_partita_completa(partita_nome, partite_ufficiose)
+                risultato_match = risultati_live.get(partita_normalizzata, "")
 
                 if "VINTA" in esito: esito_color = "#28a745"
                 elif "PERSA" in esito: esito_color = "#dc3545"
                 else: esito_color = "#6c757d"
                 
-                # Se c'è un risultato, lo mostriamo con un badge
                 badge_risultato = f'<span style="background-color: #f0f2f6; padding: 2px 8px; border-radius: 5px; color: #31333F; font-size: 14px;"><b>Risultato: {risultato_match}</b></span>' if risultato_match else ""
                 
                 with st.container(border=True):
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <span style="font-size: 16px;"><b>⚽ {partita_nome}</b></span>
+                        <span style="font-size: 16px;"><b>⚽ {partita_normalizzata}</b></span>
                         {badge_risultato}
                     </div>
                     """, unsafe_allow_html=True)
@@ -239,7 +261,7 @@ with tab_live:
         st.info("Nessuna giocata registrata.")
 
 # ==========================================
-# TAB 3: CONFRONTO GIOCATE (NUOVA FUNZIONE)
+# TAB 3: CONFRONTO GIOCATE (UNIFICATO)
 # ==========================================
 with tab_confronto:
     st.subheader("🔍 Confronto Giocate per Partita")
@@ -253,7 +275,12 @@ with tab_confronto:
             df_giornata = df_giocate[df_giocate['Giornata'] == giornata_selezionata_comp].copy()
             
             if not df_giornata.empty:
-                # Uniamo pronostico e quota per averli in un'unica cella visiva
+                giornata_num_api = str(giornata_selezionata_comp).lower().replace("giornata", "").strip()
+                partite_ufficiose, _ = scarica_risultati_api(giornata_num_api)
+                
+                # Normalizziamo le partite prima del Pivot per evitare qualsiasi sdoppiamento
+                df_giornata['Partita_Pulita'] = df_giornata['Partita'].apply(lambda x: normalizza_partita_completa(str(x), partite_ufficiose))
+                
                 def formatta_giocata(row):
                     pronostico = str(row.get('Pronostico', ''))
                     quota = str(row.get('Quota', ''))
@@ -261,13 +288,12 @@ with tab_confronto:
                 
                 df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
                 
-                # Creiamo una Pivot Table magica (Righe: Partite, Colonne: Giocatori)
                 pivot = df_giornata.pivot_table(
-                    index='Partita', 
+                    index='Partita_Pulita', 
                     columns='Giocatore', 
                     values='Giocata', 
-                    aggfunc=lambda x: ' | '.join(x) # Se per errore ha due giocate uguali le unisce
-                ).fillna("-") # Riempie i vuoti con un trattino
+                    aggfunc=lambda x: ' | '.join(x)
+                ).fillna("-")
                 
                 st.dataframe(pivot, use_container_width=True, height=500)
             else:
@@ -376,7 +402,7 @@ with tab_regolamento:
     *   **🔥 Bonus Vincita:** Se un giocatore chiude (vince) la bolletta, ottiene **10 punti BONUS**.
     
     ### ⚖️ 3. Regole, Errori e Penalità
-    *   **Bolletta Errata (Es. troppe fisse):** Tutte le selezioni in eccesso/errate (nell'esempio, le fisse) verranno ritenute **annullate** ai fini del gioco (0 punti). Le selezioni corrette restano valide. La bolletta resta valida ai fini economici.
+    *   **Bolletta Errata (Es. troppe fisse):** Tutte le selezioni in eccesso/errate (nell'esempio, le fisse) verranno ritenute **annullate** ai fini del gioco (0 points). Le selezioni corrette restano valide. La bolletta resta valida ai fini economici.
     *   **Errore in buona fede:** Se si gioca per errore palese un OVER 1.5 al posto di un 2.5, ai fini del punteggio sarà valida *solo se* la partita finisce OVER 2.5. Ai fini del fondo-cassa fa fede la bolletta reale con l'1.5. (Stessa regola per Under 3.5).
     *   **⏳ Scadenza Pubblicazione:** La bolletta va pubblicata **5 minuti prima** dell'inizio della prima partita. Se pubblicata in ritardo: **0 PUNTI** per la giornata e la bolletta diventa **nulla ai fini economici** (in caso di vincita, la quota è tutta del giocatore che l'ha giocata).
     *   **Partite Rinviate:** Per i punti si aspetta il recupero della partita. Ai fini economici, se il sito di scommesse ritiene la giocata chiusa/pagata, i soldi si dividono sempre a metà.
