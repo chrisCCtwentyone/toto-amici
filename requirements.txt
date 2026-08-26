@@ -7,3 +7,4 @@ google-genai
 pillow
 requests
 pytz
+Flask

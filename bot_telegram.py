@@ -5,6 +5,8 @@ import re
 import requests
 from datetime import time as dt_time
 import pytz
+import threading
+from flask import Flask
 from PIL import Image
 from google import genai
 from google.genai import types
@@ -35,6 +37,22 @@ MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, SCELTA_
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# ==========================================
+# SERVER WEB PER MANTENERE IL BOT SVEGLIO (TRUCCO RENDER)
+# ==========================================
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "✅ Il Bot Toto-Amici è online e sta funzionando perfettamente 24/7!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
+
+# ==========================================
+# FUNZIONI CORE DEL BOT
+# ==========================================
 def leggi_chiave_api():
     try:
         with open('chiave_api.txt', 'r') as f: return f.read().strip()
@@ -48,9 +66,6 @@ def connetti_sheets():
     creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/spreadsheets'])
     return build('sheets', 'v4', credentials=creds)
 
-# ==========================================
-# MOTORE AI E NORMALIZZAZIONE
-# ==========================================
 def analizza_schedine_multiple(lista_percorsi_foto):
     client = get_gemini_client()
     if not client: raise Exception("Chiave API Gemini non configurata o vuota!")
@@ -429,6 +444,10 @@ async def post_init(application: Application):
     ])
 
 def main():
+    # AVVIO DEL FINTO SITO WEB IN BACKGROUND PER RENDER
+    threading.Thread(target=run_web_server, daemon=True).start()
+
+    # AVVIO DEL BOT TELEGRAM
     app = Application.builder().token(TOKEN).post_init(post_init).build()
     tz = pytz.timezone('Europe/Rome')
     for h, m in [(17,30), (20,30), (23,0)]:
@@ -467,8 +486,9 @@ def main():
         fallbacks=[CommandHandler("cancel", annulla_tutto)]
     )
 
+    app.add_handler(CommandHandler("setkey", set_api_key_command))
     app.add_handler(conv_handler)
-    print("🤖 Super-Bot Telegram (con tasto UI cambio chiave) avviato...")
+    print("🤖 Super-Bot Telegram (con Web Service) avviato...")
     app.run_polling()
 
 if __name__ == '__main__':
