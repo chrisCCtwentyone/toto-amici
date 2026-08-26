@@ -1,20 +1,23 @@
-import os
 import streamlit as st
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 # --- CONFIGURAZIONE PAGINA STREAMLIT ---
-st.set_page_config(page_title="Toto-Amici", page_icon="⚽", layout="wide")
+st.set_page_config(page_title="Toto-Amici 2026", page_icon="⚽", layout="wide")
 
-SERVICE_ACCOUNT_FILE = 'credenziali.json'
+# L'ID del tuo foglio Google
 SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
 
 @st.cache_data(ttl=60)
 def carica_dati_da_sheets(range_name):
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
     try:
-        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        # LETTURA SICURA DAL CLOUD (Niente più credenziali.json)
+        creds = Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"], 
+            scopes=SCOPES
+        )
         service = build('sheets', 'v4', credentials=creds)
         
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_name).execute()
@@ -153,7 +156,6 @@ with tab_live:
     else:
         st.info("Nessuna giocata registrata.")
 
-
 # ==========================================
 # TAB 3: STATISTICHE E HALL OF FAME
 # ==========================================
@@ -163,10 +165,8 @@ with tab_stats:
     st.write("")
 
     if not df_giocate.empty:
-        # Pulisco il dataframe ignorando le righe vuote
         df_stats = df_giocate[df_giocate['Giocatore'].str.strip() != ""].copy()
         
-        # Converto le quote in numero per poter fare le medie
         def parse_quota(q):
             try:
                 return float(str(q).replace(',', '.'))
@@ -174,7 +174,6 @@ with tab_stats:
                 return 0.0
         df_stats['Quota Num'] = df_stats['Quota'].apply(parse_quota)
 
-        # Calcoli per giocatore (Win Rate e Quota Media)
         stats_giocatori = []
         for player in df_stats['Giocatore'].unique():
             df_p = df_stats[df_stats['Giocatore'] == player]
@@ -183,7 +182,6 @@ with tab_stats:
             win_rate = (vinte / tot_partite * 100) if tot_partite > 0 else 0
             quota_media = df_p['Quota Num'].mean()
             
-            # Escludiamo dal calcolo chi non ha ancora partite "chiuse"
             if tot_partite > 0:
                 stats_giocatori.append({
                     'Giocatore': player, 
@@ -193,7 +191,6 @@ with tab_stats:
                     'Totali': tot_partite
                 })
 
-        # Calcoli sulle Squadre Maledette/Amuleto
         squadre_vinte = []
         squadre_perse = []
         
@@ -207,15 +204,12 @@ with tab_stats:
                 elif "PERSA" in esito:
                     squadre_perse.extend(squadre)
 
-        # Creiamo il layout visivo
         col_s1, col_s2 = st.columns(2)
         
         with col_s1:
             st.markdown("#### 👤 I Protagonisti")
             if stats_giocatori:
                 df_pg = pd.DataFrame(stats_giocatori)
-                
-                # Trovo i record
                 cecchino = df_pg.loc[df_pg['Win_Rate'].idxmax()]
                 folle = df_pg.loc[df_pg['Quota_Media'].idxmax()]
                 conservatore = df_pg.loc[df_pg['Quota_Media'].idxmin()]
@@ -256,6 +250,5 @@ with tab_stats:
                 else:
                     st.markdown("**🍀 La Squadra Amuleto:** -")
                     st.caption("Ancora nessun pronostico vinto.")
-
     else:
         st.info("Non ci sono giocate registrate per calcolare le statistiche.")
