@@ -6,6 +6,22 @@ from googleapiclient.discovery import build
 # --- CONFIGURAZIONE PAGINA STREAMLIT ---
 st.set_page_config(page_title="Toto-Amici 2026", page_icon="⚽", layout="wide")
 
+# --- INIEZIONE CSS PER NASCONDERE ELEMENTI DI STREAMLIT ---
+st.markdown("""
+    <style>
+    /* Nasconde la barra in alto (tasto Fork, i tre puntini, ecc.) */
+    header {visibility: hidden !important;}
+    #MainMenu {visibility: hidden !important;}
+    
+    /* Nasconde la "catenina" (ancora del link) accanto ai titoli */
+    a.header-anchor {display: none !important;}
+    h1 a, h2 a, h3 a, h4 a, h5 a, h6 a {display: none !important;}
+    
+    /* Riduce lo spazio vuoto in alto lasciato dalla barra nascosta */
+    .block-container {padding-top: 1rem !important;}
+    </style>
+    """, unsafe_allow_html=True)
+
 # L'ID del tuo foglio Google
 SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
 
@@ -13,7 +29,7 @@ SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
 def carica_dati_da_sheets(range_name):
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
     try:
-        # LETTURA SICURA DAL CLOUD (Niente più credenziali.json)
+        # LETTURA SICURA DAL CLOUD
         creds = Credentials.from_service_account_info(
             st.secrets["gcp_service_account"], 
             scopes=SCOPES
@@ -219,7 +235,8 @@ with tab_stats:
                     st.caption(f"{cecchino['Win_Rate']:.1f}% di pronostici presi ({cecchino['Vinte']}/{cecchino['Totali']})")
                 
                 with st.container(border=True):
-                    st.markdown(f"**🤪 Lo Scommettitore Folle:** {folle['Giocatore'].upper()}")
+                    # TWEAK RICHIESTO: Il nuovo titolo per lo scommettitore folle
+                    st.markdown(f"**🤪 Quello pazzo in culo:** {folle['Giocatore'].upper()}")
                     st.caption(f"Gioca la quota media più alta del gruppo: {folle['Quota_Media']:.2f}")
 
                 with st.container(border=True):
