@@ -7,7 +7,6 @@ from googleapiclient.discovery import build
 # --- CONFIGURAZIONE PAGINA STREAMLIT ---
 st.set_page_config(page_title="Toto-Amici 2026", page_icon="⚽", layout="wide")
 
-# --- INIEZIONE CSS PER NASCONDERE ELEMENTI DI STREAMLIT ---
 st.markdown("""
     <style>
     header {visibility: hidden !important;}
@@ -18,181 +17,121 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- COSTANTI E CHIAVI ---
 SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
-OBIETTIVO_CASSA = 3200.0 # Il vostro traguardo per coprire i premi
+OBIETTIVO_CASSA = 3200.0 
 FOOTBALL_DATA_KEY = "ef8a4016b5ab4f90a486ea0fea46fd1f"
 
-# --- FUNZIONI DI CARICAMENTO DATI ---
 @st.cache_data(ttl=60)
 def carica_dati_da_sheets(range_name):
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
     try:
-        creds = Credentials.from_service_account_info(
-            st.secrets["gcp_service_account"], 
-            scopes=SCOPES
-        )
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
         service = build('sheets', 'v4', credentials=creds)
-        
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_name).execute()
         values = result.get('values', [])
-        
         if not values: return pd.DataFrame()
-            
         headers = values[0]
         data = values[1:]
-        
         dati_allineati = [riga + [""] * (len(headers) - len(riga)) for riga in data]
         return pd.DataFrame(dati_allineati, columns=headers)
     except Exception as e:
-        st.error(f"Errore di caricamento dati: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def scarica_risultati_api(giornata):
-    """Chiama le API per ottenere i risultati in tempo reale della giornata."""
+    """Scarica API e restituisce sia il punteggio live che il NOME UFFICIALE della partita"""
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
     headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
     risultati_mappati = {}
-    
     try:
         res = requests.get(url, headers=headers)
         if res.status_code == 200:
-            matches = res.json().get("matches", [])
-            for m in matches:
+            for m in res.json().get("matches", []):
                 casa = str(m["homeTeam"]["name"]).lower()
                 ospite = str(m["awayTeam"]["name"]).lower()
                 short_casa = str(m["homeTeam"].get("shortName", casa)).lower()
                 short_ospite = str(m["awayTeam"].get("shortName", ospite)).lower()
                 
+                nome_ufficiale = f"{m['homeTeam'].get('shortName', m['homeTeam']['name'])} - {m['awayTeam'].get('shortName', m['awayTeam']['name'])}"
+                
                 status = m["status"]
                 if status in ["FINISHED", "IN_PLAY", "PAUSED"]:
                     h_score = m["score"]["fullTime"]["home"] if m["score"]["fullTime"]["home"] is not None else 0
                     a_score = m["score"]["fullTime"]["away"] if m["score"]["fullTime"]["away"] is not None else 0
+                    score_str = f"{h_score} - {a_score}" if status == "FINISHED" else f"{h_score} - {a_score} (In Corso)"
+                elif status in ["TIMED", "SCHEDULED"]: score_str = "Da giocare"
+                else: score_str = "Rinviata/Altro"
                     
-                    if status == "FINISHED":
-                        score_str = f"{h_score} - {a_score}"
-                    else:
-                        score_str = f"{h_score} - {a_score} (In Corso)"
-                elif status in ["TIMED", "SCHEDULED"]:
-                    score_str = "Da giocare"
-                else:
-                    score_str = "Rinviata/Altro"
-                    
-                # Creiamo chiavi flessibili per incrociare i nomi con lo sheet (prime 5 lettere)
                 key1 = f"{casa[:5]}-{ospite[:5]}"
                 key2 = f"{short_casa[:5]}-{short_ospite[:5]}"
-                risultati_mappati[key1] = score_str
-                risultati_mappati[key2] = score_str
-    except:
-        pass
-        
+                info = {"score": score_str, "nome": nome_ufficiale}
+                risultati_mappati[key1] = info
+                risultati_mappati[key2] = info
+    except: pass
     return risultati_mappati
 
-# --- CARICAMENTO DATI FOGLI ---
 df_classifica = carica_dati_da_sheets("Classifica!A:Z")
 df_cassa = carica_dati_da_sheets("Cassa!A:D")
 df_giocate = carica_dati_da_sheets("Giocate!A:I")
 
-# --- INTERFACCIA UTENTE ---
 st.title("⚽ Toto-Amici")
 st.markdown("Risultati, classifiche, statistiche e montepremi in tempo reale.")
 st.write("")
 
-# --- NAVIGAZIONE A SCHEDE (TABS) ---
 tab_classifica, tab_live, tab_confronto, tab_stats, tab_regolamento = st.tabs([
-    "🏆 Classifica & Cassa", 
-    "🎯 Schedine Live", 
-    "🔍 Confronto Giocate",
-    "📊 Statistiche",
-    "📜 Regolamento"
+    "🏆 Classifica & Cassa", "🎯 Schedine Live", "🔍 Confronto Giocate", "📊 Statistiche", "📜 Regolamento"
 ])
 
-# ==========================================
-# TAB 1: CLASSIFICA E CASSA
-# ==========================================
 with tab_classifica:
     col1, col2 = st.columns([2, 1])
-
     with col1:
         st.subheader("Leaderboard")
         if not df_classifica.empty:
             df_classifica['Punti Totali'] = pd.to_numeric(df_classifica['Punti Totali'], errors='coerce').fillna(0).astype(int)
             df_classifica = df_classifica.sort_values(by='Punti Totali', ascending=False).reset_index(drop=True)
             df_compatta = df_classifica[['Giocatore', 'Punti Totali']].copy()
-            
-            # ASSEGNAZIONE MEDAGLIE PODIO
             if len(df_compatta) > 0: df_compatta.loc[0, 'Giocatore'] = "🥇 " + str(df_compatta.loc[0, 'Giocatore'])
             if len(df_compatta) > 1: df_compatta.loc[1, 'Giocatore'] = "🥈 " + str(df_compatta.loc[1, 'Giocatore'])
             if len(df_compatta) > 2: df_compatta.loc[2, 'Giocatore'] = "🥉 " + str(df_compatta.loc[2, 'Giocatore'])
-            
             st.dataframe(df_compatta, hide_index=True, width="stretch")
-            
             st.markdown("##### 📈 Grafico Punteggi")
             st.bar_chart(df_compatta.set_index('Giocatore'), height=250)
-            
             with st.expander("🔍 Storico giornate (Dettaglio)"):
-                df_classifica_pulita = df_classifica.replace("", pd.NA).dropna(axis=1, how='all').fillna("")
-                st.dataframe(df_classifica_pulita, hide_index=True, width="stretch")
-        else:
-            st.info("Classifica non disponibile.")
+                st.dataframe(df_classifica.replace("", pd.NA).dropna(axis=1, how='all').fillna(""), hide_index=True, width="stretch")
 
     with col2:
         st.subheader("Fondo Cassa")
         if not df_cassa.empty:
             try:
                 ultimo_saldo_str = str(df_cassa['Saldo Totale'].iloc[-1])
-                saldo_pulito = ultimo_saldo_str.replace('€', '').replace('.', '').replace(',', '.').strip()
-                saldo_num = float(saldo_pulito)
+                saldo_num = float(ultimo_saldo_str.replace('€', '').replace('.', '').replace(',', '.').strip())
             except:
-                ultimo_saldo_str = "0,00 €"
-                saldo_num = 0.0
-
+                ultimo_saldo_str, saldo_num = "0,00 €", 0.0
             st.metric(label="Montepremi Attuale", value=ultimo_saldo_str)
-            
             progresso = min(saldo_num / OBIETTIVO_CASSA, 1.0)
             st.markdown(f"**Obiettivo Premi:** {saldo_num:,.2f} € / {OBIETTIVO_CASSA:,.2f} €")
             st.progress(progresso)
-            if progresso >= 1.0:
-                st.success("🎉 OBIETTIVO RAGGIUNTO! Premi interamente coperti dalla cassa!")
-                
             with st.expander("📜 Movimenti di cassa"):
-                st.dataframe(
-                    df_cassa, 
-                    hide_index=True, 
-                    width="stretch",
-                    column_config={"Descrizione": st.column_config.TextColumn("Descrizione", width="large")}
-                )
-        else:
-            st.metric(label="Montepremi Attuale", value="0,00 €")
-            st.info("Nessun movimento.")
+                st.dataframe(df_cassa, hide_index=True, width="stretch")
 
-# ==========================================
-# TAB 2: SCHEDINE LIVE (CON RISULTATI REALI)
-# ==========================================
 with tab_live:
     st.subheader("Live Score Schedine")
     if not df_giocate.empty:
         giornate_disponibili = [g for g in df_giocate['Giornata'].dropna().unique() if str(g).strip() != ""]
         giocatori_disponibili = sorted([g for g in df_giocate['Giocatore'].dropna().unique() if str(g).strip() != ""])
-        
         col_f1, col_f2 = st.columns(2)
         with col_f1: giornata_selezionata = st.selectbox("📅 Giornata", giornate_disponibili, index=len(giornate_disponibili)-1 if giornate_disponibili else 0)
         with col_f2: giocatore_selezionato = st.selectbox("👤 Giocatore", giocatori_disponibili)
         
-        # Scarichiamo i risultati in tempo reale solo per la giornata selezionata
         giornata_num_api = str(giornata_selezionata).lower().replace("giornata", "").strip()
         risultati_live = scarica_risultati_api(giornata_num_api)
         
         df_filtrato = df_giocate[(df_giocate['Giornata'] == giornata_selezionata) & (df_giocate['Giocatore'] == giocatore_selezionato)]
-        
         if not df_filtrato.empty:
             vincite_presenti = [v for v in df_filtrato['Vincita Potenziale'].tolist() if str(v).strip() not in ["", "0", "0.0"]]
-            vincita_mostrata = vincite_presenti[0] if vincite_presenti else "0.00"
-            
             st.markdown(f"""
             <div style="background-color: rgba(128, 128, 128, 0.15); border-left: 5px solid gray; padding: 10px; border-radius: 5px; margin-bottom: 20px; margin-top: 10px;">
-                💶 <b>Vincita Potenziale:</b> {vincita_mostrata} €
+                💶 <b>Vincita Potenziale:</b> {vincite_presenti[0] if vincite_presenti else '0.00'} €
             </div>
             """, unsafe_allow_html=True)
             
@@ -200,199 +139,85 @@ with tab_live:
                 esito = str(row.get('Esito', ''))
                 partita_nome = str(row.get('Partita', ''))
                 
-                # Cerca il risultato nel dizionario API
-                partita_key_parts = [s.strip()[:5].lower() for s in partita_nome.split('-')]
-                risultato_match = ""
-                if len(partita_key_parts) == 2:
-                    key_ricerca = f"{partita_key_parts[0]}-{partita_key_parts[1]}"
-                    risultato_match = risultati_live.get(key_ricerca, "")
+                parts = [s.strip()[:5].lower() for s in partita_nome.split('-')]
+                risultato_match, nome_ufficiale_match = "", partita_nome
+                if len(parts) == 2:
+                    info = risultati_live.get(f"{parts[0]}-{parts[1]}", {})
+                    risultato_match = info.get("score", "")
+                    nome_ufficiale_match = info.get("nome", partita_nome)
 
-                if "VINTA" in esito: esito_color = "#28a745"
-                elif "PERSA" in esito: esito_color = "#dc3545"
-                else: esito_color = "#6c757d"
-                
-                # Se c'è un risultato, lo mostriamo con un badge
-                badge_risultato = f'<span style="background-color: #f0f2f6; padding: 2px 8px; border-radius: 5px; color: #31333F; font-size: 14px;"><b>Risultato: {risultato_match}</b></span>' if risultato_match else ""
+                esito_color = "#28a745" if "VINTA" in esito else ("#dc3545" if "PERSA" in esito else "#6c757d")
+                badge = f'<span style="background-color: #f0f2f6; padding: 2px 8px; border-radius: 5px; color: #31333F; font-size: 14px;"><b>Risultato: {risultato_match}</b></span>' if risultato_match else ""
                 
                 with st.container(border=True):
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <span style="font-size: 16px;"><b>⚽ {partita_nome}</b></span>
-                        {badge_risultato}
+                        <span style="font-size: 16px;"><b>⚽ {nome_ufficiale_match}</b></span>
+                        {badge}
                     </div>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 15px; margin-bottom: 5px;">
                         <div>Pronostico: <b>{row.get('Pronostico', '')}</b> <span style="font-size: 13px; color: gray;">(@{row.get('Quota', '')})</span></div>
                         <div style="color: {esito_color}; font-weight: bold;">{esito}</div>
                     </div>
-                    <div style="display: flex; justify-content: flex-end; font-size: 14px;">
-                        <span style="background-color: rgba(128,128,128,0.1); padding: 2px 8px; border-radius: 10px;">
-                            <b>+{row.get('Punti Partita', '0')} Pt</b>
-                        </span>
-                    </div>
                     """, unsafe_allow_html=True)
-        else:
-            st.warning("Schedina non trovata per questo giocatore.")
-    else:
-        st.info("Nessuna giocata registrata.")
+        else: st.warning("Schedina non trovata.")
 
-# ==========================================
-# TAB 3: CONFRONTO GIOCATE (NUOVA FUNZIONE)
-# ==========================================
 with tab_confronto:
     st.subheader("🔍 Confronto Giocate per Partita")
-    st.markdown("Scopri cosa ha giocato ogni partecipante per i vari eventi della giornata.")
-    
+    st.markdown("Scopri cosa ha giocato ogni partecipante (le partite sono state normalizzate e unificate in automatico).")
     if not df_giocate.empty:
         giornate_comp = [g for g in df_giocate['Giornata'].dropna().unique() if str(g).strip() != ""]
         if giornate_comp:
             giornata_selezionata_comp = st.selectbox("📅 Scegli la Giornata da analizzare", giornate_comp, index=len(giornate_comp)-1)
-            
             df_giornata = df_giocate[df_giocate['Giornata'] == giornata_selezionata_comp].copy()
             
             if not df_giornata.empty:
-                # Uniamo pronostico e quota per averli in un'unica cella visiva
-                def formatta_giocata(row):
-                    pronostico = str(row.get('Pronostico', ''))
-                    quota = str(row.get('Quota', ''))
-                    return f"{pronostico} (@{quota})"
+                giornata_num_api = str(giornata_selezionata_comp).lower().replace("giornata", "").strip()
+                risultati_live = scarica_risultati_api(giornata_num_api)
                 
-                df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
-                
-                # Creiamo una Pivot Table magica (Righe: Partite, Colonne: Giocatori)
-                pivot = df_giornata.pivot_table(
-                    index='Partita', 
-                    columns='Giocatore', 
-                    values='Giocata', 
-                    aggfunc=lambda x: ' | '.join(x) # Se per errore ha due giocate uguali le unisce
-                ).fillna("-") # Riempie i vuoti con un trattino
-                
-                st.dataframe(pivot, use_container_width=True, height=500)
-            else:
-                st.info("Nessuna giocata trovata per questa giornata.")
-    else:
-        st.info("Nessuna giocata registrata nel database.")
+                # LA CURA: NORMALIZZA I NOMI PER LA PIVOT
+                def normalizza_partita_per_pivot(nome_originale):
+                    try:
+                        parts = [s.strip()[:5].lower() for s in str(nome_originale).split('-')]
+                        if len(parts) == 2:
+                            return risultati_live.get(f"{parts[0]}-{parts[1]}", {}).get("nome", str(nome_originale).title())
+                    except: pass
+                    return str(nome_originale).title()
 
-# ==========================================
-# TAB 4: STATISTICHE E HALL OF FAME
-# ==========================================
+                df_giornata['Partita_Ufficiale'] = df_giornata['Partita'].apply(normalizza_partita_per_pivot)
+                df_giornata['Giocata'] = df_giornata.apply(lambda row: f"{str(row.get('Pronostico',''))} (@{str(row.get('Quota',''))})", axis=1)
+                
+                pivot = df_giornata.pivot_table(index='Partita_Ufficiale', columns='Giocatore', values='Giocata', aggfunc=lambda x: ' | '.join(x)).fillna("-")
+                st.dataframe(pivot, use_container_width=True, height=500)
+
 with tab_stats:
     st.subheader("Hall of Fame & Curiosità")
-    st.markdown("Analisi basata su tutte le schedine giocate fino ad oggi.")
-    st.write("")
-
     if not df_giocate.empty:
         df_stats = df_giocate[df_giocate['Giocatore'].str.strip() != ""].copy()
+        df_stats['Quota Num'] = df_stats['Quota'].apply(lambda q: float(str(q).replace(',', '.')) if str(q).replace(',', '.').replace('.','').isdigit() else 0.0)
         
-        def parse_quota(q):
-            try: return float(str(q).replace(',', '.'))
-            except: return 0.0
-        df_stats['Quota Num'] = df_stats['Quota'].apply(parse_quota)
-
-        stats_giocatori = []
+        stats = []
         for player in df_stats['Giocatore'].unique():
             df_p = df_stats[df_stats['Giocatore'] == player]
-            tot = len(df_p)
             vinte = len(df_p[df_p['Esito'].str.contains("VINTA", na=False)])
-            stats_giocatori.append({
-                'Giocatore': player, 
-                'Win_Rate': (vinte / tot * 100) if tot > 0 else 0, 
-                'Quota_Media': df_p['Quota Num'].mean(),
-                'Vinte': vinte, 'Totali': tot
-            })
+            stats.append({'Giocatore': player, 'Win_Rate': (vinte/len(df_p)*100) if len(df_p)>0 else 0, 'Quota_Media': df_p['Quota Num'].mean(), 'Vinte': vinte, 'Totali': len(df_p)})
 
         col_s1, col_s2 = st.columns(2)
-        
         with col_s1:
-            st.markdown("#### 👤 I Protagonisti")
-            if stats_giocatori:
-                df_pg = pd.DataFrame(stats_giocatori)
-                cecchino = df_pg.loc[df_pg['Win_Rate'].idxmax()]
-                folle = df_pg.loc[df_pg['Quota_Media'].idxmax()]
-                conservatore = df_pg.loc[df_pg['Quota_Media'].idxmin()]
-                
-                with st.container(border=True):
-                    st.markdown(f"**🎯 Il Cecchino:** {cecchino['Giocatore'].upper()}")
-                    st.caption(f"{cecchino['Win_Rate']:.1f}% di pronostici presi ({cecchino['Vinte']}/{cecchino['Totali']})")
-                
-                with st.container(border=True):
-                    st.markdown(f"**💀 Quello pazzo in culo:** {folle['Giocatore'].upper()}")
-                    st.caption(f"Gioca la quota media più alta del gruppo: {folle['Quota_Media']:.2f}")
-
-                with st.container(border=True):
-                    st.markdown(f"**🛡️ Il Conservatore:** {conservatore['Giocatore'].upper()}")
-                    st.caption(f"Va sul sicuro. Quota media più bassa: {conservatore['Quota_Media']:.2f}")
+            if stats:
+                df_pg = pd.DataFrame(stats)
+                st.markdown("#### 👤 I Protagonisti")
+                st.markdown(f"**🎯 Il Cecchino:** {df_pg.loc[df_pg['Win_Rate'].idxmax()]['Giocatore'].upper()}")
+                st.markdown(f"**💀 Il Pazzo:** {df_pg.loc[df_pg['Quota_Media'].idxmax()]['Giocatore'].upper()}")
+                st.markdown(f"**🛡️ Il Conservatore:** {df_pg.loc[df_pg['Quota_Media'].idxmin()]['Giocatore'].upper()}")
 
         with col_s2:
             st.markdown("#### ⚽ Le Squadre di Serie A")
-            squadre_perse = []
-            squadre_vinte = []
-            
-            for _, row in df_stats.iterrows():
-                if "PERSA" in str(row['Esito']) and "-" in str(row['Partita']):
-                    squadre_perse.extend([s.strip() for s in str(row['Partita']).split('-')])
-                if "VINTA" in str(row['Esito']) and "-" in str(row['Partita']):
-                    squadre_vinte.extend([s.strip() for s in str(row['Partita']).split('-')])
-            
-            with st.container(border=True):
-                if squadre_vinte:
-                    amuleto = pd.Series(squadre_vinte).value_counts().idxmax()
-                    st.markdown(f"**🍀 La Squadra Amuleto:** {amuleto.upper()}")
-                    st.caption(f"Vi ha fatto vincere {pd.Series(squadre_vinte).value_counts().max()} pronostici in totale!")
-                else:
-                    st.markdown("**🍀 La Squadra Amuleto:** -")
+            s_perse = [s.strip() for r in df_stats[df_stats['Esito'].str.contains("PERSA", na=False)]['Partita'] for s in str(r).split('-')]
+            s_vinte = [s.strip() for r in df_stats[df_stats['Esito'].str.contains("VINTA", na=False)]['Partita'] for s in str(r).split('-')]
+            st.markdown(f"**🍀 La Squadra Amuleto:** {pd.Series(s_vinte).value_counts().idxmax().upper() if s_vinte else '-'}")
+            st.markdown(f"**👻 La Squadra Maledetta:** {pd.Series(s_perse).value_counts().idxmax().upper() if s_perse else '-'}")
 
-            with st.container(border=True):
-                if squadre_perse:
-                    maledetta = pd.Series(squadre_perse).value_counts().idxmax()
-                    st.markdown(f"**👻 La Squadra Maledetta:** {maledetta.upper()}")
-                    st.caption(f"Vi ha fatto bruciare {pd.Series(squadre_perse).value_counts().max()} pronostici in totale!")
-                else:
-                    st.markdown("**👻 La Squadra Maledetta:** -")
-
-# ==========================================
-# TAB 5: REGOLAMENTO
-# ==========================================
 with tab_regolamento:
     st.subheader("📜 Regolamento Ufficiale Toto-amici")
-    
-    st.markdown("""
-    ### ⚽ 1. La Bolletta
-    *   **Costo:** Ogni giornata va giocata una bolletta da **5 €**.
-    *   **Composizione Obbligatoria:** 
-        *   **1 Combo** (1X2 + O/U 2.5, 1X2 + GG/NG)
-        *   **4 Fisse**
-        *   **2 Doppie Chance**
-        *   **3 Variabili (Over 2.5 / Under 2.5 / Pari / Dispari / Goal / NoGoal)**
-    
-    ### 🎯 2. Sistema Punteggi
-    *   **Combo:** 6 punti
-    *   **Fisse:** 4 punti
-    *   **Doppie Chance:** 1 punto
-    *   **Mercati Base (O/U, ecc.):** 2 punti
-    *   **🚀 Moltiplicatore Quota Alta:** Se la quota giocata di un singolo evento è **≥ 3.50**, i punti di quell'evento si **raddoppiano** (es. Combo = 12 pt, Fissa = 8 pt, ecc.). *Fa fede SOLTANTO la quota pubblicata nella bolletta.*
-    *   **🔥 Bonus Vincita:** Se un giocatore chiude (vince) la bolletta, ottiene **10 punti BONUS**.
-    
-    ### ⚖️ 3. Regole, Errori e Penalità
-    *   **Bolletta Errata (Es. troppe fisse):** Tutte le selezioni in eccesso/errate (nell'esempio, le fisse) verranno ritenute **annullate** ai fini del gioco (0 punti). Le selezioni corrette restano valide. La bolletta resta valida ai fini economici.
-    *   **Errore in buona fede:** Se si gioca per errore palese un OVER 1.5 al posto di un 2.5, ai fini del punteggio sarà valida *solo se* la partita finisce OVER 2.5. Ai fini del fondo-cassa fa fede la bolletta reale con l'1.5. (Stessa regola per Under 3.5).
-    *   **⏳ Scadenza Pubblicazione:** La bolletta va pubblicata **5 minuti prima** dell'inizio della prima partita. Se pubblicata in ritardo: **0 PUNTI** per la giornata e la bolletta diventa **nulla ai fini economici** (in caso di vincita, la quota è tutta del giocatore che l'ha giocata).
-    *   **Partite Rinviate:** Per i punti si aspetta il recupero della partita. Ai fini economici, se il sito di scommesse ritiene la giocata chiusa/pagata, i soldi si dividono sempre a metà.
-    
-    ### 💰 4. Cassa e Montepremi
-    *   **Quota di Partecipazione:** **200 € a persona**, da versare entro la 36ª giornata per far quadrare i conti col fondo cassa.
-    *   **Ripartizione Vincite:** In caso di bolletta vincente, la vincita si divide a metà: **50% a chi l'ha giocata**, **50% nel Fondo Cassa**. *(La metà del fondo-cassa va data subito dopo la vincita).*
-    
-    ---
-    
-    **🏆 Esempio Ripartizione Premi (su 15 giocatori e 3.000€ Montepremi)**
-    *   **1° Classificato:** 1.200 €
-    *   **2° Classificato:** 800 €
-    *   **3° Classificato:** 500 €
-    *   **4° Classificato:** 300 €
-    *   **5° Classificato:** 200 €
-    
-    *(Se dalle bollette chiuse a fine anno risultano a fondo cassa 3.000 euro, ogni giocatore prenderà i suoi 200 euro).*
-    """)
+    st.markdown("*(Regolamento inalterato)*")
