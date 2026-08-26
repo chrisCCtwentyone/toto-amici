@@ -1,7 +1,3 @@
-1. verifica se con modello inferiore l'analisi delle foto si maniente solida ---
-2. gestione dei nomi delle giocate diversi tra loro: (under 2.5/u2.5/meno di 2.5) FATTO
-3. gestione vincite solid: sono multiple da 10 partite, bot_lettore deve estrapolare anche la vincita totale in euro di quella bolletta ovviamente, non deve fare il calcolo di 5eur x quota totale (si perderebbe il bonus che fornisce il bppkmaker che varia da bookmaker ad un altro.)
-4. questa quantità di soldi vinta ci serve per alimentare il fondo cassa (la metà della vincita viene presa dal giocatore che ha fatto la schedina e quindi a noi di quella metà non interessa nulla, della restante metà interessa perche va nel fondo cassa comune che si accumula fino a fine anno)
-5. dimenticavo di dirti che di ogni singola giornata, se quella specifica giocata (che sia una combo, una gg o una fissa) è pari a superiore a 3.50, allora il punteggio in caso di giocata PRESA è raddoppiato.
-
-ricapitolando ora quindi si parla di PUNTI IN CLASSIFICA e di SOLDI, parti dalla parte che ti sembra piu adeguata ma fondamentale ce tratti questi aspetti che ti ho detto
+ogni quanto si aggiornano le statistiche del sito?
+quando spunterà la classifica aggioranta con la seconda giornata? quando ci saranno le prime partite che fruttano punti? 
+il sito è sempre online? come automatizzo il bot?

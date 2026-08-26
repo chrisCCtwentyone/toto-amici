@@ -73,11 +73,16 @@ def analizza_schedine(lista_foto):
     print("   -> [DEBUG] Invio a Gemini (modello: gemini-3.6-flash)...")
     
     prompt = """
-    Analizza queste schedine di calcio ed estrai due cose fondamentali:
-    1. Una chiave globale "vincita_potenziale" contenente SOLO LA CIFRA NUMERICA (in euro) scritta in fondo alla schedina. Se leggi "Vincita: 142,50 €", devi scrivere SOLO "142.50". Niente testo. Se non c'è, scrivi "0".
-    2. La lista degli eventi, classificata in: "Combo", "Fisse", "Doppie Chance", "Variabili".
-    
-    Per ogni evento fornisci le chiavi: "partita", "pronostico", "quota".
+    Sei un assistente esperto nell'analisi di schedine di scommesse sportive. Analizza questa immagine con estrema attenzione.
+
+    1. **VINCITA POTENZIALE ("vincita_potenziale"):**
+       - Cerca la dicitura relativa alla vincita totale stimata, vincita massima, o potenziale rimborso in fondo alla schedina.
+       - ATTENZIONE A NON CONFONDERE IL MOLTIPLICATORE TOTALE CON GLI EURO: La vincita in euro si calcola quasi sempre moltiplicando la quota totale complessiva per l'importo giocato (che per regolamento è finto a 5€ se non diversamente specificato). 
+       - Restituisci SOLO IL VALORE NUMERICO FINALE IN EURO (es. se la vincita è 72,50 €, scrivi "72.50"). Niente simboli di valuta o testo.
+
+    2. **EVENTI DELLA SCHEDINA:**
+       Estrai la lista degli eventi dividendola tassativamente in queste 4 categorie: "Combo", "Fisse", "Doppie Chance", "Variabili".
+       Per ogni evento fornisci le chiavi esatte: "partita", "pronostico", "quota".
     
     REGOLA FONDAMENTALE PER I PRONOSTICI (NORMALIZZAZIONE):
     1. Esito Finale (Fisse): 1, X, 2
