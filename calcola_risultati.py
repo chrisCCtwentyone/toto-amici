@@ -27,6 +27,9 @@ def scarica_giornata_footballdata(giornata):
         return None
 
 def controlla_esito(pronostico, gol_casa, gol_ospite):
+    # Controllo se la partita è stata annullata dal bot per eccesso limiti
+    if "ANNULLATA" in pronostico: return "➖ ANNULLATA"
+
     tot_gol = gol_casa + gol_ospite
     segno = "1" if gol_casa > gol_ospite else ("2" if gol_ospite > gol_casa else "X")
     entrambe_segnano = "GOAL" if (gol_casa > 0 and gol_ospite > 0) else "NOGOAL"
@@ -55,6 +58,8 @@ def controlla_esito(pronostico, gol_casa, gol_ospite):
     return "✅ VINTA" if vinta else "❌ PERSA"
 
 def calcola_punteggio_partita(pronostico, quota):
+    if "ANNULLATA" in pronostico: return 0
+
     punti = 0
     if "+" in pronostico: punti = 6
     elif pronostico in ["1", "X", "2"]: punti = 4
@@ -127,7 +132,6 @@ def main():
             (casa_sheet in str(m["homeTeam"]["name"]).lower() or casa_sheet in str(m["homeTeam"].get("shortName", "")).lower()) and 
             (ospite_sheet in str(m["awayTeam"]["name"]).lower() or ospite_sheet in str(m["awayTeam"].get("shortName", "")).lower())), None)
         
-        # Variabile per la Colonna I (Punti della singola partita)
         punti_partita_singola = 0
 
         if match_trovato:
@@ -143,11 +147,12 @@ def main():
                     punti_partita_singola = calcola_punteggio_partita(pronostico, quota)
                     classifica[giocatore]["punti_giornata"] += punti_partita_singola
                     classifica[giocatore]["vinte"] += 1
+                elif "ANNULLATA" in testo_esito:
+                    colore_scelto = colore_grigio
                 else:
                     colore_scelto = colore_rosso
                     classifica[giocatore]["perse"] += 1
             
-            # Prepariamo gli aggiornamenti per Colonna G (Esito) e Colonna I (Punti Partita)
             aggiornamenti_testo.append({'range': f"Giocate!G{numero_riga}", 'values': [[testo_esito]]})
             aggiornamenti_testo.append({'range': f"Giocate!I{numero_riga}", 'values': [[punti_partita_singola]]})
             
@@ -190,8 +195,6 @@ def main():
             if vincita_euro > 0:
                 totale_fondo_cassa += vincita_euro
                 vincitori.append({"nome": gio, "importo": vincita_euro})
-            else:
-                print(f"⚠️ ATTENZIONE: {gio.upper()} ha vinto, ma non è stato possibile leggere la sua vincita potenziale. Cassa non aggiornata.")
 
         print(f"👤 *{gio.upper()}*")
         print(f"📊 Punti Giornata: {dati['punti_giornata']}{bonus_completamento}")

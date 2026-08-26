@@ -12,6 +12,9 @@ SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
 SERVICE_ACCOUNT_FILE = 'credenziali.json'
 FILE_LOG = 'giocate_completate.txt'
 
+# --- REGOLE TOTO-AMICI ---
+LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
+
 def leggi_chiave_api():
     try:
         with open('chiave_api.txt', 'r') as f:
@@ -77,7 +80,6 @@ def analizza_schedine(lista_foto):
 
     1. **VINCITA POTENZIALE ("vincita_potenziale"):**
        - Cerca la dicitura relativa alla vincita totale stimata, vincita massima, o potenziale rimborso in fondo alla schedina.
-       - ATTENZIONE A NON CONFONDERE IL MOLTIPLICATORE TOTALE CON GLI EURO: La vincita in euro si calcola quasi sempre moltiplicando la quota totale complessiva per l'importo giocato (che per regolamento è finto a 5€ se non diversamente specificato). 
        - Restituisci SOLO IL VALORE NUMERICO FINALE IN EURO (es. se la vincita è 72,50 €, scrivi "72.50"). Niente simboli di valuta o testo.
 
     2. **EVENTI DELLA SCHEDINA:**
@@ -102,30 +104,51 @@ def analizza_schedine(lista_foto):
     print("   -> [DEBUG] Dati estratti con successo!")
     return response.text
 
-def scrivi_su_sheets(nome_giocatore, json_data):
-    print("   -> [DEBUG] Scrittura su Google Sheets in corso...")
+def scrivi_su_sheets_con_regole(nome_giocatore, json_data):
+    print("   -> [DEBUG] Scrittura su Google Sheets in corso (con validazione regole)...")
     try:
         dati = json.loads(json_data)
-        vincita = dati.get("vincita_potenziale", "0")
-        eventi = dati.get("eventi", dati) 
         
+        # Pulizia Vincita
+        vincita_raw = str(dati.get("vincita_potenziale", "0")).replace(',', '.')
+        try:
+            vincita_punto = f"{float(vincita_raw):.2f}"
+            vincita = vincita_punto.replace('.', ',')
+        except ValueError:
+            vincita = "0,00"
+
+        eventi = dati.get("eventi", dati) 
         righe_da_inserire = []
         prima_riga = True
         
+        # Validazione Regolamento (Limiti ed Errori in buona fede)
         for categoria in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
-            for evento in eventi.get(categoria, []):
+            eventi_cat = eventi.get(categoria, [])
+            for idx, evento in enumerate(eventi_cat):
+                pronostico = str(evento.get("pronostico", "")).upper()
+                
+                # Regola: Buona Fede
+                if "OVER_1.5" in pronostico: pronostico = pronostico.replace("1.5", "2.5")
+                if "UNDER_3.5" in pronostico: pronostico = pronostico.replace("3.5", "2.5")
+                
+                # Regola: Controllo Eccesso
+                if idx >= LIMITI_SCHEDINA[categoria]:
+                    pronostico += " (ANNULLATA ECCESSO)"
+                    
+                quota_raw = str(evento.get("quota", "")).replace('.', ',')
+                
                 riga = [
                     GIORNATA.replace('_', ' ').title(), 
                     nome_giocatore.upper(), 
                     evento.get("partita", ""), 
                     categoria, 
-                    evento.get("pronostico", ""), 
-                    str(evento.get("quota", ""))
+                    pronostico, 
+                    quota_raw
                 ]
                 
                 if prima_riga:
                     riga.append("")
-                    riga.append(str(vincita))
+                    riga.append(vincita)
                     prima_riga = False
                     
                 righe_da_inserire.append(riga)
@@ -134,7 +157,7 @@ def scrivi_su_sheets(nome_giocatore, json_data):
             body = {'values': righe_da_inserire}
             sheets_service.spreadsheets().values().append(
                 spreadsheetId=SPREADSHEET_ID, 
-                range="Giocate!A:H",
+                range="Giocate!A:I",
                 valueInputOption="USER_ENTERED", 
                 body=body
             ).execute()
@@ -158,7 +181,7 @@ def main():
         for tentativo in range(3):
             try:
                 risultato_json = analizza_schedine(lista_foto)
-                successo = scrivi_su_sheets(giocatore, risultato_json)
+                successo = scrivi_su_sheets_con_regole(giocatore, risultato_json)
                 if successo: segna_come_elaborato(giocatore)
                 break 
             except Exception as e:

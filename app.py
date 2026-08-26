@@ -97,7 +97,6 @@ with tab_classifica:
         if not df_cassa.empty:
             try:
                 ultimo_saldo_str = str(df_cassa['Saldo Totale'].iloc[-1])
-                # Pulizia della stringa per calcolare il progresso
                 saldo_pulito = ultimo_saldo_str.replace('€', '').replace('.', '').replace(',', '.').strip()
                 saldo_num = float(saldo_pulito)
             except:
@@ -106,7 +105,6 @@ with tab_classifica:
 
             st.metric(label="Montepremi Attuale", value=ultimo_saldo_str)
             
-            # BARRA DI PROGRESSO OBIETTIVO
             progresso = min(saldo_num / OBIETTIVO_CASSA, 1.0)
             st.markdown(f"**Obiettivo Premi:** {saldo_num:,.2f} € / {OBIETTIVO_CASSA:,.2f} €")
             st.progress(progresso)
@@ -226,10 +224,22 @@ with tab_stats:
         with col_s2:
             st.markdown("#### ⚽ Le Squadre di Serie A")
             squadre_perse = []
+            squadre_vinte = []
+            
             for _, row in df_stats.iterrows():
                 if "PERSA" in str(row['Esito']) and "-" in str(row['Partita']):
                     squadre_perse.extend([s.strip() for s in str(row['Partita']).split('-')])
-                    
+                if "VINTA" in str(row['Esito']) and "-" in str(row['Partita']):
+                    squadre_vinte.extend([s.strip() for s in str(row['Partita']).split('-')])
+            
+            with st.container(border=True):
+                if squadre_vinte:
+                    amuleto = pd.Series(squadre_vinte).value_counts().idxmax()
+                    st.markdown(f"**🍀 La Squadra Amuleto:** {amuleto.upper()}")
+                    st.caption(f"Vi ha fatto vincere {pd.Series(squadre_vinte).value_counts().max()} pronostici in totale!")
+                else:
+                    st.markdown("**🍀 La Squadra Amuleto:** -")
+
             with st.container(border=True):
                 if squadre_perse:
                     maledetta = pd.Series(squadre_perse).value_counts().idxmax()
@@ -238,9 +248,6 @@ with tab_stats:
                 else:
                     st.markdown("**👻 La Squadra Maledetta:** -")
 
-# ==========================================
-# TAB 4: REGOLAMENTO
-# ==========================================
 # ==========================================
 # TAB 4: REGOLAMENTO
 # ==========================================
@@ -254,7 +261,7 @@ with tab_regolamento:
         *   **1 Combo** (1X2 + O/U 2.5, 1X2 + GG/NG)
         *   **4 Fisse**
         *   **2 Doppie Chance**
-        *   **3 Over 2.5 / Under 2.5 / Pari / Dispari / Goal / NoGoal**
+        *   **3 Variabili (Over 2.5 / Under 2.5 / Pari / Dispari / Goal / NoGoal)**
     
     ### 🎯 2. Sistema Punteggi
     *   **Combo:** 6 punti
