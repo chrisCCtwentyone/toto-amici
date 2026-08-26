@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import requests
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -17,9 +18,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- COSTANTI E CHIAVI ---
 SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
 OBIETTIVO_CASSA = 3200.0 # Il vostro traguardo per coprire i premi
+FOOTBALL_DATA_KEY = "ef8a4016b5ab4f90a486ea0fea46fd1f"
 
+# --- FUNZIONI DI CARICAMENTO DATI ---
 @st.cache_data(ttl=60)
 def carica_dati_da_sheets(range_name):
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -33,8 +37,7 @@ def carica_dati_da_sheets(range_name):
         result = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range=range_name).execute()
         values = result.get('values', [])
         
-        if not values:
-            return pd.DataFrame()
+        if not values: return pd.DataFrame()
             
         headers = values[0]
         data = values[1:]
@@ -45,7 +48,48 @@ def carica_dati_da_sheets(range_name):
         st.error(f"Errore di caricamento dati: {e}")
         return pd.DataFrame()
 
-# --- CARICAMENTO DATI ---
+@st.cache_data(ttl=60)
+def scarica_risultati_api(giornata):
+    """Chiama le API per ottenere i risultati in tempo reale della giornata."""
+    url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+    headers = {"X-Auth-Token": FOOTBALL_DATA_KEY}
+    risultati_mappati = {}
+    
+    try:
+        res = requests.get(url, headers=headers)
+        if res.status_code == 200:
+            matches = res.json().get("matches", [])
+            for m in matches:
+                casa = str(m["homeTeam"]["name"]).lower()
+                ospite = str(m["awayTeam"]["name"]).lower()
+                short_casa = str(m["homeTeam"].get("shortName", casa)).lower()
+                short_ospite = str(m["awayTeam"].get("shortName", ospite)).lower()
+                
+                status = m["status"]
+                if status in ["FINISHED", "IN_PLAY", "PAUSED"]:
+                    h_score = m["score"]["fullTime"]["home"] if m["score"]["fullTime"]["home"] is not None else 0
+                    a_score = m["score"]["fullTime"]["away"] if m["score"]["fullTime"]["away"] is not None else 0
+                    
+                    if status == "FINISHED":
+                        score_str = f"{h_score} - {a_score}"
+                    else:
+                        score_str = f"{h_score} - {a_score} (In Corso)"
+                elif status in ["TIMED", "SCHEDULED"]:
+                    score_str = "Da giocare"
+                else:
+                    score_str = "Rinviata/Altro"
+                    
+                # Creiamo chiavi flessibili per incrociare i nomi con lo sheet (prime 5 lettere)
+                key1 = f"{casa[:5]}-{ospite[:5]}"
+                key2 = f"{short_casa[:5]}-{short_ospite[:5]}"
+                risultati_mappati[key1] = score_str
+                risultati_mappati[key2] = score_str
+    except:
+        pass
+        
+    return risultati_mappati
+
+# --- CARICAMENTO DATI FOGLI ---
 df_classifica = carica_dati_da_sheets("Classifica!A:Z")
 df_cassa = carica_dati_da_sheets("Cassa!A:D")
 df_giocate = carica_dati_da_sheets("Giocate!A:I")
@@ -56,9 +100,10 @@ st.markdown("Risultati, classifiche, statistiche e montepremi in tempo reale.")
 st.write("")
 
 # --- NAVIGAZIONE A SCHEDE (TABS) ---
-tab_classifica, tab_live, tab_stats, tab_regolamento = st.tabs([
+tab_classifica, tab_live, tab_confronto, tab_stats, tab_regolamento = st.tabs([
     "🏆 Classifica & Cassa", 
     "🎯 Schedine Live", 
+    "🔍 Confronto Giocate",
     "📊 Statistiche",
     "📜 Regolamento"
 ])
@@ -123,7 +168,7 @@ with tab_classifica:
             st.info("Nessun movimento.")
 
 # ==========================================
-# TAB 2: SCHEDINE LIVE
+# TAB 2: SCHEDINE LIVE (CON RISULTATI REALI)
 # ==========================================
 with tab_live:
     st.subheader("Live Score Schedine")
@@ -134,6 +179,10 @@ with tab_live:
         col_f1, col_f2 = st.columns(2)
         with col_f1: giornata_selezionata = st.selectbox("📅 Giornata", giornate_disponibili, index=len(giornate_disponibili)-1 if giornate_disponibili else 0)
         with col_f2: giocatore_selezionato = st.selectbox("👤 Giocatore", giocatori_disponibili)
+        
+        # Scarichiamo i risultati in tempo reale solo per la giornata selezionata
+        giornata_num_api = str(giornata_selezionata).lower().replace("giornata", "").strip()
+        risultati_live = scarica_risultati_api(giornata_num_api)
         
         df_filtrato = df_giocate[(df_giocate['Giornata'] == giornata_selezionata) & (df_giocate['Giocatore'] == giocatore_selezionato)]
         
@@ -149,12 +198,30 @@ with tab_live:
             
             for index, row in df_filtrato.iterrows():
                 esito = str(row.get('Esito', ''))
+                partita_nome = str(row.get('Partita', ''))
+                
+                # Cerca il risultato nel dizionario API
+                partita_key_parts = [s.strip()[:5].lower() for s in partita_nome.split('-')]
+                risultato_match = ""
+                if len(partita_key_parts) == 2:
+                    key_ricerca = f"{partita_key_parts[0]}-{partita_key_parts[1]}"
+                    risultato_match = risultati_live.get(key_ricerca, "")
+
                 if "VINTA" in esito: esito_color = "#28a745"
                 elif "PERSA" in esito: esito_color = "#dc3545"
                 else: esito_color = "#6c757d"
                 
+                # Se c'è un risultato, lo mostriamo con un badge
+                badge_risultato = f'<span style="background-color: #f0f2f6; padding: 2px 8px; border-radius: 5px; color: #31333F; font-size: 14px;"><b>Risultato: {risultato_match}</b></span>' if risultato_match else ""
+                
                 with st.container(border=True):
-                    st.markdown(f"**⚽ {row.get('Partita', '')}**")
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <span style="font-size: 16px;"><b>⚽ {partita_nome}</b></span>
+                        {badge_risultato}
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
                     st.markdown(f"""
                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 15px; margin-bottom: 5px;">
                         <div>Pronostico: <b>{row.get('Pronostico', '')}</b> <span style="font-size: 13px; color: gray;">(@{row.get('Quota', '')})</span></div>
@@ -172,7 +239,44 @@ with tab_live:
         st.info("Nessuna giocata registrata.")
 
 # ==========================================
-# TAB 3: STATISTICHE E HALL OF FAME
+# TAB 3: CONFRONTO GIOCATE (NUOVA FUNZIONE)
+# ==========================================
+with tab_confronto:
+    st.subheader("🔍 Confronto Giocate per Partita")
+    st.markdown("Scopri cosa ha giocato ogni partecipante per i vari eventi della giornata.")
+    
+    if not df_giocate.empty:
+        giornate_comp = [g for g in df_giocate['Giornata'].dropna().unique() if str(g).strip() != ""]
+        if giornate_comp:
+            giornata_selezionata_comp = st.selectbox("📅 Scegli la Giornata da analizzare", giornate_comp, index=len(giornate_comp)-1)
+            
+            df_giornata = df_giocate[df_giocate['Giornata'] == giornata_selezionata_comp].copy()
+            
+            if not df_giornata.empty:
+                # Uniamo pronostico e quota per averli in un'unica cella visiva
+                def formatta_giocata(row):
+                    pronostico = str(row.get('Pronostico', ''))
+                    quota = str(row.get('Quota', ''))
+                    return f"{pronostico} (@{quota})"
+                
+                df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
+                
+                # Creiamo una Pivot Table magica (Righe: Partite, Colonne: Giocatori)
+                pivot = df_giornata.pivot_table(
+                    index='Partita', 
+                    columns='Giocatore', 
+                    values='Giocata', 
+                    aggfunc=lambda x: ' | '.join(x) # Se per errore ha due giocate uguali le unisce
+                ).fillna("-") # Riempie i vuoti con un trattino
+                
+                st.dataframe(pivot, use_container_width=True, height=500)
+            else:
+                st.info("Nessuna giocata trovata per questa giornata.")
+    else:
+        st.info("Nessuna giocata registrata nel database.")
+
+# ==========================================
+# TAB 4: STATISTICHE E HALL OF FAME
 # ==========================================
 with tab_stats:
     st.subheader("Hall of Fame & Curiosità")
@@ -249,7 +353,7 @@ with tab_stats:
                     st.markdown("**👻 La Squadra Maledetta:** -")
 
 # ==========================================
-# TAB 4: REGOLAMENTO
+# TAB 5: REGOLAMENTO
 # ==========================================
 with tab_regolamento:
     st.subheader("📜 Regolamento Ufficiale Toto-amici")
