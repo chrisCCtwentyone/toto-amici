@@ -241,10 +241,47 @@ with tab_stats:
 # ==========================================
 # TAB 4: REGOLAMENTO
 # ==========================================
+# ==========================================
+# TAB 4: REGOLAMENTO
+# ==========================================
 with tab_regolamento:
-    st.subheader("📜 Regolamento Ufficiale")
-    st.markdown("""
-    *In attesa del regolamento ufficiale...*
+    st.subheader("📜 Regolamento Ufficiale Toto-amici")
     
-    Incolla il testo del regolamento nella chat dell'Intelligenza Artificiale e verrà inserito qui in bella copia con tanto di paragrafi ed elenchi puntati!
+    st.markdown("""
+    ### ⚽ 1. La Bolletta
+    *   **Costo:** Ogni giornata va giocata una bolletta da **5 €**.
+    *   **Composizione Obbligatoria:** 
+        *   **1 Combo** (1X2 + O/U 2.5, 1X2 + GG/NG)
+        *   **4 Fisse**
+        *   **2 Doppie Chance**
+        *   **3 Over 2.5 / Under 2.5 / Pari / Dispari / Goal / NoGoal**
+    
+    ### 🎯 2. Sistema Punteggi
+    *   **Combo:** 6 punti
+    *   **Fisse:** 4 punti
+    *   **Doppie Chance:** 1 punto
+    *   **Mercati Base (O/U, ecc.):** 2 punti
+    *   **🚀 Moltiplicatore Quota Alta:** Se la quota giocata di un singolo evento è **≥ 3.50**, i punti di quell'evento si **raddoppiano** (es. Combo = 12 pt, Fissa = 8 pt, ecc.). *Fa fede SOLTANTO la quota pubblicata nella bolletta.*
+    *   **🔥 Bonus Vincita:** Se un giocatore chiude (vince) la bolletta, ottiene **10 punti BONUS**.
+    
+    ### ⚖️ 3. Regole, Errori e Penalità
+    *   **Bolletta Errata (Es. troppe fisse):** Tutte le selezioni in eccesso/errate (nell'esempio, le fisse) verranno ritenute **annullate** ai fini del gioco (0 punti). Le selezioni corrette restano valide. La bolletta resta valida ai fini economici.
+    *   **Errore in buona fede:** Se si gioca per errore palese un OVER 1.5 al posto di un 2.5, ai fini del punteggio sarà valida *solo se* la partita finisce OVER 2.5. Ai fini del fondo-cassa fa fede la bolletta reale con l'1.5. (Stessa regola per Under 3.5).
+    *   **⏳ Scadenza Pubblicazione:** La bolletta va pubblicata **5 minuti prima** dell'inizio della prima partita. Se pubblicata in ritardo: **0 PUNTI** per la giornata e la bolletta diventa **nulla ai fini economici** (in caso di vincita, la quota è tutta del giocatore che l'ha giocata).
+    *   **Partite Rinviate:** Per i punti si aspetta il recupero della partita. Ai fini economici, se il sito di scommesse ritiene la giocata chiusa/pagata, i soldi si dividono sempre a metà.
+    
+    ### 💰 4. Cassa e Montepremi
+    *   **Quota di Partecipazione:** **200 € a persona**, da versare entro la 36ª giornata per far quadrare i conti col fondo cassa.
+    *   **Ripartizione Vincite:** In caso di bolletta vincente, la vincita si divide a metà: **50% a chi l'ha giocata**, **50% nel Fondo Cassa**. *(La metà del fondo-cassa va data subito dopo la vincita).*
+    
+    ---
+    
+    **🏆 Esempio Ripartizione Premi (su 15 giocatori e 3.000€ Montepremi)**
+    *   **1° Classificato:** 1.200 €
+    *   **2° Classificato:** 800 €
+    *   **3° Classificato:** 500 €
+    *   **4° Classificato:** 300 €
+    *   **5° Classificato:** 200 €
+    
+    *(Se dalle bollette chiuse a fine anno risultano a fondo cassa 3.000 euro, ogni giocatore prenderà i suoi 200 euro).*
     """)
