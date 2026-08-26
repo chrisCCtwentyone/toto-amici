@@ -11,12 +11,9 @@ from google.genai import types
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 
-# ==========================================
-# 1. CONFIGURAZIONI GLOBALI E CHIAVI
-# ==========================================
 TOKEN = "8996951565:AAGbxyDm4ZuA_Wntv1Vv_IoxQPS-Hvf7euw"
 ADMIN_ID = 173820382
 
@@ -33,43 +30,76 @@ GIOCATORI = [
 
 LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
 
-# Stati Conversazione Telegram
-MENU, RICEVI_FOTO, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, SCELTA_GIORNATA_UPDATE = range(6)
+# Stati Conversazione
+MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY = range(7)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 def leggi_chiave_api():
     try:
-        with open('chiave_api.txt', 'r') as f:
-            return f.read().strip()
+        with open('chiave_api.txt', 'r') as f: return f.read().strip()
     except: return ""
 
-client = genai.Client(api_key=leggi_chiave_api()) if leggi_chiave_api() else None
+def get_gemini_client():
+    chiave = leggi_chiave_api()
+    return genai.Client(api_key=chiave) if chiave else None
 
 def connetti_sheets():
-    SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/spreadsheets'])
     return build('sheets', 'v4', credentials=creds)
 
 # ==========================================
-# 2. MOTORE AI E INSERIMENTO SCHEDINE
+# MOTORE AI E NORMALIZZAZIONE
 # ==========================================
-def analizza_schedina_con_gemini(percorso_foto):
-    img = Image.open(percorso_foto)
-    if img.mode != 'RGB': img = img.convert('RGB')
-    img.thumbnail((1000, 1000))
+def analizza_schedine_multiple(lista_percorsi_foto):
+    client = get_gemini_client()
+    if not client: raise Exception("Chiave API Gemini non configurata o vuota!")
     
+    immagini_ottimizzate = []
+    for percorso in lista_percorsi_foto:
+        img = Image.open(percorso)
+        if img.mode != 'RGB': img = img.convert('RGB')
+        img.thumbnail((1000, 1000))
+        immagini_ottimizzate.append(img)
+        
     prompt = """
-    Analizza questa schedina sportiva.
-    1. VINCITA POTENZIALE: Restituisci SOLO IL VALORE NUMERICO IN EURO (es. "72.50").
-    2. EVENTI: Dividi in "Combo", "Fisse", "Doppie Chance", "Variabili" con chiavi: "partita", "pronostico", "quota".
-    Regole normalizzazione: Esito (1,X,2), Doppia (1X,X2,12), Variabili (GOAL, NOGOAL, UNDER_2.5, OVER_2.5, PARI, DISPARI).
+    Sei un assistente esperto nell'analisi di schedine di scommesse sportive. Analizza queste immagini con estrema attenzione (potrebbero essere più schermate della stessa bolletta).
+
+    1. **VINCITA POTENZIALE ("vincita_potenziale"):**
+       - Cerca la dicitura relativa alla vincita totale stimata, vincita massima, o potenziale rimborso in fondo alla schedina.
+       - Restituisci SOLO IL VALORE NUMERICO FINALE IN EURO (es. "72.50"). Niente simboli o testo.
+
+    2. **EVENTI DELLA SCHEDINA:**
+       Estrai la lista di TUTTI gli eventi presenti nelle immagini dividendola tassativamente in queste 4 categorie: "Combo", "Fisse", "Doppie Chance", "Variabili".
+       Per ogni evento fornisci le chiavi esatte: "partita", "pronostico", "quota".
     """
     response = client.models.generate_content(
-        model='gemini-3.6-flash', contents=[prompt, img],
+        model='gemini-3.6-flash',
+        contents=[prompt] + immagini_ottimizzate,
         config=types.GenerateContentConfig(response_mime_type="application/json")
     )
     return response.text
+
+def normalizza_nomi_partite(dati_json, giornata_num):
+    try:
+        url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata_num}"
+        matches = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        if not matches: return dati_json
+        
+        dati = json.loads(dati_json)
+        for cat in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
+            for ev in dati.get("eventi", dati).get(cat, []):
+                partita = ev.get("partita", "")
+                if "-" in partita:
+                    c_sh, o_sh = [s.strip()[:5].lower() for s in partita.split('-')]
+                    for m in matches:
+                        ac, ao = str(m["homeTeam"]["name"]).lower(), str(m["awayTeam"]["name"]).lower()
+                        sc, so = str(m["homeTeam"].get("shortName","")).lower(), str(m["awayTeam"].get("shortName","")).lower()
+                        if (c_sh in ac or c_sh in sc) and (o_sh in ao or o_sh in so):
+                            ev["partita"] = f"{m['homeTeam'].get('shortName', m['homeTeam']['name'])} - {m['awayTeam'].get('shortName', m['awayTeam']['name'])}"
+                            break
+        return json.dumps(dati)
+    except: return dati_json
 
 def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
     sheets_service = connetti_sheets()
@@ -114,7 +144,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
     return False
 
 # ==========================================
-# 3. MOTORE AGGIORNAMENTO RISULTATI
+# CALCOLO RISULTATI E API
 # ==========================================
 def ottieni_giornata_corrente():
     try:
@@ -130,12 +160,8 @@ def estrai_numero(testo):
 
 def controlla_esito(pronostico, gol_casa, gol_ospite):
     if "ANNULLATA" in pronostico: return "➖ ANNULLATA"
-    
-    tot = gol_casa + gol_ospite
-    segno = "1" if gol_casa > gol_ospite else ("2" if gol_ospite > gol_casa else "X")
-    entrambe = "GOAL" if (gol_casa > 0 and gol_ospite > 0) else "NOGOAL"
-    
-    vinta = True
+    tot, segno = gol_casa + gol_ospite, "1" if gol_casa > gol_ospite else ("2" if gol_ospite > gol_casa else "X")
+    entrambe, vinta = "GOAL" if (gol_casa > 0 and gol_ospite > 0) else "NOGOAL", True
     for p in pronostico.split('+'):
         p = p.strip()
         if p in ["1", "X", "2"] and p != segno: vinta = False
@@ -148,9 +174,8 @@ def controlla_esito(pronostico, gol_casa, gol_ospite):
         elif p == "DISPARI" and (tot % 2) == 0: vinta = False
         elif "UNDER" in p or "OVER" in p:
             try:
-                val = float(p.split('_')[1])
-                if "UNDER" in p and tot > val: vinta = False
-                if "OVER" in p and tot < val: vinta = False
+                if "UNDER" in p and tot > float(p.split('_')[1]): vinta = False
+                if "OVER" in p and tot < float(p.split('_')[1]): vinta = False
             except: pass
     return "✅ VINTA" if vinta else "❌ PERSA"
 
@@ -168,15 +193,12 @@ def esegui_calcolo_risultati(giornata):
     if not matches_api: return "Nessuna partita trovata per questa giornata."
 
     righe_giocate = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I").execute().get('values', [])
-    classifica = {}
-    aggiornamenti_testo, richieste_stile = [], []
+    classifica, aggiornamenti_testo, richieste_stile = {}, [], []
     colore_verde, colore_rosso, colore_grigio = {"red":0.85,"green":0.95,"blue":0.85}, {"red":0.95,"green":0.85,"blue":0.85}, {"red":0.90,"green":0.90,"blue":0.90}
     sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', []) if s['properties']['title'].lower() == 'giocate')
 
     for idx, riga in enumerate(righe_giocate):
-        if len(riga) < 6 or "giornata" not in str(riga[0]).lower() or str(riga[1]).lower() == "giocatore": continue
-        if str(giornata) not in str(riga[0]): continue
-        
+        if len(riga) < 6 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]): continue
         gio, partita, pron, quota = str(riga[1]).strip(), str(riga[2]).strip(), str(riga[4]).strip().upper(), estrai_numero(riga[5])
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
 
@@ -193,15 +215,9 @@ def esegui_calcolo_risultati(giornata):
                 classifica[gio]["in_corso"] += 1
             else:
                 testo_esito = controlla_esito(pron, match["score"]["fullTime"]["home"], match["score"]["fullTime"]["away"])
-                if "VINTA" in testo_esito:
-                    col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota)
-                    classifica[gio]["punti"] += punti_partita
-                    classifica[gio]["vinte"] += 1
-                elif "ANNULLATA" in testo_esito:
-                    col = colore_grigio
-                else:
-                    col = colore_rosso
-                    classifica[gio]["perse"] += 1
+                if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
+                elif "ANNULLATA" in testo_esito: col = colore_grigio
+                else: col = colore_rosso; classifica[gio]["perse"] += 1
             
             aggiornamenti_testo.extend([{'range': f"Giocate!G{idx+1}", 'values': [[testo_esito]]}, {'range': f"Giocate!I{idx+1}", 'values': [[punti_partita]]}])
             richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
@@ -210,189 +226,181 @@ def esegui_calcolo_risultati(giornata):
         service.spreadsheets().values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': aggiornamenti_testo}).execute()
         service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": richieste_stile}).execute()
 
-    vincitori = []
-    report = f"📊 *REPORT GIORNATA {giornata}*\n\n"
-    
+    vincitori, report = [], f"📊 *REPORT GIORNATA {giornata}*\n\n"
     for gio, dati in classifica.items():
         if (dati["vinte"] + dati["perse"] + dati["in_corso"]) == 0: continue
-        
-        if dati["perse"] > 0:
-            stato = "❌ Bruciata"
-        elif dati["in_corso"] > 0:
-            stato = f"⏳ In attesa ({dati['in_corso']})"
+        if dati["perse"] > 0: stato = "❌ Bruciata"
+        elif dati["in_corso"] > 0: stato = f"⏳ In attesa ({dati['in_corso']})"
         else:
-            stato = "🏆 CHIUSA! (+10 Pt)"
-            dati["punti"] += 10
-            vincita_euro = dati["cassa"] / 2.0
-            if vincita_euro > 0:
-                vincitori.append({"nome": gio, "importo": vincita_euro})
-                
+            stato, dati["punti"] = "🏆 CHIUSA! (+10 Pt)", dati["punti"] + 10
+            v_euro = dati["cassa"] / 2.0
+            if v_euro > 0: vincitori.append({"nome": gio, "importo": v_euro})
         report += f"👤 *{gio.upper()}* - {dati['punti']} Pt\n({dati['vinte']} V | {dati['perse']} P | {dati['in_corso']} C) -> {stato}\n\n"
 
     righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z").execute().get('values', [["Giocatore", "Punti Totali"]])
     col_g = f"Giornata {giornata}"
     if col_g not in righe_class[0]: righe_class[0].append(col_g)
     idx_g = righe_class[0].index(col_g)
-    
     mappa = {str(r[0]).strip().lower(): i for i, r in enumerate(righe_class) if i > 0}
+    
     for gio, dati in classifica.items():
         if gio.lower() not in mappa:
             righe_class.append([gio.upper(), 0] + [""] * (len(righe_class[0]) - 2))
             mappa[gio.lower()] = len(righe_class) - 1
         while len(righe_class[mappa[gio.lower()]]) <= idx_g: righe_class[mappa[gio.lower()]].append("")
         righe_class[mappa[gio.lower()]][idx_g] = dati['punti']
-        tot = sum([int(str(x)) for x in righe_class[mappa[gio.lower()]][2:] if str(x).isdigit()])
-        righe_class[mappa[gio.lower()]][1] = tot
+        righe_class[mappa[gio.lower()]][1] = sum([int(str(x)) for x in righe_class[mappa[gio.lower()]][2:] if str(x).isdigit()])
     service.spreadsheets().values().update(spreadsheetId=SPREADSHEET_ID, range="Classifica!A1", valueInputOption="USER_ENTERED", body={"values": righe_class}).execute()
 
     if vincitori:
         res_cassa = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D").execute()
-        righe_cassa = res_cassa.get('values', [])
-        
-        if not righe_cassa:
-            righe_cassa = [["Giornata", "Descrizione", "Entrate", "Saldo Totale"]]
-            saldo_attuale = 0.0
-        else:
-            saldo_attuale = estrai_numero(righe_cassa[-1][3]) if len(righe_cassa[-1]) > 3 else 0.0
-
-        nuove_righe_cassa = []
+        righe_cassa = res_cassa.get('values', []) or [["Giornata", "Descrizione", "Entrate", "Saldo Totale"]]
+        saldo = estrai_numero(righe_cassa[-1][3]) if len(righe_cassa[-1]) > 3 and righe_cassa[-1][3] != "Saldo Totale" else 0.0
+        nuove = []
         for v in vincitori:
-            descrizione = f"{v['nome'].upper()} chiude la schedina!"
-            gia_registrato = any(len(r) > 1 and r[0] == f"Giornata {giornata}" and r[1] == descrizione for r in righe_cassa)
-                    
-            if not gia_registrato:
-                saldo_attuale += v["importo"]
-                nuova_riga = [
-                    f"Giornata {giornata}",
-                    descrizione,
-                    f"{v['importo']:.2f} €".replace(".", ","),
-                    f"{saldo_attuale:.2f} €".replace(".", ",")
-                ]
-                nuove_righe_cassa.append(nuova_riga)
-                righe_cassa.append(nuova_riga)
-
-        if nuove_righe_cassa:
-            service.spreadsheets().values().append(
-                spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D",
-                valueInputOption="USER_ENTERED", body={"values": nuove_righe_cassa}
-            ).execute()
+            descr = f"{v['nome'].upper()} chiude la schedina!"
+            if not any(len(r) > 1 and r[0] == f"Giornata {giornata}" and r[1] == descr for r in righe_cassa):
+                saldo += v["importo"]
+                nuove.append([f"Giornata {giornata}", descr, f"{v['importo']:.2f} €".replace(".", ","), f"{saldo:.2f} €".replace(".", ",")])
+                righe_cassa.append(nuove[-1])
+        if nuove:
+            service.spreadsheets().values().append(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D", valueInputOption="USER_ENTERED", body={"values": nuove}).execute()
             report += "💰 *Vincite registrate in Cassa!*\n"
-
     return report
 
 # ==========================================
-# 4. GESTIONE TELEGRAM E MENU
+# GESTIONE TELEGRAM E MENU CON PULSANTE KEY
 # ==========================================
+async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Uso corretto: `/setkey <tua_chiave_api>`", parse_mode="Markdown")
+        return
+    nuova_chiave = args[0].strip()
+    try:
+        with open('chiave_api.txt', 'w') as f: f.write(nuova_chiave)
+        await update.message.reply_text("✅ **Chiave API Gemini aggiornata con successo!**", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Errore: {e}")
+
+async def gestisci_testo_chiave(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    nuova_chiave = update.message.text.strip()
+    try:
+        with open('chiave_api.txt', 'w') as f: f.write(nuova_chiave)
+        await update.message.reply_text("✅ **Chiave API Gemini aggiornata con successo!**\nScrivi /start per tornare al menu.", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Errore: {e}")
+    return ConversationHandler.END
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("📥 Carica Schedina", callback_data="menu_carica")],
-        [InlineKeyboardButton("⚽ Aggiorna Risultati & Punteggi", callback_data="menu_aggiorna")]
+        [InlineKeyboardButton("⚽ Aggiorna Risultati & Punteggi", callback_data="menu_aggiorna")],
+        [InlineKeyboardButton("⚙️ Cambia Chiave API", callback_data="menu_cambia_key")]
     ]
-    await update.message.reply_text("👋 *Menu Principale Toto-Amici*\nCosa vuoi fare?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_text("👋 *Menu Principale Toto-Amici*\nCosa vuoi fare?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
     return MENU
 
 async def gestisci_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     if query.data == "menu_carica":
-        keyboard = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
-        await query.edit_message_text("📸 Perfetto! Mandami la foto della bolletta.", reply_markup=InlineKeyboardMarkup(keyboard))
-        return RICEVI_FOTO
+        context.user_data['foto_ricevute'] = []
+        kb = [[InlineKeyboardButton("✅ Finito / Avanti", callback_data="fine_invio_foto")], [InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
+        await query.edit_message_text("📸 **Invio Foto Multiple**\nMandami pure una o più foto della bolletta. Quando hai finito, clicca su **Finito / Avanti**!", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return ATTESA_FOTO_MULTIPLE
     elif query.data == "menu_aggiorna":
-        keyboard = []
-        riga = []
-        for i in range(1, 39):
-            riga.append(InlineKeyboardButton(str(i), callback_data=f"update_{i}"))
-            if len(riga) == 5 or i == 38:
-                keyboard.append(riga)
-                riga = []
-        keyboard.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
-        await query.edit_message_text("📅 Quale **Giornata** vuoi aggiornare e calcolare?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        kb = [[InlineKeyboardButton(str(i), callback_data=f"update_{i}") for i in range(r, r+5)] for r in range(1, 39, 5)]
+        kb[-1] = [InlineKeyboardButton(str(i), callback_data=f"update_{i}") for i in range(36, 39)]
+        kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+        await query.edit_message_text("📅 Quale **Giornata** vuoi aggiornare e calcolare?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return SCELTA_GIORNATA_UPDATE
+    elif query.data == "menu_cambia_key":
+        kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
+        await query.edit_message_text("🔑 **Cambio Chiave API**\nIncolla qui sotto la tua nuova chiave API di Google AI Studio (Gemini) come un normale messaggio di testo:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return ATTESA_NUOVA_KEY
 
-async def ricevi_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ricevi_foto_multipla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     photo_file = await update.message.photo[-1].get_file()
     if not os.path.exists("temp_telegram"): os.makedirs("temp_telegram")
-    percorso_foto = f"temp_telegram/schedina_tmp.jpg"
+    
+    percorso_foto = f"temp_telegram/schedina_{len(context.user_data.get('foto_ricevute', [])) + 1}.jpg"
     await photo_file.download_to_drive(percorso_foto)
-    context.user_data['percorso_foto'] = percorso_foto
+    
+    if 'foto_ricevute' not in context.user_data: context.user_data['foto_ricevute'] = []
+    context.user_data['foto_ricevute'].append(percorso_foto)
+    
+    tot = len(context.user_data['foto_ricevute'])
+    kb = [
+        [InlineKeyboardButton(f"✅ Finito (Inviate {tot} foto)", callback_data="fine_invio_foto")],
+        [InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]
+    ]
+    await update.message.reply_text(f"📸 Foto #{tot} ricevuta! Mandane altre oppure clicca **Finito**.", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    keyboard = []
-    riga = []
-    for i in range(1, 39):
-        riga.append(InlineKeyboardButton(str(i), callback_data=f"giornata_{i}"))
-        if len(riga) == 5 or i == 38:
-            keyboard.append(riga)
-            riga = []
-    keyboard.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
-    await update.message.reply_text("📅 A quale **Giornata** si riferisce la bolletta caricata?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+async def fine_invio_foto_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    if not context.user_data.get('foto_ricevute'):
+        await query.edit_message_text("⚠️ Non hai inviato nessuna foto! Mandane almeno una.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]))
+        return ATTESA_FOTO_MULTIPLE
+        
+    kb = [[InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(r, r+5)] for r in range(1, 39, 5)]
+    kb[-1] = [InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(36, 39)]
+    kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+    await query.edit_message_text("📅 A quale **Giornata** si riferisce questa bolletta?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     return SCELTA_GIORNATA
 
 async def scegli_giornata(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     context.user_data['giornata'] = query.data.split('_')[1]
     
-    keyboard = []
-    riga = []
-    for nome in GIOCATORI:
-        riga.append(InlineKeyboardButton(nome.capitalize(), callback_data=f"giocatore_{nome}"))
-        if len(riga) == 4:
-            keyboard.append(riga)
-            riga = []
-    if riga: keyboard.append(riga)
-    keyboard.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
-    
-    await query.edit_message_text(text=f"✅ Giornata: {context.user_data['giornata']}\n\n👤 Di chi è?", reply_markup=InlineKeyboardMarkup(keyboard))
+    kb = [[InlineKeyboardButton(GIOCATORI[i].capitalize(), callback_data=f"giocatore_{GIOCATORI[i]}") for i in range(r, r+4)] for r in range(0, len(GIOCATORI), 4)]
+    kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+    await query.edit_message_text(text=f"✅ Giornata: {context.user_data['giornata']}\n\n👤 Di chi è?", reply_markup=InlineKeyboardMarkup(kb))
     return SCELTA_GIOCATORE
 
 async def scegli_giocatore(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     context.user_data['giocatore'] = query.data.split('_')[1]
     
-    keyboard = [[InlineKeyboardButton("✅ Conferma", callback_data="conferma_si")], [InlineKeyboardButton("❌ Annulla", callback_data="conferma_no")]]
-    await query.edit_message_text(text=f"⚠️ Vuoi elaborare:\n👤 **{context.user_data['giocatore'].capitalize()}** - 📅 **Giornata {context.user_data['giornata']}**?", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    kb = [[InlineKeyboardButton("✅ Conferma", callback_data="conferma_si")], [InlineKeyboardButton("❌ Annulla", callback_data="conferma_no")]]
+    await query.edit_message_text(text=f"⚠️ Vuoi elaborare:\n👤 **{context.user_data['giocatore'].capitalize()}** - 📅 **Giornata {context.user_data['giornata']}** ({len(context.user_data.get('foto_ricevute', []))} foto)?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     return CONFERMA
 
 async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     if query.data == "conferma_no":
         await pulisci_dati(context)
         await query.edit_message_text("❌ Operazione annullata. Scrivi /start per riaprire il menu.")
         return ConversationHandler.END
 
-    gio, giorn, foto = context.user_data['giocatore'], context.user_data['giornata'], context.user_data['percorso_foto']
-    await query.edit_message_text(f"⏳ Analisi in corso per {gio.capitalize()} (Giornata {giorn})...")
+    gio, giorn, foto_lista = context.user_data['giocatore'], context.user_data['giornata'], context.user_data.get('foto_ricevute', [])
+    await query.edit_message_text(f"⏳ Analisi in corso per {gio.capitalize()} (Giornata {giorn}) con {len(foto_lista)} immagini...")
     
     try:
-        risultato_json = analizza_schedina_con_gemini(foto)
+        risultato_json = analizza_schedine_multiple(foto_lista)
+        risultato_json = normalizza_nomi_partite(risultato_json, giorn)
         successo = scrivi_su_sheets_con_regole(gio, giorn, risultato_json)
         msg = f"✅ Schedina caricata con successo!" if successo else "⚠️ Errore nella scrittura su Sheets."
         await query.message.reply_text(msg)
     except Exception as e:
-        await query.message.reply_text(f"❌ Errore: {e}")
+        await query.message.reply_text(f"❌ Errore durante l'elaborazione: {e}")
         
     await pulisci_dati(context)
     return ConversationHandler.END
 
 async def scegli_giornata_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     giornata = query.data.split('_')[1]
-    
-    await query.edit_message_text(f"⏳ Avvio aggiornamento manuale per la **Giornata {giornata}**...\nSto contattando l'API Football e aggiornando Google Sheets.", parse_mode="Markdown")
-    
+    await query.edit_message_text(f"⏳ Aggiornamento manuale Giornata {giornata}...")
     report = esegui_calcolo_risultati(giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
     return ConversationHandler.END
 
 async def annulla_azione_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    query = update.callback_query; await query.answer()
     await pulisci_dati(context)
     await query.edit_message_text("❌ Operazione annullata. Scrivi /start per riaprire il menu.")
     return ConversationHandler.END
@@ -403,32 +411,36 @@ async def annulla_tutto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
-    if 'percorso_foto' in context.user_data:
-        foto = context.user_data['percorso_foto']
-        if os.path.exists(foto):
-            os.remove(foto)
-        del context.user_data['percorso_foto']
+    if 'foto_ricevute' in context.user_data:
+        for foto in context.user_data['foto_ricevute']:
+            if os.path.exists(foto): os.remove(foto)
+        del context.user_data['foto_ricevute']
 
-# --- AGGIORNAMENTO AUTOMATICO (CRON) ---
 async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
     giornata = ottieni_giornata_corrente()
     report = esegui_calcolo_risultati(giornata)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AGGIORNAMENTO AUTOMATICO (Giornata {giornata})**\n\n{report}", parse_mode="Markdown")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
+
+async def post_init(application: Application):
+    """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
+    await application.bot.set_my_commands([
+        ("start", "Apri il menu principale"),
+        ("setkey", "Cambia al volo la chiave API di Gemini")
+    ])
 
 def main():
-    app = Application.builder().token(TOKEN).build()
-    
+    app = Application.builder().token(TOKEN).post_init(post_init).build()
     tz = pytz.timezone('Europe/Rome')
-    app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=17, minute=30, tzinfo=tz))
-    app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=20, minute=30, tzinfo=tz))
-    app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=23, minute=0, tzinfo=tz))
+    for h, m in [(17,30), (20,30), (23,0)]:
+        app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=h, minute=m, tzinfo=tz))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             MENU: [CallbackQueryHandler(gestisci_menu, pattern="^menu_")],
-            RICEVI_FOTO: [
-                MessageHandler(filters.PHOTO, ricevi_foto),
+            ATTESA_FOTO_MULTIPLE: [
+                MessageHandler(filters.PHOTO, ricevi_foto_multipla),
+                CallbackQueryHandler(fine_invio_foto_callback, pattern="^fine_invio_foto$"),
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
             ],
             SCELTA_GIORNATA: [
@@ -440,18 +452,23 @@ def main():
                 CallbackQueryHandler(scegli_giocatore, pattern="^giocatore_")
             ],
             CONFERMA: [
-                CallbackQueryHandler(esegui_conferma, pattern="^conferma_")
+                CallbackQueryHandler(esegui_conferma, pattern="^conferma_"),
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
             ],
             SCELTA_GIORNATA_UPDATE: [
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$"),
                 CallbackQueryHandler(scegli_giornata_update, pattern="^update_")
+            ],
+            ATTESA_NUOVA_KEY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, gestisci_testo_chiave),
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
             ]
         },
         fallbacks=[CommandHandler("cancel", annulla_tutto)]
     )
 
     app.add_handler(conv_handler)
-    print("🤖 Super-Bot Telegram avviato! In attesa di comandi...")
+    print("🤖 Super-Bot Telegram (con tasto UI cambio chiave) avviato...")
     app.run_polling()
 
 if __name__ == '__main__':
