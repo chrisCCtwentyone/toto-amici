@@ -1,3 +1,22 @@
+# ==============================================================================
+# SCRIPT ARCHIVIATO — NON IN USO ATTIVO
+# Archiviato il: 27/08/2026
+#
+# Questo script leggeva le foto delle schedine da una cartella locale
+# (schedine_whatsapp/) e le inviava a Gemini Vision per l'analisi, 
+# scrivendo poi i risultati su Google Sheets.
+#
+# MOTIVO ARCHIVIAZIONE: Tutte le funzionalità di questo script sono ora
+# integrate nel bot_telegram.py, che gestisce l'intero flusso in modo
+# interattivo via Telegram (invio foto in chat → Gemini → Sheets).
+#
+# COME RIPRISTINARE: Se in futuro si volesse tornare all'inserimento
+# manuale da PC, riportare questo file nella root del progetto e:
+#   1. Impostare SPREADSHEET_ID correttamente (vedi .env o variabili d'ambiente)
+#   2. Assicurarsi che chiave_api.txt e credenziali.json siano presenti
+#   3. Creare la struttura cartelle schedine_whatsapp/<giornata_N>/
+# ==============================================================================
+
 import os
 import json
 import time
@@ -8,7 +27,8 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 # --- SETUP CREDENZIALI ---
-SPREADSHEET_ID = '1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE'
+# NOTA: SPREADSHEET_ID va caricato da variabile d'ambiente o .env
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "INSERISCI_QUI_LO_SPREADSHEET_ID")
 SERVICE_ACCOUNT_FILE = 'credenziali.json'
 FILE_LOG = 'giocate_completate.txt'
 

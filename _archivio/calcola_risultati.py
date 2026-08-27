@@ -1,8 +1,29 @@
+# ==============================================================================
+# SCRIPT ARCHIVIATO — NON IN USO ATTIVO
+# Archiviato il: 27/08/2026
+#
+# Questo script calcolava manualmente gli esiti delle giocate, aggiornava
+# la classifica e il fondo cassa su Google Sheets, interrogando le API
+# di Football-Data.org. Si lanciava da riga di comando inserendo il numero
+# della giornata quando richiesto.
+#
+# MOTIVO ARCHIVIAZIONE: Tutte le funzionalità di questo script sono ora
+# integrate nel bot_telegram.py:
+#   - Calcolo automatico via Cron Job (17:30, 20:30, 23:00 ogni giorno)
+#   - Calcolo manuale via menu Telegram "⚽ Aggiorna Risultati & Punteggi"
+#
+# COME RIPRISTINARE: Se in futuro si volesse tornare al calcolo manuale
+# da terminale, riportare questo file nella root del progetto e:
+#   1. Creare un file .env con SPREADSHEET_ID e FOOTBALL_DATA_KEY
+#   2. Assicurarsi che credenziali.json sia presente nella root
+#   3. Eseguire: python calcola_risultati.py
+# ==============================================================================
+
 import os
 import re
 import sys
 import requests
-from dotenv import load_dotenv  # <-- LIBRERIA AGGIUNTA
+from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
