@@ -35,12 +35,14 @@ GIOCATORI = [
 LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
 
 # Stati Conversazione
-MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY = range(7)
+MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, CONFERMA_LETTURA_IA, SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY = range(8)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
     logging.warning("⚠️ ATTENZIONE: Variabili d'ambiente mancanti. Il bot potrebbe non funzionare correttamente!")
+
+last_ping_time = None
 
 # ==========================================
 # SERVER WEB PER MANTENERE IL BOT SVEGLIO (TRUCCO RENDER)
@@ -49,6 +51,24 @@ app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
+    global last_ping_time
+    from datetime import datetime
+    now = datetime.now()
+    if last_ping_time is not None:
+        delta = (now - last_ping_time).total_seconds()
+        if delta > 1800:  # > 30 minuti
+            try:
+                requests.post(
+                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                    json={
+                        "chat_id": ADMIN_ID,
+                        "text": f"⚠️ **ALLARME DOWNTIME**\nMi sono appena svegliato, ma non ricevevo ping da {int(delta/60)} minuti. \nControlla Render o cron-job.org!",
+                        "parse_mode": "Markdown"
+                    }
+                )
+            except Exception as e:
+                logging.error(f"Errore invio alert Telegram: {e}")
+    last_ping_time = now
     return "✅ Il Bot Toto-Amici è online e sta funzionando perfettamente 24/7!"
 
 def run_web_server():
@@ -397,16 +417,59 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     gio, giorn, foto_lista = context.user_data['giocatore'], context.user_data['giornata'], context.user_data.get('foto_ricevute', [])
-    await query.edit_message_text(f"⏳ Analisi in corso per {gio.capitalize()} (Giornata {giorn}) con {len(foto_lista)} immagini...")
+    await query.edit_message_text(f"⏳ L'IA Gemini sta analizzando le foto ({len(foto_lista)}) di {gio.capitalize()}...")
     
     try:
-        risultato_json = analizza_schedine_multiple(foto_lista)
-        risultato_json = normalizza_nomi_partite(risultato_json, giorn)
-        successo = scrivi_su_sheets_con_regole(gio, giorn, risultato_json)
-        msg = f"✅ Schedina caricata con successo!" if successo else "⚠️ Errore nella scrittura su Sheets."
-        await query.message.reply_text(msg)
+        risultato_json_raw = analizza_schedine_multiple(foto_lista)
+        risultato_json = normalizza_nomi_partite(risultato_json_raw, giorn)
+        
+        # Salva in sessione per dopo
+        context.user_data['risultato_json'] = risultato_json
+        
+        # Genera riepilogo per admin
+        dati = json.loads(risultato_json)
+        vincita = dati.get("vincita_potenziale", "0")
+        eventi = dati.get("eventi", dati)
+        
+        msg_riepilogo = f"🤖 **Lettura IA Completata!**\n\n"
+        msg_riepilogo += f"💰 **Vincita Potenziale:** {vincita} €\n"
+        
+        for categoria in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
+            evs = eventi.get(categoria, [])
+            if evs:
+                msg_riepilogo += f"\n📌 **{categoria} ({len(evs)} eventi):**\n"
+                for ev in evs:
+                    msg_riepilogo += f"- {ev.get('partita', '???')} -> {ev.get('pronostico', '')} (@{ev.get('quota', '')})\n"
+
+        kb = [
+            [InlineKeyboardButton("✅ Conferma e Salva su Sheets", callback_data="salva_ia_si")],
+            [InlineKeyboardButton("❌ Annulla (Lettura Errata)", callback_data="salva_ia_no")]
+        ]
+        await query.edit_message_text(msg_riepilogo, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        return CONFERMA_LETTURA_IA
+        
     except Exception as e:
-        await query.message.reply_text(f"❌ Errore durante l'elaborazione: {e}")
+        await query.edit_message_text(f"❌ Errore durante l'elaborazione IA: {e}")
+        await pulisci_dati(context)
+        return ConversationHandler.END
+
+async def esegui_salvataggio_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    if query.data == "salva_ia_no":
+        await pulisci_dati(context)
+        await query.edit_message_text("❌ Salvataggio annullato. Carica foto più chiare o correggi a mano.")
+        return ConversationHandler.END
+        
+    gio, giorn = context.user_data['giocatore'], context.user_data['giornata']
+    risultato_json = context.user_data.get('risultato_json')
+    
+    await query.edit_message_text("⏳ Scrittura su Google Sheets in corso...")
+    try:
+        successo = scrivi_su_sheets_con_regole(gio, giorn, risultato_json)
+        msg = f"✅ Schedina salvata definitivamente nel Database!" if successo else "⚠️ Errore durante la scrittura su Sheets."
+        await query.edit_message_text(msg)
+    except Exception as e:
+        await query.edit_message_text(f"❌ Errore durante la scrittura: {e}")
         
     await pulisci_dati(context)
     return ConversationHandler.END
@@ -482,6 +545,10 @@ def main():
             ],
             CONFERMA: [
                 CallbackQueryHandler(esegui_conferma, pattern="^conferma_"),
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
+            ],
+            CONFERMA_LETTURA_IA: [
+                CallbackQueryHandler(esegui_salvataggio_ia, pattern="^salva_ia_"),
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
             ],
             SCELTA_GIORNATA_UPDATE: [

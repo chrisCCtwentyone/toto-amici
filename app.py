@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
+import pytz
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
@@ -106,6 +108,18 @@ def scarica_risultati_api(giornata):
                 nome_ufficiale = f"{casa_full} - {ospite_full}"
                 partite_ufficiali.append((casa_full, ospite_full, nome_ufficiale))
                 status = m["status"]
+                
+                # Parsing della data e orario (da UTC a Europe/Rome)
+                utc_date_str = m.get("utcDate", "")
+                data_formattata = ""
+                if utc_date_str:
+                    try:
+                        utc_dt = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+                        ita_dt = utc_dt.astimezone(pytz.timezone("Europe/Rome"))
+                        data_formattata = ita_dt.strftime("%d/%m %H:%M")
+                    except Exception:
+                        pass
+
                 if status in ["FINISHED", "IN_PLAY", "PAUSED"]:
                     h = m["score"]["fullTime"]["home"] or 0
                     a = m["score"]["fullTime"]["away"] or 0
@@ -114,7 +128,11 @@ def scarica_risultati_api(giornata):
                     score_str = "Da giocare"
                 else:
                     score_str = "Rinviata/Altro"
-                risultati_mappati[nome_ufficiale] = score_str
+                    
+                risultati_mappati[nome_ufficiale] = {
+                    "score": score_str,
+                    "data": data_formattata
+                }
     except Exception:
         pass
     return partite_ufficiali, risultati_mappati
@@ -356,7 +374,9 @@ with tab_live:
                 esito = str(row.get('Esito', ''))
                 partita_nome = str(row.get('Partita', ''))
                 partita_normalizzata = normalizza_partita_completa(partita_nome, partite_ufficiose)
-                risultato_match = risultati_live.get(partita_normalizzata, "")
+                risultato_info = risultati_live.get(partita_normalizzata, {})
+                risultato_match = risultato_info.get("score", "")
+                data_match = risultato_info.get("data", "")
 
                 if "VINTA" in esito:
                     badge_color, badge_icon = "green", ":material/check_circle:"
@@ -372,7 +392,11 @@ with tab_live:
                 with st.container(border=True):
                     col_match, col_esito = st.columns([4, 1])
                     with col_match:
-                        st.markdown(f"**:material/sports_soccer: {partita_normalizzata}**")
+                        header_partita = f"**:material/sports_soccer: {partita_normalizzata}**"
+                        if data_match:
+                            header_partita += f" · 🗓️ {data_match}"
+                        st.markdown(header_partita)
+                        
                         pronostico = row.get('Pronostico', '')
                         quota = row.get('Quota', '')
                         punti = row.get('Punti Partita', '0')
