@@ -103,7 +103,7 @@ Toto_Amici_Progetto/
 - ✅ Implementato Health-Check (`bot_telegram.py`): aggiunto un controllo nel server Flask. Se il bot non riceve un ping (es. da cron-job.org) per più di 30 minuti, alla prima accensione utile manda un allarme su Telegram all'admin avvisando del downtime.
 - ✅ Aggiunte Data e Orari in Schedine Live (`app.py`): il frontend estrae ora `utcDate` dalle API di Football-Data, le converte al fuso `Europe/Rome` e le mostra accanto alle partite in diretta (es. 🗓️ 27/08 20:45).
 - ✅ Ottimizzazione UI e UX (`app.py`): convertiti tutti gli `st.dataframe` in `st.table` (tabelle native HTML) per disabilitare la fastidiosa selezione azzurra delle celle su mobile durante lo scrolling.
-- ✅ Ottimizzazione Caching (`app.py`): aumentato il TTL della cache da 60 a 300 secondi (5 minuti). Ora il cambio di giornata/giocatore nei tab Live è istantaneo e non innesca caricamenti lenti. L'utente può usare il tasto "Aggiorna" per un refresh manuale immediato.
+- ✅ Ottimizzazione Caching (`app.py`): regolato il TTL della cache a 180 secondi (3 minuti). Bilanciamento perfetto tra reattività immediata per l'utente e bassissimo impatto sui limiti della API gratuita di Football-Data (massimo 1 richiesta API ogni 3 minuti per view). L'utente può comunque usare il tasto "Aggiorna" per forzare un refresh.
 
 ### 27/08/2026 — Sessione 2 (Redesign Web App)
 **Operazioni eseguite:**
