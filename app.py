@@ -59,7 +59,7 @@ def get_sheets_service():
 # ==========================================
 # CARICAMENTO DATI — UNICA CHIAMATA BATCH
 # ==========================================
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=180)
 def carica_tutti_i_dati():
     """
     Carica Classifica, Cassa e Giocate in UNA sola chiamata batchGet.
@@ -92,7 +92,7 @@ def carica_tutti_i_dati():
         st.error(f"Errore di caricamento dati: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=180)
 def scarica_risultati_api(giornata):
     """Risultati live Serie A dalla Football-Data API."""
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
