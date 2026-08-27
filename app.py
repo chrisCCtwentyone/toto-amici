@@ -59,7 +59,7 @@ def get_sheets_service():
 # ==========================================
 # CARICAMENTO DATI — UNICA CHIAMATA BATCH
 # ==========================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def carica_tutti_i_dati():
     """
     Carica Classifica, Cassa e Giocate in UNA sola chiamata batchGet.
@@ -92,7 +92,7 @@ def carica_tutti_i_dati():
         st.error(f"Errore di caricamento dati: {e}")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def scarica_risultati_api(giornata):
     """Risultati live Serie A dalla Football-Data API."""
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
@@ -256,21 +256,16 @@ with tab_classifica:
         # --- CLASSIFICA COMPLETA (full width, mobile-friendly) ---
         st.subheader("Classifica completa")
         df_display = df_classifica[['Giocatore', 'Punti Totali']].copy()
+        df_display['Punti Totali'] = df_display['Punti Totali'].astype(str) + " pt"
         df_display.index = df_display.index + 1
-        st.dataframe(
-            df_display,
-            hide_index=False,
-            width="stretch",
-            column_config={
-                "Giocatore": st.column_config.TextColumn("Giocatore"),
-                "Punti Totali": st.column_config.NumberColumn("Punti", format="%d pt"),
-            }
-        )
+        st.table(df_display)
 
         # --- STORICO GIORNATE ---
         with st.expander(":material/history: Storico punteggi per giornata"):
             df_classifica_pulita = df_classifica.replace("", pd.NA).dropna(axis=1, how='all').fillna("")
-            st.dataframe(df_classifica_pulita, hide_index=True, width="stretch")
+            if not df_classifica_pulita.empty and 'Giocatore' in df_classifica_pulita.columns:
+                df_classifica_pulita = df_classifica_pulita.set_index('Giocatore')
+            st.table(df_classifica_pulita)
 
     else:
         st.info("Classifica non ancora disponibile.")
@@ -303,12 +298,10 @@ with tab_classifica:
             st.success("OBIETTIVO RAGGIUNTO! I premi sono interamente coperti.", icon=":material/emoji_events:")
 
         with st.expander(":material/receipt_long: Movimenti di cassa"):
-            st.dataframe(
-                df_cassa,
-                hide_index=True,
-                width="stretch",
-                column_config={"Descrizione": st.column_config.TextColumn("Descrizione", width="large")}
-            )
+            df_cassa_view = df_cassa.copy()
+            if not df_cassa_view.empty and 'Giornata' in df_cassa_view.columns:
+                df_cassa_view = df_cassa_view.set_index('Giornata')
+            st.table(df_cassa_view)
     else:
         st.metric(label=":material/account_balance_wallet: Montepremi attuale", value="0,00 €")
         st.caption("Nessun movimento registrato.")
@@ -470,7 +463,7 @@ with tab_confronto:
                     aggfunc=lambda x: ' | '.join(x)
                 ).fillna("—")
 
-                st.dataframe(pivot, width="stretch", height=420)
+                st.table(pivot)
             else:
                 st.info("Nessuna giocata trovata per questa giornata.")
     else:
@@ -594,21 +587,11 @@ with tab_stats:
         with st.expander(":material/table_chart: Tabella completa statistiche giocatori"):
             if stats_giocatori:
                 df_pg_full = pd.DataFrame(stats_giocatori).sort_values('Win_Rate', ascending=False)
-                st.dataframe(
-                    df_pg_full.rename(columns={
-                        'Win_Rate': 'Win Rate %',
-                        'Quota_Media': 'Quota Media',
-                    }),
-                    hide_index=True,
-                    width="stretch",
-                    column_config={
-                        "Giocatore": st.column_config.TextColumn("Giocatore"),
-                        "Win Rate %": st.column_config.NumberColumn("Win Rate %", format="%.1f%%"),
-                        "Quota Media": st.column_config.NumberColumn("Quota Media", format="%.2f"),
-                        "Vinte": st.column_config.NumberColumn("Vinte"),
-                        "Totali": st.column_config.NumberColumn("Totali (definitivi)"),
-                    }
-                )
+                df_pg_full = df_pg_full.rename(columns={'Win_Rate': 'Win Rate %', 'Quota_Media': 'Quota Media'})
+                df_pg_full['Win Rate %'] = df_pg_full['Win Rate %'].apply(lambda x: f"{x:.1f}%")
+                df_pg_full['Quota Media'] = df_pg_full['Quota Media'].apply(lambda x: f"{x:.2f}")
+                df_pg_full = df_pg_full.set_index("Giocatore")
+                st.table(df_pg_full)
     else:
         st.info("Nessuna giocata registrata.")
 
@@ -643,7 +626,7 @@ with tab_regolamento:
                 "Posizione": ["🥇 1°", "🥈 2°", "🥉 3°", "4°", "5°"],
                 "Premio": ["1.200 €", "800 €", "500 €", "300 €", "200 €"]
             })
-            st.dataframe(df_premi, hide_index=True, width="stretch")
+            st.table(df_premi.set_index("Posizione"))
 
     with col_r2:
         with st.container(border=True):
@@ -653,7 +636,7 @@ with tab_regolamento:
                 "Punti base": ["6", "4", "1", "2", "+10"],
                 "Con quota ≥ 3.50": ["12", "8", "2", "4", "—"]
             })
-            st.dataframe(df_punti, hide_index=True, width="stretch")
+            st.table(df_punti.set_index("Tipo"))
             st.caption("🚀 Se la quota di un singolo evento è ≥ 3.50, i punti raddoppiano. Fa fede la quota in bolletta.")
 
         with st.container(border=True):
