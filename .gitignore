@@ -1,7 +1,7 @@
 # Credenziali e API
 credenziali.json
 chiave_api.txt
-.streamlit/
+.streamlit/secrets.toml
 .env
 
 # Immagini e log (non servono al server web)

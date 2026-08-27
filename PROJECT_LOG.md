@@ -97,7 +97,21 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
-### 27/08/2026 — Sessione 1 (Analisi e Pulizia)
+### 27/08/2026 — Sessione 2 (Redesign Web App)
+**Operazioni eseguite:**
+- ✅ Redesign completo `app.py`: tema scuro, card con bordi, podio con sparkline, badge nativi, icone Material Symbols
+- ✅ Creato `.streamlit/config.toml` con tema scuro + chiaro automatico (segue sistema operativo utente)
+- ✅ Fix `.gitignore`: ora esclude solo `secrets.toml`, non tutta la cartella `.streamlit/` → `config.toml` viene committato e visto da Streamlit Cloud
+- ✅ Performance: `@st.cache_resource` per il service Sheets + singola chiamata `batchGet` (1 richiesta invece di 3)
+- ✅ Fix bug win rate: esclude esiti IN CORSO e vuoti dal calcolo percentuale
+- ✅ Fix squadra maledetta: delta allineato visivamente alle altre statistiche
+- ✅ Fix ArrowInvalid: colonne numeriche miste nella tabella punteggi ora tutte stringhe
+- ✅ Credenziali: doppio livello locale (`credenziali.json`) / cloud (`st.secrets`) per sviluppo senza problemi di parsing TOML
+
+**Note architettura:**
+- Il tema light/dark segue automaticamente il sistema dell'utente (iPhone dark → app dark, iPhone light → app light)
+- Il toggle manuale è accessibile da ⋮ → Settings → Theme (nascosto dall'header CSS, ma il sistema auto funziona)
+
 **Operazioni eseguite:**
 - ✅ Analisi completa del codebase e dell'architettura
 - ✅ Confermata obsolescenza di `bot_lettore.py` e `calcola_risultati.py` (funzioni migrate in `bot_telegram.py`)

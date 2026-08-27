@@ -1,0 +1,106 @@
+# =====================================================
+# TEMA TOTO-AMICI 2026 — Supporto Light + Dark Mode
+# L'utente può switchare dal menu ⋮ → Settings → Theme
+# =====================================================
+
+# Opzioni globali (valide per entrambi i temi)
+[theme]
+baseRadius   = "8px"
+buttonRadius = "8px"
+baseFontSize = 14
+
+# --- TEMA SCURO (default) ---
+[theme.dark]
+primaryColor             = "#22c55e"
+backgroundColor          = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor                = "#f1f5f9"
+linkColor                = "#22c55e"
+borderColor              = "#334155"
+codeTextColor            = "#cbd5e1"
+codeBackgroundColor      = "#1e293b"
+showWidgetBorder         = true
+
+font               = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont        = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+codeFont           = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+headingFontSizes   = ["30px", "22px", "18px", "16px", "14px", "12px"]
+headingFontWeights = [700, 600, 600, 600, 500, 500]
+linkUnderline      = false
+
+greenColor  = "#22c55e"
+redColor    = "#ef4444"
+yellowColor = "#f59e0b"
+orangeColor = "#f97316"
+blueColor   = "#60a5fa"
+violetColor = "#a78bfa"
+grayColor   = "#94a3b8"
+
+chartCategoricalColors = [
+    "#22c55e", "#60a5fa", "#f59e0b", "#ef4444",
+    "#a78bfa", "#38bdf8", "#fb923c", "#f472b6",
+    "#34d399", "#818cf8", "#fbbf24", "#4ade80",
+]
+chartSequentialColors = [
+    "#052e16", "#064e3b", "#065f46", "#047857",
+    "#059669", "#10b981", "#34d399", "#6ee7b7",
+    "#a7f3d0", "#d1fae5"
+]
+dataframeBorderColor            = "#334155"
+dataframeHeaderBackgroundColor  = "#1e293b"
+
+[theme.dark.sidebar]
+backgroundColor          = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+codeBackgroundColor      = "#1e293b"
+textColor                = "#f1f5f9"
+borderColor              = "#334155"
+primaryColor             = "#22c55e"
+
+# --- TEMA CHIARO ---
+[theme.light]
+primaryColor             = "#16a34a"
+backgroundColor          = "#ffffff"
+secondaryBackgroundColor = "#f0fdf4"
+textColor                = "#0f172a"
+linkColor                = "#16a34a"
+borderColor              = "#d1d5db"
+codeTextColor            = "#1f2937"
+codeBackgroundColor      = "#f0fdf4"
+showWidgetBorder         = true
+
+font               = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont        = "'Inter':https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap"
+codeFont           = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
+headingFontSizes   = ["30px", "22px", "18px", "16px", "14px", "12px"]
+headingFontWeights = [700, 600, 600, 600, 500, 500]
+linkUnderline      = false
+
+greenColor  = "#16a34a"
+redColor    = "#dc2626"
+yellowColor = "#d97706"
+orangeColor = "#ea580c"
+blueColor   = "#2563eb"
+violetColor = "#7c3aed"
+grayColor   = "#6b7280"
+
+chartCategoricalColors = [
+    "#16a34a", "#2563eb", "#d97706", "#dc2626",
+    "#7c3aed", "#0284c7", "#ea580c", "#db2777",
+    "#059669", "#4f46e5", "#b45309", "#15803d",
+]
+chartSequentialColors = [
+    "#052e16", "#064e3b", "#065f46", "#047857",
+    "#059669", "#10b981", "#34d399", "#6ee7b7",
+    "#a7f3d0", "#d1fae5"
+]
+dataframeBorderColor            = "#d1d5db"
+dataframeHeaderBackgroundColor  = "#f0fdf4"
+
+[theme.light.sidebar]
+backgroundColor          = "#f0fdf4"
+secondaryBackgroundColor = "#dcfce7"
+codeBackgroundColor      = "#f0fdf4"
+textColor                = "#0f172a"
+borderColor              = "#d1d5db"
+primaryColor             = "#16a34a"
