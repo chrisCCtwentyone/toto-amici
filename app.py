@@ -250,20 +250,11 @@ with tab_classifica:
 
                 with podio_cols[i]:
                     emoji = EMOJI_POSIZIONE.get(i, f"#{i+1}")
-                    if sparkline_data:
-                        st.metric(
-                            label=f"{emoji} {giocatore.upper()}",
-                            value=f"{punti} pt",
-                            delta=delta_str,
-                            chart_data=sparkline_data,
-                            chart_type="bar"
-                        )
-                    else:
-                        st.metric(
-                            label=f"{emoji} {giocatore.upper()}",
-                            value=f"{punti} pt",
-                            delta=delta_str
-                        )
+                    st.metric(
+                        label=f"{emoji} {giocatore.upper()}",
+                        value=f"{punti} pt",
+                        delta=delta_str
+                    )
 
         st.write("")
 
@@ -469,6 +460,26 @@ with tab_live:
 
             st.write("")
 
+            # Ordina le partite per data/orario di inizio
+            ordine_partite = {}
+            for nome_uff, info in risultati_live.items():
+                data_str = info.get("data", "")
+                ordine_partite[nome_uff] = data_str  # formato dd/mm HH:MM
+            
+            def _ordine_data(row):
+                partita_norm = normalizza_partita_completa(str(row.get('Partita', '')), partite_ufficiose)
+                data_str = ordine_partite.get(partita_norm, "")
+                if data_str:
+                    try:
+                        return datetime.strptime(data_str, "%d/%m %H:%M")
+                    except:
+                        pass
+                return datetime.max
+            
+            df_filtrato = df_filtrato.copy()
+            df_filtrato['_ordine'] = df_filtrato.apply(_ordine_data, axis=1)
+            df_filtrato = df_filtrato.sort_values('_ordine')
+
             for _, row in df_filtrato.iterrows():
                 esito = str(row.get('Esito', ''))
                 partita_nome = str(row.get('Partita', ''))
@@ -559,12 +570,12 @@ with tab_confronto:
                     pronostico = str(row.get('Pronostico', ''))
                     quota = str(row.get('Quota', ''))
                     esito = str(row.get('Esito', ''))
-                    icona = ''
+                    # Segno nascosto per la colorazione (non visibile all'utente)
                     if 'VINTA' in esito:
-                        icona = ' ✅'
+                        return f"{pronostico} (@{quota})|||VINTA"
                     elif 'PERSA' in esito:
-                        icona = ' ❌'
-                    return f"{pronostico} (@{quota}){icona}"
+                        return f"{pronostico} (@{quota})|||PERSA"
+                    return f"{pronostico} (@{quota})"
 
                 df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
 
@@ -578,13 +589,26 @@ with tab_confronto:
                 # Tabella HTML colorata per esiti vinti/persi
                 def _colora_cella(val):
                     val_str = str(val)
-                    if '✅' in val_str:
+                    if '|||VINTA' in val_str:
                         return 'background-color: rgba(0, 180, 0, 0.15)'
-                    elif '❌' in val_str:
+                    elif '|||PERSA' in val_str:
                         return 'background-color: rgba(220, 0, 0, 0.15)'
                     return ''
 
-                styled = pivot.style.map(_colora_cella)
+                def _pulisci_cella(val):
+                    return str(val).replace('|||VINTA', '').replace('|||PERSA', '')
+
+                # Prima colora, poi pulisci i marker nascosti
+                pivot_pulito = pivot.map(_pulisci_cella)
+                styled = pivot_pulito.style.map(lambda v: _colora_cella(
+                    pivot.at[v.name, v.name] if False else ''
+                ))
+                # Approccio diretto: applica gli stili dal pivot originale
+                def _applica_stili(pivot_orig, pivot_clean):
+                    styles = pivot_orig.map(lambda val: _colora_cella(val))
+                    return pivot_clean.style.apply(lambda _: styles, axis=None)
+
+                styled = _applica_stili(pivot, pivot_pulito)
                 st.html(styled.to_html())
             else:
                 st.info("Nessuna giocata trovata per questa giornata.")
