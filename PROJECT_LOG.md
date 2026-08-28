@@ -162,6 +162,7 @@ Toto_Amici_Progetto/
 ## 📋 TODO / Azioni Pendenti
 
 ### 🔴 Priorità Alta — Da fare ASAP
+- [ ] **STRESS TEST REVISIONE CLAUDE (URGENTISSIMO)**: far controllare a Claude Thinking tutte le modifiche fatte in questa sessione da Gemini (soprattutto la funzione `normalizza_nomi_partite` e il supporto al girone di ritorno). Eseguire uno stress test assoluto per scovare eventuali bug latenti introdotti.
 - [ ] **Rigenerare TELEGRAM_TOKEN**: @BotFather → `/mybots` → `Revoke current token` → aggiornare su Render
 - [ ] **Rigenerare FOOTBALL_DATA_KEY**: [football-data.org dashboard](https://www.football-data.org/client/profile) → rigenera → aggiornare su Render (env var) e Streamlit Cloud (Secrets)
 
@@ -171,7 +172,6 @@ Toto_Amici_Progetto/
 - [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
 
 ### 🟢 Idee Future
-- [ ] Notifiche automatiche ai giocatori (es. risultati giornata via Telegram broadcast)
 - [ ] Pagina pubblica per ogni giocatore con le sue statistiche personali
 - [ ] Integrazione con calendario Serie A (avvisi pre-partita)
 
