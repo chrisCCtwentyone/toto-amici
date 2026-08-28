@@ -112,6 +112,14 @@ def analizza_schedine_multiple(lista_percorsi_foto):
     2. **EVENTI DELLA SCHEDINA:**
        Estrai la lista di TUTTI gli eventi presenti nelle immagini dividendola tassativamente in queste 4 categorie: "Combo", "Fisse", "Doppie Chance", "Variabili".
        Per ogni evento fornisci le chiavi esatte: "partita", "pronostico", "quota".
+       
+       **IMPORTANTE: REGOLE PER IL CAMPO "pronostico":**
+       Devi normalizzare i pronostici restituendo ESCLUSIVAMENTE uno dei seguenti valori esatti: `1`, `X`, `2`, `1X`, `X2`, `12`, `OVER_2.5`, `UNDER_2.5`, `GOAL`, `NOGOAL`, `PARI`, `DISPARI`.
+       Per le combo usa il formato esatto unendo con `+`, ad esempio: `1+OVER_2.5`, `X2+GOAL`, `2+UNDER_2.5`.
+       - NON INCLUDERE MAI prefissi o diciture lunghe come 'ESITO FINALE:', 'DOPPIA CHANCE:', '1X2:', 'U/OVER_2.5:'.
+       - NON INCLUDERE MAI i nomi delle squadre (es. 'MILAN', 'ROMA') nel pronostico. Sostituisci il nome con il segno `1` o `2` corrispondente, o `X` se c'è scritto 'PAREGGIO'.
+       - Converti qualsiasi abbreviazione come 'O' o 'U' in 'OVER_2.5' o 'UNDER_2.5'.
+       - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
     """
     response = client.models.generate_content(
         model='gemini-3.6-flash',
