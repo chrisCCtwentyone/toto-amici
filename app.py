@@ -257,7 +257,18 @@ with tab_classifica:
         st.subheader("Classifica completa")
         df_display = df_classifica[['Giocatore', 'Punti Totali']].copy()
         df_display['Punti Totali'] = df_display['Punti Totali'].astype(str) + " pt"
-        df_display.index = df_display.index + 1
+        posizioni = []
+        for i in range(len(df_display)):
+            if i == 0:
+                posizioni.append("🥇 1°")
+            elif i == 1:
+                posizioni.append("🥈 2°")
+            elif i == 2:
+                posizioni.append("🥉 3°")
+            else:
+                posizioni.append(f"{i+1}°")
+        df_display.insert(0, "Pos.", posizioni)
+        df_display = df_display.set_index("Pos.")
         st.table(df_display)
 
         # --- STORICO GIORNATE ---
