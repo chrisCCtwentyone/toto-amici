@@ -141,6 +141,47 @@ def normalizza_nomi_partite(dati_json, giornata_num):
         return json.dumps(dati)
     except: return dati_json
 
+def normalizza_pronostico(pronostico_raw):
+    """
+    Pulisce e standardizza le diciture dei pronostici per evitare discrepanze.
+    """
+    p = str(pronostico_raw).upper().strip()
+    
+    # Rimuovi spazi extra tra simboli e numeri (es "O 2.5" -> "O2.5", "1 +" -> "1+")
+    p = re.sub(r'\s+', ' ', p)
+    
+    # Alias GOAL / NOGOAL
+    if p in ["GG", "GOAL/GOAL", "G/G", "G", "GOL"]:
+        p = "GOAL"
+    elif p in ["NG", "NOGOAL", "NO GOAL", "NO/GOAL", "N/G"]:
+        p = "NOGOAL"
+        
+    # Alias OVER / UNDER
+    # Mappa roba tipo "PIU DI 2.5", "O2.5", "+2.5", "OVER 2,5" in "OVER_2.5"
+    p = p.replace(",", ".")
+    p = re.sub(r'(?:O|OVER|PI[UÙ]\s*DI|\+)\s*2\.5', 'OVER_2.5', p)
+    p = re.sub(r'(?:U|UNDER|MENO\s*DI|\-)\s*2\.5', 'UNDER_2.5', p)
+    
+    # Sostituzioni classiche di "buona fede" (over 1.5 e under 3.5 = 2.5)
+    p = re.sub(r'(?:O|OVER|PI[UÙ]\s*DI|\+)\s*1\.5', 'OVER_2.5', p)
+    p = re.sub(r'(?:U|UNDER|MENO\s*DI|\-)\s*3\.5', 'UNDER_2.5', p)
+
+    # Gestione Combo (es "1+O2.5" -> "1+OVER_2.5")
+    # Facciamo una passata per espandere componenti comuni
+    if "+" in p or "&" in p or " E " in p:
+        p = p.replace("&", "+").replace(" E ", "+")
+        parti = [part.strip() for part in p.split("+")]
+        nuove_parti = []
+        for part in parti:
+            if part in ["GG", "G"]: part = "GOAL"
+            elif part in ["NG"]: part = "NOGOAL"
+            elif part in ["O2.5", "O 2.5", "+2.5"]: part = "OVER_2.5"
+            elif part in ["U2.5", "U 2.5", "-2.5"]: part = "UNDER_2.5"
+            nuove_parti.append(part)
+        p = "+".join(nuove_parti)
+
+    return p
+
 def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
     sheets_service = connetti_sheets()
     dati = json.loads(json_data)
@@ -157,10 +198,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
     for categoria in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
         eventi_cat = eventi.get(categoria, [])
         for idx, evento in enumerate(eventi_cat):
-            pronostico = str(evento.get("pronostico", "")).upper()
-            
-            if "OVER_1.5" in pronostico: pronostico = pronostico.replace("1.5", "2.5")
-            if "UNDER_3.5" in pronostico: pronostico = pronostico.replace("3.5", "2.5")
+            pronostico = normalizza_pronostico(evento.get("pronostico", ""))
             
             if idx >= LIMITI_SCHEDINA[categoria]:
                 pronostico += " (ANNULLATA ECCESSO)"

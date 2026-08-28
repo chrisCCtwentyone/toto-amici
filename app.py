@@ -277,7 +277,7 @@ with tab_classifica:
         st.table(df_display)
 
         # --- CLASSIFICA LIVE PROVVISORIA ---
-        with st.expander(":material/update: Classifica Live (provvisoria)"):
+        with st.expander(":material/update: Classifica provvisoria di giornata"):
             try:
                 # Usa la giornata con più partite in corso come riferimento
                 giornata_live = None
@@ -590,10 +590,10 @@ with tab_confronto:
                 def _colora_cella(val):
                     val_str = str(val)
                     if '|||VINTA' in val_str:
-                        return 'background-color: rgba(0, 180, 0, 0.15)'
+                        return 'background-color: rgba(0, 180, 0, 0.15); border: 1px solid rgba(128, 128, 128, 0.3);'
                     elif '|||PERSA' in val_str:
-                        return 'background-color: rgba(220, 0, 0, 0.15)'
-                    return ''
+                        return 'background-color: rgba(220, 0, 0, 0.15); border: 1px solid rgba(128, 128, 128, 0.3);'
+                    return 'border: 1px solid rgba(128, 128, 128, 0.3);'
 
                 def _pulisci_cella(val):
                     return str(val).replace('|||VINTA', '').replace('|||PERSA', '')

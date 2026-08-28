@@ -108,9 +108,12 @@ Toto_Amici_Progetto/
 - ✅ Classifica Live Provvisoria (`app.py`): nuovo expander "Classifica Live" sotto il podio che mostra i punti provvisori delle partite in corso sommati ai definitivi. Appare solo durante le partite.
 - ✅ Avvisi Intelligenti nel Bot (`bot_telegram.py`): nel riepilogo post-lettura IA, il bot ora segnala automaticamente anomalie: vincita non rilevata, eventi mancanti, eccessi per categoria, totale eventi < 10.
 - ✅ Numerazione ordinale classifica (`app.py`): aggiunto 🥇 1°, 🥈 2°, 🥉 3°, 4°... nella tabella classifica.
-- ✅ Fix Confronto (`app.py`): rimosse le emoji (✅/❌) dalle celle della tabella pivot per risparmiare spazio, mantenendo solo i colori verde/rosso.
+- ✅ Fix Confronto (`app.py`): rimosse le emoji (✅/❌) dalle celle della tabella pivot per risparmiare spazio, mantenendo solo i colori verde/rosso. Aggiunti bordi alle celle per migliorare la leggibilità.
 - ✅ Fix Schedine Live (`app.py`): le partite ora sono mostrate in ordine di orario di inizio.
 - ✅ Fix Podio (`app.py`): rimosso il grafico a barre sparkline per migliorare la resa estetica con poche giornate giocate.
+- ✅ Normalizzazione Pronostici (`bot_telegram.py`): il bot ora normalizza i testi delle giocate (es. `O2.5`, `Più di 2.5` diventano `OVER_2.5`) prima di salvare su Sheets.
+- ✅ Pulizia Storico DB: eseguito script una tantum (`fix_sheets.py`) che ha normalizzato i testi di tutte le righe già presenti sul database per risolvere le discrepanze nella visualizzazione.
+- ✅ Classifica Live (`app.py`): rinominato l'expander in "Classifica provvisoria di giornata" per maggior chiarezza.
 
 **Reminders:**
 - ⚠️ Ricordare al creatore del torneo di aggiungere nel regolamento ufficiale la gestione dei pareggi (il tiebreaker basato sul maggior numero di pronostici vinti).
