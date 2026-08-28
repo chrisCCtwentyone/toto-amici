@@ -3,7 +3,7 @@ import json
 import logging
 import re
 import requests
-from datetime import time as dt_time
+from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
 from flask import Flask
@@ -434,12 +434,36 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_riepilogo = f"🤖 **Lettura IA Completata!**\n\n"
         msg_riepilogo += f"💰 **Vincita Potenziale:** {vincita} €\n"
         
+        # Avvisi intelligenti
+        avvisi = []
+        totale_eventi = 0
+        try:
+            vincita_num = float(str(vincita).replace(',', '.'))
+        except:
+            vincita_num = 0.0
+        if vincita_num == 0:
+            avvisi.append("⚠️ Vincita potenziale non rilevata — foto sfocata?")
+        
         for categoria in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
             evs = eventi.get(categoria, [])
+            totale_eventi += len(evs)
+            limite = LIMITI_SCHEDINA.get(categoria, 0)
             if evs:
-                msg_riepilogo += f"\n📌 **{categoria} ({len(evs)} eventi):**\n"
+                msg_riepilogo += f"\n📌 **{categoria} ({len(evs)}/{limite}):**\n"
                 for ev in evs:
                     msg_riepilogo += f"- {ev.get('partita', '???')} -> {ev.get('pronostico', '')} (@{ev.get('quota', '')})\n"
+            if len(evs) > limite:
+                avvisi.append(f"⚠️ {categoria}: trovati {len(evs)} eventi su {limite} consentiti — {len(evs) - limite} verranno annullati")
+            elif len(evs) < limite:
+                avvisi.append(f"⚠️ {categoria}: trovati solo {len(evs)} su {limite} previsti — potrebbe mancare qualcosa")
+        
+        if totale_eventi < 10:
+            avvisi.append(f"⚠️ Trovati solo {totale_eventi} eventi su 10 totali previsti")
+        
+        if avvisi:
+            msg_riepilogo += "\n🚨 **ATTENZIONE:**\n"
+            for a in avvisi:
+                msg_riepilogo += f"{a}\n"
 
         kb = [
             [InlineKeyboardButton("✅ Conferma e Salva su Sheets", callback_data="salva_ia_si")],
@@ -504,6 +528,79 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
     report = esegui_calcolo_risultati(giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
 
+async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
+    """Controlla chi non ha ancora caricato la schedina per la giornata corrente.
+    Viene chiamata da un job schedulato 30 min prima della prima partita."""
+    try:
+        giornata = ottieni_giornata_corrente()
+        service = connetti_sheets()
+        righe = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
+        ).execute().get('values', [])
+        
+        giocatori_presenti = set()
+        for riga in righe:
+            if len(riga) >= 2 and str(giornata) in str(riga[0]):
+                giocatori_presenti.add(str(riga[1]).strip().lower())
+        
+        mancanti = [g.capitalize() for g in GIOCATORI if g.lower() not in giocatori_presenti]
+        
+        if mancanti:
+            msg = f"⏰ **PROMEMORIA GIORNATA {giornata}**\n\n"
+            msg += f"⚠️ Mancano **{len(mancanti)} schedine** a meno di 30 minuti dalla prima partita!\n\n"
+            msg += "\n".join([f"❌ {nome}" for nome in mancanti])
+            msg += "\n\nSollecitali subito!"
+            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"✅ **Giornata {giornata}**: tutte le schedine sono state caricate!",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        logging.error(f"Errore controlla_schedine_mancanti: {e}")
+
+async def task_schedula_promemoria(context: ContextTypes.DEFAULT_TYPE):
+    """Job giornaliero: controlla a che ora inizia la prima partita di oggi
+    e schedula il promemoria 30 min prima."""
+    try:
+        giornata = ottieni_giornata_corrente()
+        url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+        matches = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        if not matches:
+            return
+        
+        tz = pytz.timezone('Europe/Rome')
+        oggi = datetime.now(tz).date()
+        
+        # Trova la prima partita di OGGI
+        orari_oggi = []
+        for m in matches:
+            utc_str = m.get("utcDate", "")
+            if utc_str:
+                utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+                ita_dt = utc_dt.astimezone(tz)
+                if ita_dt.date() == oggi and m["status"] in ["TIMED", "SCHEDULED"]:
+                    orari_oggi.append(ita_dt)
+        
+        if not orari_oggi:
+            return  # Nessuna partita oggi, nessun promemoria
+        
+        prima_partita = min(orari_oggi)
+        orario_promemoria = prima_partita - timedelta(minutes=30)
+        ora_corrente = datetime.now(tz)
+        
+        if orario_promemoria > ora_corrente:
+            secondi_mancanti = (orario_promemoria - ora_corrente).total_seconds()
+            context.job_queue.run_once(
+                task_controlla_schedine_mancanti,
+                when=secondi_mancanti,
+                name=f"promemoria_g{giornata}"
+            )
+            logging.info(f"Promemoria schedine schedulato alle {orario_promemoria.strftime('%H:%M')} (tra {int(secondi_mancanti/60)} min)")
+    except Exception as e:
+        logging.error(f"Errore task_schedula_promemoria: {e}")
+
 async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
@@ -525,6 +622,9 @@ def main():
     tz = pytz.timezone('Europe/Rome')
     for h, m in [(17,30), (20,30), (23,0)]:
         app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=h, minute=m, tzinfo=tz))
+
+    # Job giornaliero: alle 10:00 controlla se ci sono partite oggi e schedula promemoria 30min prima
+    app.job_queue.run_daily(task_schedula_promemoria, time=dt_time(hour=10, minute=0, tzinfo=tz))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],

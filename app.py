@@ -99,6 +99,7 @@ def scarica_risultati_api(giornata):
     headers_req = {"X-Auth-Token": FOOTBALL_DATA_KEY}
     partite_ufficiali = []
     risultati_mappati = {}
+    api_error = False
     try:
         res = requests.get(url, headers=headers_req, timeout=10)
         if res.status_code == 200:
@@ -133,9 +134,11 @@ def scarica_risultati_api(giornata):
                     "score": score_str,
                     "data": data_formattata
                 }
+        else:
+            api_error = True
     except Exception:
-        pass
-    return partite_ufficiali, risultati_mappati
+        api_error = True
+    return partite_ufficiali, risultati_mappati, api_error
 
 # ==========================================
 # NORMALIZZAZIONE NOMI SQUADRE
@@ -169,6 +172,7 @@ def normalizza_partita_completa(partita_sheet, partite_ufficiali):
 # CARICAMENTO INIZIALE DATI
 # ==========================================
 df_classifica, df_cassa, df_giocate = carica_tutti_i_dati()
+_data_load_time = datetime.now(pytz.timezone("Europe/Rome")).strftime("%H:%M")
 
 # ==========================================
 # HEADER
@@ -182,6 +186,7 @@ with col_refresh:
     if st.button(":material/refresh: Aggiorna", key="btn_refresh"):
         st.cache_data.clear()
         st.rerun()
+    st.caption(f"Agg. {_data_load_time}")
 
 st.write("")
 
@@ -205,8 +210,17 @@ with tab_classifica:
         df_classifica['Punti Totali'] = pd.to_numeric(
             df_classifica['Punti Totali'], errors='coerce'
         ).fillna(0).astype(int)
+
+        # Tiebreaker: a parità di punti, chi ha più pronostici vinti è sopra
+        vittorie_per_giocatore = {}
+        if not df_giocate.empty:
+            df_vinte = df_giocate[df_giocate['Esito'].str.contains('VINTA', na=False)]
+            vittorie_per_giocatore = df_vinte.groupby('Giocatore').size().to_dict()
+        df_classifica['_vittorie'] = df_classifica['Giocatore'].map(
+            lambda g: vittorie_per_giocatore.get(g, 0)
+        )
         df_classifica = df_classifica.sort_values(
-            by='Punti Totali', ascending=False
+            by=['Punti Totali', '_vittorie'], ascending=[False, False]
         ).reset_index(drop=True)
 
         colonne_giornate = [c for c in df_classifica.columns if 'giornata' in str(c).lower()]
@@ -271,9 +285,87 @@ with tab_classifica:
         df_display = df_display.set_index("Pos.")
         st.table(df_display)
 
+        # --- CLASSIFICA LIVE PROVVISORIA ---
+        with st.expander(":material/update: Classifica Live (provvisoria)"):
+            try:
+                # Usa la giornata con più partite in corso come riferimento
+                giornata_live = None
+                for g_col in reversed(colonne_giornate):
+                    g_num = str(g_col).lower().replace('giornata', '').strip()
+                    if g_num.isdigit():
+                        giornata_live = g_num
+                        break
+                if not giornata_live:
+                    giornata_live = "1"
+
+                _, risultati_live_prov, _ = scarica_risultati_api(giornata_live)
+                df_giocate_giorn = df_giocate[
+                    df_giocate['Giornata'].str.contains(str(giornata_live), na=False)
+                ].copy() if not df_giocate.empty else pd.DataFrame()
+
+                punti_provvisori = {}
+                if not df_giocate_giorn.empty:
+                    for _, row in df_giocate_giorn.iterrows():
+                        esito = str(row.get('Esito', ''))
+                        giocatore = str(row.get('Giocatore', '')).strip()
+                        if not giocatore:
+                            continue
+                        if giocatore not in punti_provvisori:
+                            punti_provvisori[giocatore] = 0
+                        # Conta punti solo delle partite IN CORSO (provvisorie)
+                        if 'CORSO' in esito:
+                            partita_nome = str(row.get('Partita', ''))
+                            partita_norm = normalizza_partita_completa(partita_nome, [(p[0], p[1], p[2]) for p in []])
+                            pronostico = str(row.get('Pronostico', '')).upper()
+                            try:
+                                quota = float(str(row.get('Quota', '0')).replace(',', '.'))
+                            except:
+                                quota = 0.0
+                            # Calcola punti base
+                            if '+' in pronostico:
+                                pt = 6
+                            elif pronostico in ['1', 'X', '2']:
+                                pt = 4
+                            elif pronostico in ['1X', 'X2', '12']:
+                                pt = 1
+                            else:
+                                pt = 2
+                            if quota >= 3.50:
+                                pt *= 2
+                            punti_provvisori[giocatore] += pt
+
+                if punti_provvisori and any(v > 0 for v in punti_provvisori.values()):
+                    df_live = df_classifica[['Giocatore', 'Punti Totali']].copy()
+                    df_live['Provvisori'] = df_live['Giocatore'].map(
+                        lambda g: punti_provvisori.get(g, 0)
+                    )
+                    df_live['Totale Live'] = df_live['Punti Totali'] + df_live['Provvisori']
+                    df_live = df_live.sort_values('Totale Live', ascending=False).reset_index(drop=True)
+                    df_live_display = df_live[['Giocatore', 'Punti Totali', 'Provvisori', 'Totale Live']].copy()
+                    df_live_display.columns = ['Giocatore', 'Definitivi', '⏳ In Corso', '📊 Totale Live']
+                    df_live_display['Definitivi'] = df_live_display['Definitivi'].astype(str) + ' pt'
+                    df_live_display['⏳ In Corso'] = df_live_display['⏳ In Corso'].apply(
+                        lambda x: f'+{x} pt' if x > 0 else '—'
+                    )
+                    df_live_display['📊 Totale Live'] = df_live_display['📊 Totale Live'].astype(str) + ' pt'
+                    live_pos = []
+                    for i in range(len(df_live_display)):
+                        if i == 0: live_pos.append('🥇')
+                        elif i == 1: live_pos.append('🥈')
+                        elif i == 2: live_pos.append('🥉')
+                        else: live_pos.append(f'{i+1}°')
+                    df_live_display.insert(0, 'Pos.', live_pos)
+                    df_live_display = df_live_display.set_index('Pos.')
+                    st.badge('⏳ Dati provvisori — partite in corso', color='orange')
+                    st.table(df_live_display)
+                else:
+                    st.info('Nessuna partita in corso al momento. La classifica live comparirà durante le partite.', icon=':material/schedule:')
+            except Exception:
+                st.info('Classifica live non disponibile al momento.')
+
         # --- STORICO GIORNATE ---
         with st.expander(":material/history: Storico punteggi per giornata"):
-            df_classifica_pulita = df_classifica.replace("", pd.NA).dropna(axis=1, how='all').fillna("")
+            df_classifica_pulita = df_classifica.drop(columns=['_vittorie'], errors='ignore').replace("", pd.NA).dropna(axis=1, how='all').fillna("")
             if not df_classifica_pulita.empty and 'Giocatore' in df_classifica_pulita.columns:
                 df_classifica_pulita = df_classifica_pulita.set_index('Giocatore')
             st.table(df_classifica_pulita)
@@ -304,6 +396,7 @@ with tab_classifica:
         with col_c3:
             st.metric(label=":material/percent: Completamento", value=f"{perc:.1f}%")
 
+        st.caption(f"€ {saldo_num:,.2f} / € {OBIETTIVO_CASSA:,.0f}")
         st.progress(progresso)
         if progresso >= 1.0:
             st.success("OBIETTIVO RAGGIUNTO! I premi sono interamente coperti.", icon=":material/emoji_events:")
@@ -342,7 +435,9 @@ with tab_live:
             giocatore_selezionato = st.selectbox("Giocatore", giocatori_disponibili)
 
         giornata_num_api = str(giornata_selezionata).lower().replace("giornata", "").strip()
-        partite_ufficiose, risultati_live = scarica_risultati_api(giornata_num_api)
+        partite_ufficiose, risultati_live, api_err = scarica_risultati_api(giornata_num_api)
+        if api_err:
+            st.warning("⚠️ Dati live non disponibili momentaneamente. I risultati potrebbero non essere aggiornati. Riprova tra poco.", icon=":material/cloud_off:")
 
         df_filtrato = df_giocate[
             (df_giocate['Giornata'] == giornata_selezionata) &
@@ -454,7 +549,7 @@ with tab_confronto:
 
             if not df_giornata.empty:
                 giornata_num_api = str(giornata_selezionata_comp).lower().replace("giornata", "").strip()
-                partite_ufficiose, _ = scarica_risultati_api(giornata_num_api)
+                partite_ufficiose, risultati_comp, _ = scarica_risultati_api(giornata_num_api)
 
                 df_giornata['Partita_Pulita'] = df_giornata['Partita'].apply(
                     lambda x: normalizza_partita_completa(str(x), partite_ufficiose)
@@ -463,7 +558,13 @@ with tab_confronto:
                 def formatta_giocata(row):
                     pronostico = str(row.get('Pronostico', ''))
                     quota = str(row.get('Quota', ''))
-                    return f"{pronostico} (@{quota})"
+                    esito = str(row.get('Esito', ''))
+                    icona = ''
+                    if 'VINTA' in esito:
+                        icona = ' ✅'
+                    elif 'PERSA' in esito:
+                        icona = ' ❌'
+                    return f"{pronostico} (@{quota}){icona}"
 
                 df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
 
@@ -474,7 +575,17 @@ with tab_confronto:
                     aggfunc=lambda x: ' | '.join(x)
                 ).fillna("—")
 
-                st.table(pivot)
+                # Tabella HTML colorata per esiti vinti/persi
+                def _colora_cella(val):
+                    val_str = str(val)
+                    if '✅' in val_str:
+                        return 'background-color: rgba(0, 180, 0, 0.15)'
+                    elif '❌' in val_str:
+                        return 'background-color: rgba(220, 0, 0, 0.15)'
+                    return ''
+
+                styled = pivot.style.map(_colora_cella)
+                st.html(styled.to_html())
             else:
                 st.info("Nessuna giocata trovata per questa giornata.")
     else:
