@@ -143,7 +143,7 @@ def normalizza_nomi_partite(dati_json, giornata_num):
                     for m in matches:
                         ac, ao = str(m["homeTeam"]["name"]).lower(), str(m["awayTeam"]["name"]).lower()
                         sc, so = str(m["homeTeam"].get("shortName","")).lower(), str(m["awayTeam"].get("shortName","")).lower()
-                        if (c_sh in ac or c_sh in sc) and (o_sh in ao or o_sh in so):
+                        if ((c_sh in ac or c_sh in sc) and (o_sh in ao or o_sh in so)) or ((c_sh in ao or c_sh in so) and (o_sh in ac or o_sh in sc)):
                             ev["partita"] = f"{m['homeTeam'].get('shortName', m['homeTeam']['name'])} - {m['awayTeam'].get('shortName', m['awayTeam']['name'])}"
                             break
         return json.dumps(dati)

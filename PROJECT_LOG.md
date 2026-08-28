@@ -114,6 +114,8 @@ Toto_Amici_Progetto/
 - ✅ Normalizzazione Pronostici Avanzata (`bot_telegram.py`): aggiornato il `PROMPT_IA` per forzare Gemini a restituire solo formati puliti ed esatti (es. `1`, `OVER_2.5`, `X2+GOAL`), vietando l'uso di prefissi (es. "ESITO FINALE:") o nomi di squadre.
 - ✅ Pulizia Storico DB Avanzata: eseguito un secondo script (`fix_sheets_v2.py`) che ha intersecato i nomi delle squadre con i dati dell'API Football-Data per mappare correttamente "MILAN", "ROMA", ecc. nei rispettivi segni `1` o `2` e ripulire tutte le vecchie bollette sporche della Giornata 2.
 
+- ✅ Fix Confronto (`app.py`): rimosso il testo `Partita_Pulita` dall'intestazione della tabella pivot per pulire l'interfaccia.
+
 **Reminders:**
 - ⚠️ Ricordare al creatore del torneo di aggiungere nel regolamento ufficiale la gestione dei pareggi (il tiebreaker basato sul maggior numero di pronostici vinti).
 - ⚠️ Se il creatore approva la regola sui pareggi, aggiungerla anche nella pagina Regolamento (`app.py`) dell'app.
@@ -166,6 +168,7 @@ Toto_Amici_Progetto/
 ### 🟡 Priorità Media — Prossime sessioni
 - [ ] **Redesign UI `app.py`**: tema scuro premium, card animate, grafico interattivo andamento punti
 - [ ] **Statistiche avanzate**: confronto testa a testa tra giocatori, giocatore più consistente, grafico a linee per giornata
+- [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
 
 ### 🟢 Idee Future
 - [ ] Notifiche automatiche ai giocatori (es. risultati giornata via Telegram broadcast)

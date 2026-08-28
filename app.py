@@ -586,6 +586,9 @@ with tab_confronto:
                     aggfunc=lambda x: ' | '.join(x)
                 ).fillna("—")
 
+                # Rimuovi il nome dell'indice per evitare "Partita_Pulita" nella UI
+                pivot.index.name = None
+
                 # Tabella HTML colorata per esiti vinti/persi
                 def _colora_cella(val):
                     val_str = str(val)
