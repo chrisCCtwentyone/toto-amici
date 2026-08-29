@@ -193,11 +193,12 @@ st.write("")
 # ==========================================
 # TABS
 # ==========================================
-tab_classifica, tab_live, tab_confronto, tab_stats, tab_regolamento = st.tabs([
+tab_classifica, tab_live, tab_confronto, tab_stats, tab_coppa, tab_regolamento = st.tabs([
     ":material/leaderboard: Classifica & Cassa",
     ":material/live_tv: Schedine Live",
     ":material/compare_arrows: Confronto Giocate",
     ":material/bar_chart: Statistiche",
+    ":material/emoji_events: Coppa",
     ":material/gavel: Regolamento"
 ])
 
@@ -315,6 +316,37 @@ with tab_classifica:
             st.success("OBIETTIVO RAGGIUNTO! I premi sono interamente coperti.", icon=":material/emoji_events:")
 
         with st.expander(":material/receipt_long: Movimenti di cassa"):
+            # --- MINI STORICO VERSAMENTI PER GIORNATA (incluse le giornate a zero) ---
+            def _parse_euro(s):
+                try:
+                    return float(str(s).replace('€', '').replace('.', '').replace(',', '.').strip())
+                except:
+                    return 0.0
+
+            df_cassa_g = df_cassa.copy()
+            df_cassa_g['Entrate_num'] = df_cassa_g['Entrate'].apply(_parse_euro)
+            versamenti_map = df_cassa_g.groupby('Giornata')['Entrate_num'].sum().to_dict()
+
+            def _num_giornata_cassa(g):
+                try:
+                    return int(str(g).lower().replace('giornata', '').strip())
+                except:
+                    return 0
+
+            # Solo le giornate effettivamente giocate finora (non le colonne future vuote del foglio Classifica)
+            giornate_cassa = set(versamenti_map.keys())
+            if not df_giocate.empty:
+                giornate_cassa |= {g for g in df_giocate['Giornata'].dropna().unique() if str(g).strip() != ""}
+
+            giornate_cassa_ordinate = sorted(giornate_cassa, key=_num_giornata_cassa)
+            if giornate_cassa_ordinate:
+                df_storico_versamenti = pd.DataFrame({
+                    "Giornata": [_num_giornata_cassa(g) for g in giornate_cassa_ordinate],
+                    "Versato": [versamenti_map.get(g, 0.0) for g in giornate_cassa_ordinate]
+                }).set_index("Giornata")
+                st.caption("Versamenti in cassa per giornata")
+                st.bar_chart(df_storico_versamenti)
+
             df_cassa_view = df_cassa.copy()
             if not df_cassa_view.empty and 'Giornata' in df_cassa_view.columns:
                 df_cassa_view = df_cassa_view.set_index('Giornata')
@@ -338,14 +370,14 @@ with tab_live:
             g for g in df_giocate['Giocatore'].dropna().unique() if str(g).strip() != ""
         ])
 
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            giornata_selezionata = st.selectbox(
-                "Giornata", giornate_disponibili,
-                index=len(giornate_disponibili) - 1 if giornate_disponibili else 0
-            )
-        with col_f2:
-            giocatore_selezionato = st.selectbox("Giocatore", giocatori_disponibili)
+        giornata_selezionata = st.selectbox(
+            "Giornata", giornate_disponibili,
+            index=len(giornate_disponibili) - 1 if giornate_disponibili else 0
+        )
+        giocatore_selezionato = st.pills(
+            "Giocatore", giocatori_disponibili,
+            default=giocatori_disponibili[0] if giocatori_disponibili else None
+        )
 
         giornata_num_api = str(giornata_selezionata).lower().replace("giornata", "").strip()
         partite_ufficiose, risultati_live, api_err = scarica_risultati_api(giornata_num_api)
@@ -668,6 +700,62 @@ with tab_stats:
                         delta="Va sul sicuro"
                     )
 
+                # --- GIORNATA DA INCORNICIARE: record punti in una singola giornata ---
+                if not df_classifica.empty:
+                    colonne_giornate_rec = [c for c in df_classifica.columns if 'giornata' in str(c).lower()]
+                    record_valore, record_giocatore, record_giornata = 0, None, None
+                    for _, row in df_classifica.iterrows():
+                        for cg in colonne_giornate_rec:
+                            try:
+                                v = int(str(row.get(cg, 0)).strip() or 0)
+                            except:
+                                v = 0
+                            if v > record_valore:
+                                record_valore, record_giocatore, record_giornata = v, str(row['Giocatore']), cg
+
+                    if record_giocatore:
+                        with st.container(border=True):
+                            st.markdown("**:material/military_tech: Giornata da incorniciare**")
+                            st.metric(
+                                label=f"{record_giocatore.upper()} · {record_giornata}",
+                                value=f"{record_valore} pt",
+                                delta="Il punteggio più alto mai fatto in una singola giornata"
+                            )
+
+                # --- SEMPER FIDELIS: stesso segno sulla stessa squadra, giornata dopo giornata ---
+                squadra_fedelta = {}
+                giornate_fedelta = [g for g in df_stats['Giornata'].dropna().unique() if str(g).strip() != ""]
+                for g in giornate_fedelta:
+                    g_num_api = str(g).lower().replace("giornata", "").strip()
+                    partite_uff_g, _, _ = scarica_risultati_api(g_num_api)
+                    for _, row in df_stats[df_stats['Giornata'] == g].iterrows():
+                        giocatore_f = str(row.get('Giocatore', '')).strip()
+                        partita_raw = str(row.get('Partita', ''))
+                        pronostico_f = str(row.get('Pronostico', '')).upper()
+                        if not giocatore_f or '-' not in partita_raw:
+                            continue
+                        partita_norm = normalizza_partita_completa(partita_raw, partite_uff_g)
+                        parti_f = [p.strip() for p in partita_norm.split('-')]
+                        if len(parti_f) != 2:
+                            continue
+                        segno_f = pronostico_f.split('+')[0].strip()
+                        squadra_f = parti_f[0] if segno_f == '1' else (parti_f[1] if segno_f == '2' else None)
+                        if squadra_f:
+                            chiave = (giocatore_f, squadra_f)
+                            squadra_fedelta[chiave] = squadra_fedelta.get(chiave, 0) + 1
+
+                if squadra_fedelta:
+                    (fedele_giocatore, fedele_squadra), fedele_count = max(squadra_fedelta.items(), key=lambda kv: kv[1])
+                    if fedele_count >= 2:
+                        with st.container(border=True):
+                            st.markdown("**:material/verified: Semper Fidelis**")
+                            st.metric(
+                                label=f"{fedele_giocatore.upper()} → {fedele_squadra.upper()}",
+                                value=f"{fedele_count}× vittoria giocata",
+                                delta="Punta sempre sulla stessa squadra, giornata dopo giornata"
+                            )
+                            st.caption("Il giocatore che ripete più spesso il segno a favore della stessa squadra, in giornate diverse.")
+
         with col_s2:
             st.markdown("#### :material/sports_soccer: Le squadre di Serie A")
             squadre_perse = []
@@ -700,7 +788,8 @@ with tab_stats:
                     st.metric(
                         label=maledetta.upper(),
                         value=f"{n_maledetta} pronostici bruciati",
-                        delta="La più scomoda da giocare"
+                        delta="La più scomoda da giocare",
+                        delta_color="inverse"
                     )
                 else:
                     st.markdown("**:material/skull: La squadra maledetta:** —")
@@ -719,7 +808,22 @@ with tab_stats:
         st.info("Nessuna giocata registrata.")
 
 # ==========================================
-# TAB 5: REGOLAMENTO
+# TAB 5: COPPA
+# ==========================================
+with tab_coppa:
+    st.subheader(":material/emoji_events: Coppa Toto-Amici")
+    with st.container(border=True):
+        st.markdown("### 🏆 In arrivo prossimamente...")
+        st.markdown("""
+Nelle ultime giornate di campionato, oltre alla classifica generale, partirà una **Coppa a eliminazione diretta**:
+ottavi, quarti, semifinale e finale tra i migliori giocatori del torneo.
+
+Il formato degli scontri diretti (tabellone, criteri di accoppiamento) è ancora in fase di definizione — questa pagina si popolerà non appena i dettagli saranno decisi.
+        """)
+        st.caption("Resta sintonizzato 👀")
+
+# ==========================================
+# TAB 6: REGOLAMENTO
 # ==========================================
 with tab_regolamento:
     st.subheader("Regolamento ufficiale Toto-Amici")

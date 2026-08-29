@@ -43,14 +43,15 @@ Toto_Amici_Progetto/
 ├── chiave_api.txt          # 🔒 Non in git — chiave Gemini
 ├── credenziali.json        # 🔒 Non in git — service account GCP
 ├── PROJECT_LOG.md          # 📋 Questo file — memoria del progetto
+├── CLAUDE.md               # 🤖 Punto d'ingresso rapido per Claude Code, rimanda a PROJECT_LOG.md
 ├── _archivio/              # 📦 Script obsoleti ma recuperabili
 │   ├── bot_lettore.py      # Vecchio lettore locale schedine (sostituito dal bot)
 │   └── calcola_risultati.py # Vecchio calcolo manuale da CLI (sostituito dal bot)
 ├── .streamlit/             # 🔒 Non in git — secrets per Streamlit locale
 │   └── secrets.toml
+├── .claude/launch.json     # ✅ Config locale (nessun segreto) per preview Streamlit in Claude Code
 ├── schedine_whatsapp/      # 🔒 Non in git — cartella foto locali
-├── temp_telegram/          # Cartella temporanea per foto ricevute via Telegram
-└── test_api.py             # Script di test connessione API (non in produzione)
+└── temp_telegram/          # Cartella temporanea per foto ricevute via Telegram
 ```
 
 ---
@@ -96,6 +97,31 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 29-30/08/2026 — Sessione 5 (Sicurezza, rotazione chiavi, UI/statistiche, fix bot)
+**Sicurezza:**
+- ✅ Rigenerati `TELEGRAM_TOKEN` (via @BotFather) e `FOOTBALL_DATA_KEY` (nuovo account football-data.org, il piano free non ha un vero "rigenera token"), aggiornati su Render, Streamlit Cloud e file locali (`.env`, `.streamlit/secrets.toml`)
+- ✅ Eliminato `test_api.py` (conteneva una API key api-sports.io in chiaro, pubblica su GitHub)
+- ✅ Corretta manualmente su Google Sheets la riga Michele/Giornata 2/Lazio-Genoa: pronostico `SI` → `GOAL`
+
+**UI (`app.py`):**
+- ✅ Rimossa la classifica live provvisoria (quella definitiva si aggiorna già ad ogni evento concluso)
+- ✅ Confronto giocate: asterisco sulle quote ≥3.50 (punti doppi), riga totale vincita potenziale per giocatore, prima colonna (partita) fissa durante lo scroll orizzontale — testato su mobile
+- ✅ Regolamento: sezioni riordinate per leggersi 1-2-3-4 anche su mobile, tipologie di giocata in ordine crescente (Combo, Doppie Chance, Variabili, Fisse)
+- ✅ Menu "Giocatore" in Schedine Live: da dropdown a `st.pills` (chip toccabili, niente tastiera su mobile) — testato dal vivo
+- ✅ Statistiche: aggiunte "Quello che ha bisogno di una benedizione" (contrario del Cecchino, win rate più basso), "Giornata da incorniciare" (record punti in una singola giornata, con nome giocatore e giornata), "Semper Fidelis" (giocatore che ripete più spesso lo stesso segno sulla stessa squadra, con spiegazione visibile in pagina); "La squadra maledetta" ora con `delta_color="inverse"` come "benedizione"
+- ✅ Fondo Cassa: mini grafico a barre dei versamenti per giornata (incluse le giornate a zero), dentro l'expander "Movimenti di cassa" — attenzione, `st.bar_chart` ordina alfabeticamente un indice stringa ("Giornata 10" prima di "Giornata 2"): risolto usando il numero di giornata come indice
+- ✅ Nuovo tab "Coppa": placeholder "In arrivo prossimamente..." in attesa del formato eliminazione diretta (vedi TODO)
+- ✅ Deciso di **non** aggiungere badge emoji 🔥/❄️ per striscia vincente/perdente in classifica: essendo pronostici calcio, la maggior parte del tempo il segnale sarebbe negativo per la maggioranza dei giocatori — scartata
+
+**Bot (`bot_telegram.py`):**
+- ✅ **Fix bug promemoria schedine mancanti**: `task_schedula_promemoria` cercava le partite per "giornata corrente" (`ottieni_giornata_corrente()`), che può restare ferma sulla giornata precedente per ore dopo l'inizio del turno — causa nota di un alert arrivato di sabato invece che venerdì. Ora cerca le partite di oggi per **data** (`dateFrom`/`dateTo`) e legge la giornata dal campo `matchday` della partita stessa, passandola esplicitamente al job successivo
+- ✅ Rafforzato il prompt IA e aggiunto fallback in `normalizza_pronostico` contro pronostici bare "SI"/"NO"/"SÌ" (bug di normalizzazione sui mercati Sì/No tipo "Entrambe le squadre segnano")
+- ✅ **Fix bug "il bot si blocca"**: le chiamate sincrone e lente (lettura IA Gemini, `esegui_calcolo_risultati`, scritture Sheets) bloccavano l'intero event loop del bot, rendendolo non responsivo finché non finivano — spostate su thread separati con `asyncio.to_thread`
+- ✅ Nuovo comando `/status`: giornata corrente e schedine mancanti a colpo d'occhio, senza aprire la dashboard
+
+**Note tecniche:**
+- Aggiunto `.claude/launch.json` per avviare l'anteprima Streamlit locale da Claude Code (nessun segreto, committato)
 
 ### 28/08/2026 — Sessione 4 (UX avanzata, Classifica Live, Notifica Schedine)
 **Operazioni eseguite:**
@@ -150,30 +176,26 @@ Toto_Amici_Progetto/
 - ✅ Eliminato `info project.txt` (note personali non aggiornate)
 - ✅ Creato `PROJECT_LOG.md` (questo file) come memoria persistente del progetto
 
-**Scoperte sicurezza:**
-- ⚠️ Trovati nella history git (commit storici ora pubblici su GitHub):
-  - `TELEGRAM_TOKEN`: `8996951565:AAGbxyDm4ZuA_Wntv1Vv_IoxQPS-Hvf7euw` (commit `8db6be6`, `455caff`, `14a58f7`)
-  - `FOOTBALL_DATA_KEY`: `ef8a4016b5ab4f90a486ea0fea46fd1f` (multipli commit)
-- **File attuali**: tutti sicuri — nessuna credenziale in chiaro nel codice corrente
-- **Azione pendente**: rigenerare entrambe le chiavi (vedi TODO sotto)
+**Scoperte sicurezza (risolte il 29-30/08/2026, vedi Sessione 5):**
+- ⚠️ Trovati nella history git (commit storici pubblici su GitHub): `TELEGRAM_TOKEN` e `FOOTBALL_DATA_KEY` in chiaro in vari commit — **entrambe le chiavi sono state rigenerate e sostituite** su Render/Streamlit Cloud/locale. Le vecchie chiavi restano nella history git ma sono ormai revocate e innocue.
+- ⚠️ `test_api.py` (tracciato in git, pubblico) conteneva una API key di api-sports.io in chiaro — file eliminato.
+- **File attuali**: nessuna credenziale in chiaro nel codice corrente.
 
 ---
 
 ## 📋 TODO / Azioni Pendenti
 
 ### 🔴 Priorità Alta — Da fare ASAP
-- [ ] **STRESS TEST REVISIONE CLAUDE (URGENTISSIMO)**: far controllare a Claude Thinking tutte le modifiche fatte in questa sessione da Gemini (soprattutto la funzione `normalizza_nomi_partite` e il supporto al girone di ritorno). Eseguire uno stress test assoluto per scovare eventuali bug latenti introdotti.
-- [ ] **Rigenerare TELEGRAM_TOKEN**: @BotFather → `/mybots` → `Revoke current token` → aggiornare su Render
-- [ ] **Rigenerare FOOTBALL_DATA_KEY**: [football-data.org dashboard](https://www.football-data.org/client/profile) → rigenera → aggiornare su Render (env var) e Streamlit Cloud (Secrets)
+- [ ] **STRESS TEST REVISIONE CLAUDE**: far controllare a Claude tutte le modifiche fatte da Gemini su `normalizza_nomi_partite` e il supporto al girone di ritorno. Ancora da fare in modo dedicato (in questa sessione è stato risolto solo il bug puntuale SI/NO).
+- [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
-- [ ] **Redesign UI `app.py`**: tema scuro premium, card animate, grafico interattivo andamento punti
-- [ ] **Statistiche avanzate**: confronto testa a testa tra giocatori, giocatore più consistente, grafico a linee per giornata
+- [ ] **Statistiche avanzate**: ancora da fare "striscia vincente/perdente" (giornate consecutive vinte/perse) e "tipologia preferita per giocatore" (1X2 secco vs combo/variabili rischiose). Fatte invece: giornata da incorniciare, Semper Fidelis, benedizione (vedi Sessione 5).
 - [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
 
 ### 🟢 Idee Future
 - [ ] Pagina pubblica per ogni giocatore con le sue statistiche personali
-- [ ] Integrazione con calendario Serie A (avvisi pre-partita)
+- [ ] ~~Integrazione con calendario Serie A (avvisi pre-partita)~~ — scartata, valore aggiunto marginale rispetto a Schedine Live + promemoria schedine mancanti già esistenti
 
 ---
 

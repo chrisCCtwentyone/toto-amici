@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import re
+import asyncio
 import requests
 from datetime import time as dt_time, datetime, timedelta
 import pytz
@@ -358,6 +359,34 @@ def esegui_calcolo_risultati(giornata):
 # ==========================================
 # GESTIONE TELEGRAM E MENU CON PULSANTE KEY
 # ==========================================
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Riepilogo rapido: giornata corrente e chi non ha ancora caricato la schedina."""
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+        service = await asyncio.to_thread(connetti_sheets)
+        righe = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
+            ).execute().get('values', [])
+        )
+
+        giocatori_presenti = set()
+        for riga in righe:
+            if len(riga) >= 2 and str(giornata) in str(riga[0]):
+                giocatori_presenti.add(str(riga[1]).strip().lower())
+
+        mancanti = [g.capitalize() for g in GIOCATORI if g.lower() not in giocatori_presenti]
+
+        msg = f"📊 *Status Toto-Amici*\n\n📅 Giornata corrente: *{giornata}*\n"
+        if mancanti:
+            msg += f"⚠️ Schedine mancanti ({len(mancanti)}):\n" + "\n".join(f"- {n}" for n in mancanti)
+        else:
+            msg += "✅ Tutte le schedine caricate per questa giornata."
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Errore durante il controllo dello status: {e}")
+
 async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     args = context.args
@@ -467,8 +496,8 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"⏳ L'IA Gemini sta analizzando le foto ({len(foto_lista)}) di {gio.capitalize()}...")
     
     try:
-        risultato_json_raw = analizza_schedine_multiple(foto_lista)
-        risultato_json = normalizza_nomi_partite(risultato_json_raw, giorn)
+        risultato_json_raw = await asyncio.to_thread(analizza_schedine_multiple, foto_lista)
+        risultato_json = await asyncio.to_thread(normalizza_nomi_partite, risultato_json_raw, giorn)
         
         # Salva in sessione per dopo
         context.user_data['risultato_json'] = risultato_json
@@ -536,7 +565,7 @@ async def esegui_salvataggio_ia(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.edit_message_text("⏳ Scrittura su Google Sheets in corso...")
     try:
-        successo = scrivi_su_sheets_con_regole(gio, giorn, risultato_json)
+        successo = await asyncio.to_thread(scrivi_su_sheets_con_regole, gio, giorn, risultato_json)
         msg = f"✅ Schedina salvata definitivamente nel Database!" if successo else "⚠️ Errore durante la scrittura su Sheets."
         await query.edit_message_text(msg)
     except Exception as e:
@@ -549,7 +578,7 @@ async def scegli_giornata_update(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query; await query.answer()
     giornata = query.data.split('_')[1]
     await query.edit_message_text(f"⏳ Aggiornamento manuale Giornata {giornata}...")
-    report = esegui_calcolo_risultati(giornata)
+    report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
     return ConversationHandler.END
 
@@ -571,8 +600,8 @@ async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
         del context.user_data['foto_ricevute']
 
 async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
-    giornata = ottieni_giornata_corrente()
-    report = esegui_calcolo_risultati(giornata)
+    giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+    report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
 
 async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
@@ -664,6 +693,7 @@ async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
         ("start", "Apri il menu principale"),
+        ("status", "Giornata corrente e schedine mancanti"),
         ("setkey", "Cambia al volo la chiave API di Gemini")
     ])
 
@@ -723,6 +753,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("setkey", set_api_key_command))
+    app.add_handler(CommandHandler("status", status_command))
     app.add_handler(conv_handler)
     print("🤖 Super-Bot Telegram (con Web Service) avviato...")
     app.run_polling()
