@@ -276,84 +276,6 @@ with tab_classifica:
         df_display = df_display.set_index("Pos.")
         st.table(df_display)
 
-        # --- CLASSIFICA LIVE PROVVISORIA ---
-        with st.expander(":material/update: Classifica provvisoria di giornata"):
-            try:
-                # Usa la giornata con più partite in corso come riferimento
-                giornata_live = None
-                for g_col in reversed(colonne_giornate):
-                    g_num = str(g_col).lower().replace('giornata', '').strip()
-                    if g_num.isdigit():
-                        giornata_live = g_num
-                        break
-                if not giornata_live:
-                    giornata_live = "1"
-
-                _, risultati_live_prov, _ = scarica_risultati_api(giornata_live)
-                df_giocate_giorn = df_giocate[
-                    df_giocate['Giornata'].str.contains(str(giornata_live), na=False)
-                ].copy() if not df_giocate.empty else pd.DataFrame()
-
-                punti_provvisori = {}
-                if not df_giocate_giorn.empty:
-                    for _, row in df_giocate_giorn.iterrows():
-                        esito = str(row.get('Esito', ''))
-                        giocatore = str(row.get('Giocatore', '')).strip()
-                        if not giocatore:
-                            continue
-                        if giocatore not in punti_provvisori:
-                            punti_provvisori[giocatore] = 0
-                        # Conta punti solo delle partite IN CORSO (provvisorie)
-                        if 'CORSO' in esito:
-                            partita_nome = str(row.get('Partita', ''))
-                            partita_norm = normalizza_partita_completa(partita_nome, [(p[0], p[1], p[2]) for p in []])
-                            pronostico = str(row.get('Pronostico', '')).upper()
-                            try:
-                                quota = float(str(row.get('Quota', '0')).replace(',', '.'))
-                            except:
-                                quota = 0.0
-                            # Calcola punti base
-                            if '+' in pronostico:
-                                pt = 6
-                            elif pronostico in ['1', 'X', '2']:
-                                pt = 4
-                            elif pronostico in ['1X', 'X2', '12']:
-                                pt = 1
-                            else:
-                                pt = 2
-                            if quota >= 3.50:
-                                pt *= 2
-                            punti_provvisori[giocatore] += pt
-
-                if punti_provvisori and any(v > 0 for v in punti_provvisori.values()):
-                    df_live = df_classifica[['Giocatore', 'Punti Totali']].copy()
-                    df_live['Provvisori'] = df_live['Giocatore'].map(
-                        lambda g: punti_provvisori.get(g, 0)
-                    )
-                    df_live['Totale Live'] = df_live['Punti Totali'] + df_live['Provvisori']
-                    df_live = df_live.sort_values('Totale Live', ascending=False).reset_index(drop=True)
-                    df_live_display = df_live[['Giocatore', 'Punti Totali', 'Provvisori', 'Totale Live']].copy()
-                    df_live_display.columns = ['Giocatore', 'Definitivi', '⏳ In Corso', '📊 Totale Live']
-                    df_live_display['Definitivi'] = df_live_display['Definitivi'].astype(str) + ' pt'
-                    df_live_display['⏳ In Corso'] = df_live_display['⏳ In Corso'].apply(
-                        lambda x: f'+{x} pt' if x > 0 else '—'
-                    )
-                    df_live_display['📊 Totale Live'] = df_live_display['📊 Totale Live'].astype(str) + ' pt'
-                    live_pos = []
-                    for i in range(len(df_live_display)):
-                        if i == 0: live_pos.append('🥇')
-                        elif i == 1: live_pos.append('🥈')
-                        elif i == 2: live_pos.append('🥉')
-                        else: live_pos.append(f'{i+1}°')
-                    df_live_display.insert(0, 'Pos.', live_pos)
-                    df_live_display = df_live_display.set_index('Pos.')
-                    st.badge('⏳ Dati provvisori — partite in corso', color='orange')
-                    st.table(df_live_display)
-                else:
-                    st.info('Nessuna partita in corso al momento. La classifica live comparirà durante le partite.', icon=':material/schedule:')
-            except Exception:
-                st.info('Classifica live non disponibile al momento.')
-
         # --- STORICO GIORNATE ---
         with st.expander(":material/history: Storico punteggi per giornata"):
             df_classifica_pulita = df_classifica.drop(columns=['_vittorie'], errors='ignore').replace("", pd.NA).dropna(axis=1, how='all').fillna("")
@@ -568,14 +490,20 @@ with tab_confronto:
 
                 def formatta_giocata(row):
                     pronostico = str(row.get('Pronostico', ''))
-                    quota = str(row.get('Quota', ''))
+                    quota_str = str(row.get('Quota', ''))
                     esito = str(row.get('Esito', ''))
+                    try:
+                        quota_num = float(quota_str.replace(',', '.'))
+                    except:
+                        quota_num = 0.0
+                    marcatore = '*' if quota_num >= 3.50 else ''
+                    testo = f"{pronostico} (@{quota_str}{marcatore})"
                     # Segno nascosto per la colorazione (non visibile all'utente)
                     if 'VINTA' in esito:
-                        return f"{pronostico} (@{quota})|||VINTA"
+                        return f"{testo}|||VINTA"
                     elif 'PERSA' in esito:
-                        return f"{pronostico} (@{quota})|||PERSA"
-                    return f"{pronostico} (@{quota})"
+                        return f"{testo}|||PERSA"
+                    return testo
 
                 df_giornata['Giocata'] = df_giornata.apply(formatta_giocata, axis=1)
 
@@ -588,6 +516,24 @@ with tab_confronto:
 
                 # Rimuovi il nome dell'indice per evitare "Partita_Pulita" nella UI
                 pivot.index.name = None
+
+                # --- RIGA TOTALI: vincita potenziale per giocatore ---
+                vincita_map = {}
+                for g in df_giornata['Giocatore'].unique():
+                    vals = [
+                        v for v in df_giornata[df_giornata['Giocatore'] == g]['Vincita Potenziale'].tolist()
+                        if str(v).strip() not in ["", "0", "0.0"]
+                    ]
+                    try:
+                        vincita_map[g] = float(str(vals[0]).replace(',', '.')) if vals else 0.0
+                    except:
+                        vincita_map[g] = 0.0
+
+                riga_totali_display = pd.Series(
+                    {col: f"{vincita_map.get(col, 0.0):.2f} €".replace('.', ',') for col in pivot.columns},
+                    name="💰 Vincita potenziale"
+                )
+                riga_totali_raw = pd.Series({col: "" for col in pivot.columns}, name="💰 Vincita potenziale")
 
                 # Tabella HTML colorata per esiti vinti/persi
                 def _colora_cella(val):
@@ -604,12 +550,33 @@ with tab_confronto:
                 # Prima colora, poi pulisci i marker nascosti
                 pivot_pulito = pivot.map(_pulisci_cella)
 
+                # Aggiungi la riga dei totali in fondo (dopo colorazione/pulizia delle righe partita)
+                pivot_con_totali = pd.concat([pivot, riga_totali_raw.to_frame().T])
+                pivot_pulito_con_totali = pd.concat([pivot_pulito, riga_totali_display.to_frame().T])
+
                 def _applica_stili(pivot_orig, pivot_clean):
                     styles = pivot_orig.map(lambda val: _colora_cella(val))
                     return pivot_clean.style.apply(lambda _: styles, axis=None)
 
-                styled = _applica_stili(pivot, pivot_pulito)
-                st.html(styled.to_html())
+                styled = _applica_stili(pivot_con_totali, pivot_pulito_con_totali)
+
+                st.html(f"""
+<style>
+.confronto-scroll {{ overflow-x: auto; width: 100%; }}
+.confronto-scroll table {{ border-collapse: collapse; }}
+.confronto-scroll th:first-child, .confronto-scroll td:first-child {{
+    position: sticky; left: 0; z-index: 2;
+}}
+@media (prefers-color-scheme: dark) {{
+    .confronto-scroll th:first-child, .confronto-scroll td:first-child {{ background-color: #0f172a; }}
+}}
+@media (prefers-color-scheme: light) {{
+    .confronto-scroll th:first-child, .confronto-scroll td:first-child {{ background-color: #ffffff; }}
+}}
+</style>
+<div class="confronto-scroll">{styled.to_html()}</div>
+""")
+                st.caption("* = quota ≥ 3.50, punti raddoppiati")
             else:
                 st.info("Nessuna giocata trovata per questa giornata.")
     else:
@@ -664,6 +631,7 @@ with tab_stats:
             if stats_giocatori:
                 df_pg = pd.DataFrame(stats_giocatori)
                 cecchino = df_pg.loc[df_pg['Win_Rate'].idxmax()]
+                benedizione = df_pg.loc[df_pg['Win_Rate'].idxmin()]
                 folle = df_pg.loc[df_pg['Quota_Media'].idxmax()]
                 conservatore = df_pg.loc[df_pg['Quota_Media'].idxmin()]
 
@@ -673,6 +641,15 @@ with tab_stats:
                         label=cecchino['Giocatore'].upper(),
                         value=f"{cecchino['Win_Rate']:.1f}% win rate",
                         delta=f"{int(cecchino['Vinte'])}/{int(cecchino['Totali'])} pronostici presi"
+                    )
+
+                with st.container(border=True):
+                    st.markdown("**:material/self_improvement: Quello che ha bisogno di una benedizione**")
+                    st.metric(
+                        label=benedizione['Giocatore'].upper(),
+                        value=f"{benedizione['Win_Rate']:.1f}% win rate",
+                        delta=f"{int(benedizione['Vinte'])}/{int(benedizione['Totali'])} pronostici presi",
+                        delta_color="inverse"
                     )
 
                 with st.container(border=True):
@@ -756,9 +733,29 @@ with tab_regolamento:
 - **Costo:** **5 €** a giornata
 - **Composizione obbligatoria:**
   - **1 Combo** (1X2 + O/U 2.5, 1X2 + GG/NG)
-  - **4 Fisse** (1, X, 2)
   - **2 Doppie Chance** (1X, X2, 12)
   - **3 Variabili** (Over/Under 2.5, Goal/NoGoal, Pari/Dispari)
+  - **4 Fisse** (1, X, 2)
+            """)
+
+        with st.container(border=True):
+            st.markdown("#### :material/star: 2. Sistema punteggi")
+            df_punti = pd.DataFrame({
+                "Tipo": ["Combo", "Doppie Chance", "Variabili (O/U, ecc.)", "Fisse", "Bonus chiusura"],
+                "Punti base": ["6", "1", "2", "4", "+10"],
+                "Con quota ≥ 3.50": ["12", "2", "4", "8", "—"]
+            })
+            st.table(df_punti.set_index("Tipo"))
+            st.caption("🚀 Se la quota di un singolo evento è ≥ 3.50, i punti raddoppiano. Fa fede la quota in bolletta.")
+
+    with col_r2:
+        with st.container(border=True):
+            st.markdown("#### :material/gavel: 3. Regole ed errori")
+            st.markdown("""
+- **Bolletta errata** (es. troppe fisse): le selezioni in eccesso vengono annullate (0 pt). Le corrette restano valide. La bolletta è valida economicamente.
+- **Errore in buona fede:** Over 1.5 → vale solo se la partita finisce Over 2.5. Economicamente fa fede la bolletta reale.
+- **Scadenza:** bolletta da pubblicare **5 minuti prima** dell'inizio della prima partita. In ritardo → 0 pt e bolletta nulla economicamente.
+- **Partite rinviate:** per i punti si aspetta il recupero. Economicamente, se il sito chiude la giocata, la vincita si divide a metà.
             """)
 
         with st.container(border=True):
@@ -773,23 +770,3 @@ with tab_regolamento:
                 "Premio": ["1.200 €", "800 €", "500 €", "300 €", "200 €"]
             })
             st.table(df_premi.set_index("Posizione"))
-
-    with col_r2:
-        with st.container(border=True):
-            st.markdown("#### :material/star: 2. Sistema punteggi")
-            df_punti = pd.DataFrame({
-                "Tipo": ["Combo", "Fisse", "Doppie Chance", "Variabili (O/U, ecc.)", "Bonus chiusura"],
-                "Punti base": ["6", "4", "1", "2", "+10"],
-                "Con quota ≥ 3.50": ["12", "8", "2", "4", "—"]
-            })
-            st.table(df_punti.set_index("Tipo"))
-            st.caption("🚀 Se la quota di un singolo evento è ≥ 3.50, i punti raddoppiano. Fa fede la quota in bolletta.")
-
-        with st.container(border=True):
-            st.markdown("#### :material/gavel: 3. Regole ed errori")
-            st.markdown("""
-- **Bolletta errata** (es. troppe fisse): le selezioni in eccesso vengono annullate (0 pt). Le corrette restano valide. La bolletta è valida economicamente.
-- **Errore in buona fede:** Over 1.5 → vale solo se la partita finisce Over 2.5. Economicamente fa fede la bolletta reale.
-- **Scadenza:** bolletta da pubblicare **5 minuti prima** dell'inizio della prima partita. In ritardo → 0 pt e bolletta nulla economicamente.
-- **Partite rinviate:** per i punti si aspetta il recupero. Economicamente, se il sito chiude la giocata, la vincita si divide a metà.
-            """)

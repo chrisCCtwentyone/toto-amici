@@ -120,6 +120,7 @@ def analizza_schedine_multiple(lista_percorsi_foto):
        - NON INCLUDERE MAI i nomi delle squadre (es. 'MILAN', 'ROMA') nel pronostico. Sostituisci il nome con il segno `1` o `2` corrispondente, o `X` se c'è scritto 'PAREGGIO'.
        - Converti qualsiasi abbreviazione come 'O' o 'U' in 'OVER_2.5' o 'UNDER_2.5'.
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
+       - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
     response = client.models.generate_content(
         model='gemini-3.6-flash',
@@ -159,9 +160,9 @@ def normalizza_pronostico(pronostico_raw):
     p = re.sub(r'\s+', ' ', p)
     
     # Alias GOAL / NOGOAL
-    if p in ["GG", "GOAL/GOAL", "G/G", "G", "GOL"]:
+    if p in ["GG", "GOAL/GOAL", "G/G", "G", "GOL", "SI", "SÌ"]:
         p = "GOAL"
-    elif p in ["NG", "NOGOAL", "NO GOAL", "NO/GOAL", "N/G"]:
+    elif p in ["NG", "NOGOAL", "NO GOAL", "NO/GOAL", "N/G", "NO"]:
         p = "NOGOAL"
         
     # Alias OVER / UNDER
@@ -576,9 +577,13 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
 
 async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
     """Controlla chi non ha ancora caricato la schedina per la giornata corrente.
-    Viene chiamata da un job schedulato 30 min prima della prima partita."""
+    Viene chiamata da un job schedulato 30 min prima della prima partita.
+    La giornata da controllare arriva da context.job.data, calcolata da
+    task_schedula_promemoria a partire dalla stessa partita usata per lo scheduling
+    (evita disallineamenti con ottieni_giornata_corrente(), che può aggiornarsi
+    con ritardo rispetto al calendario reale)."""
     try:
-        giornata = ottieni_giornata_corrente()
+        giornata = context.job.data
         service = connetti_sheets()
         righe = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
@@ -607,43 +612,51 @@ async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Errore controlla_schedine_mancanti: {e}")
 
 async def task_schedula_promemoria(context: ContextTypes.DEFAULT_TYPE):
-    """Job giornaliero: controlla a che ora inizia la prima partita di oggi
-    e schedula il promemoria 30 min prima."""
+    """Job giornaliero: controlla se ci sono partite di Serie A OGGI e schedula
+    il promemoria 30 min prima della prima di esse.
+
+    NOTA: la ricerca partite avviene per DATA (dateFrom/dateTo=oggi), non per
+    'giornata corrente' (ottieni_giornata_corrente()). Quel valore, riportato
+    dall'API, può restare fermo sulla giornata precedente ancora per qualche ora
+    dopo l'inizio del turno (es. il venerdì sera, prima che le altre partite del
+    weekend abbiano un pronostico associato) — usarlo qui avrebbe fatto perdere
+    del tutto la prima partita del turno, facendo scattare il promemoria un
+    giorno dopo quello giusto. La giornata di riferimento viene invece letta
+    direttamente dal campo 'matchday' della partita trovata."""
     try:
-        giornata = ottieni_giornata_corrente()
-        url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+        tz = pytz.timezone('Europe/Rome')
+        oggi_str = datetime.now(tz).date().strftime("%Y-%m-%d")
+
+        url = f"https://api.football-data.org/v4/competitions/SA/matches?dateFrom={oggi_str}&dateTo={oggi_str}"
         matches = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         if not matches:
-            return
-        
-        tz = pytz.timezone('Europe/Rome')
-        oggi = datetime.now(tz).date()
-        
-        # Trova la prima partita di OGGI
+            return  # Nessuna partita oggi, nessun promemoria
+
+        # Trova la prima partita di oggi non ancora iniziata
         orari_oggi = []
         for m in matches:
             utc_str = m.get("utcDate", "")
-            if utc_str:
+            if utc_str and m["status"] in ["TIMED", "SCHEDULED"]:
                 utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
                 ita_dt = utc_dt.astimezone(tz)
-                if ita_dt.date() == oggi and m["status"] in ["TIMED", "SCHEDULED"]:
-                    orari_oggi.append(ita_dt)
-        
+                orari_oggi.append((ita_dt, m.get("matchday")))
+
         if not orari_oggi:
-            return  # Nessuna partita oggi, nessun promemoria
-        
-        prima_partita = min(orari_oggi)
+            return
+
+        prima_partita, giornata = min(orari_oggi, key=lambda x: x[0])
         orario_promemoria = prima_partita - timedelta(minutes=30)
         ora_corrente = datetime.now(tz)
-        
+
         if orario_promemoria > ora_corrente:
             secondi_mancanti = (orario_promemoria - ora_corrente).total_seconds()
             context.job_queue.run_once(
                 task_controlla_schedine_mancanti,
                 when=secondi_mancanti,
+                data=giornata,
                 name=f"promemoria_g{giornata}"
             )
-            logging.info(f"Promemoria schedine schedulato alle {orario_promemoria.strftime('%H:%M')} (tra {int(secondi_mancanti/60)} min)")
+            logging.info(f"Promemoria schedine (Giornata {giornata}) schedulato alle {orario_promemoria.strftime('%H:%M')} (tra {int(secondi_mancanti/60)} min)")
     except Exception as e:
         logging.error(f"Errore task_schedula_promemoria: {e}")
 
