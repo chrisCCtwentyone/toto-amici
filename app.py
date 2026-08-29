@@ -557,12 +557,15 @@ with tab_confronto:
                         if str(v).strip() not in ["", "0", "0.0"]
                     ]
                     try:
-                        vincita_map[g] = float(str(vals[0]).replace(',', '.')) if vals else 0.0
+                        vincita_map[g] = float(str(vals[0]).replace('.', '').replace(',', '.')) if vals else 0.0
                     except:
                         vincita_map[g] = 0.0
 
                 riga_totali_display = pd.Series(
-                    {col: f"{vincita_map.get(col, 0.0):.2f} €".replace('.', ',') for col in pivot.columns},
+                    {
+                        col: f"{vincita_map.get(col, 0.0):,.2f} €".replace(',', 'X').replace('.', ',').replace('X', '.')
+                        for col in pivot.columns
+                    },
                     name="💰 Vincita potenziale"
                 )
                 riga_totali_raw = pd.Series({col: "" for col in pivot.columns}, name="💰 Vincita potenziale")
@@ -738,8 +741,16 @@ with tab_stats:
                         parti_f = [p.strip() for p in partita_norm.split('-')]
                         if len(parti_f) != 2:
                             continue
+                        # Conta come "voto" per una squadra qualsiasi segno che non scommette
+                        # contro di lei: "1"/"1X" per la squadra di casa, "2"/"X2" per l'ospite.
+                        # "12" e "X" restano fuori: non favoriscono una squadra specifica.
                         segno_f = pronostico_f.split('+')[0].strip()
-                        squadra_f = parti_f[0] if segno_f == '1' else (parti_f[1] if segno_f == '2' else None)
+                        if segno_f in ('1', '1X'):
+                            squadra_f = parti_f[0]
+                        elif segno_f in ('2', 'X2'):
+                            squadra_f = parti_f[1]
+                        else:
+                            squadra_f = None
                         if squadra_f:
                             chiave = (giocatore_f, squadra_f)
                             squadra_fedelta[chiave] = squadra_fedelta.get(chiave, 0) + 1
@@ -751,10 +762,9 @@ with tab_stats:
                             st.markdown("**:material/verified: Semper Fidelis**")
                             st.metric(
                                 label=f"{fedele_giocatore.upper()} → {fedele_squadra.upper()}",
-                                value=f"{fedele_count}× vittoria giocata",
+                                value=f"{fedele_count}× puntato sulla squadra",
                                 delta="Punta sempre sulla stessa squadra, giornata dopo giornata"
                             )
-                            st.caption("Il giocatore che ripete più spesso il segno a favore della stessa squadra, in giornate diverse.")
 
         with col_s2:
             st.markdown("#### :material/sports_soccer: Le squadre di Serie A")
