@@ -603,10 +603,7 @@ with tab_confronto:
 
                 # Prima colora, poi pulisci i marker nascosti
                 pivot_pulito = pivot.map(_pulisci_cella)
-                styled = pivot_pulito.style.map(lambda v: _colora_cella(
-                    pivot.at[v.name, v.name] if False else ''
-                ))
-                # Approccio diretto: applica gli stili dal pivot originale
+
                 def _applica_stili(pivot_orig, pivot_clean):
                     styles = pivot_orig.map(lambda val: _colora_cella(val))
                     return pivot_clean.style.apply(lambda _: styles, axis=None)
