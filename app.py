@@ -25,6 +25,27 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a {display: none !important;}
 </style>
 """)
 
+# --- MODALITÀ MANUTENZIONE ---
+# Attiva a mano quando ci sono anomalie sui dati da controllare prima di mostrarli agli utenti.
+# Per riattivare il sito: rimettere MANUTENZIONE = False.
+MANUTENZIONE = True
+
+if MANUTENZIONE:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col_vuota1, col_centro, col_vuota2 = st.columns([1, 2, 1])
+    with col_centro:
+        with st.container(border=True):
+            st.markdown(
+                "<div style='text-align:center; padding: 2rem 1rem;'>"
+                "<div style='font-size: 3rem;'>🛠️</div>"
+                "<h2>Sito in manutenzione</h2>"
+                "<p>Stiamo verificando alcune anomalie nei dati delle partite.<br>"
+                "Torniamo operativi a breve — grazie per la pazienza!</p>"
+                "</div>",
+                unsafe_allow_html=True
+            )
+    st.stop()
+
 # --- COSTANTI ---
 try:
     SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
