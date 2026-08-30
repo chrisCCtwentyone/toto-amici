@@ -46,6 +46,7 @@ if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
     logging.warning("⚠️ ATTENZIONE: Variabili d'ambiente mancanti. Il bot potrebbe non funzionare correttamente!")
 
 last_ping_time = None
+ultime_anomalie_segnalate = set()  # chiavi stabili delle anomalie dell'ultimo avviso inviato (per non ripetere lo stesso avviso ad ogni controllo)
 
 # ==========================================
 # SERVER WEB PER MANTENERE IL BOT SVEGLIO (TRUCCO RENDER)
@@ -916,6 +917,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
         ora = datetime.now(tz)
 
         bloccate = []
+        chiavi_bloccate = set()
         for m in matches:
             utc_str = m.get("utcDate", "")
             if not utc_str:
@@ -924,7 +926,9 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             ita_dt = utc_dt.astimezone(tz)
             ore_passate = (ora - ita_dt).total_seconds() / 3600
             if ore_passate > 3 and m["status"] != "FINISHED":
-                bloccate.append(f"{m['homeTeam']['name']} - {m['awayTeam']['name']} (iniziata {ore_passate:.0f}h fa, stato: {m['status']})")
+                nome_match = f"{m['homeTeam']['name']} - {m['awayTeam']['name']}"
+                bloccate.append(f"{nome_match} (iniziata {ore_passate:.0f}h fa, stato: {m['status']})")
+                chiavi_bloccate.add(f"bloccata:{nome_match}")
 
         service = await asyncio.to_thread(connetti_sheets)
         righe = await asyncio.to_thread(
@@ -948,7 +952,20 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             if not match:
                 non_riconosciute.add(partita)
 
-        if not bloccate and not non_riconosciute:
+        global ultime_anomalie_segnalate
+        chiavi_attuali = chiavi_bloccate | {f"non_riconosciuta:{p}" for p in non_riconosciute}
+
+        if chiavi_attuali == ultime_anomalie_segnalate:
+            return  # stessa situazione dell'ultimo avviso: non ripetere lo stesso messaggio
+
+        if not chiavi_attuali:
+            # le anomalie precedenti si sono risolte da sole
+            await context.bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"✅ Giornata {giornata}: le anomalie segnalate in precedenza risultano risolte.",
+                parse_mode="Markdown"
+            )
+            ultime_anomalie_segnalate = set()
             return
 
         msg = f"🔍 *Controllo automatico Giornata {giornata}*\n\n"
@@ -960,8 +977,10 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             msg += "⚠️ *Partite in bolletta non riconosciute tra quelle ufficiali della giornata:*\n"
             msg += "\n".join(f"- {p}" for p in non_riconosciute)
             msg += "\n\nProbabile nome squadra insolito o ordine invertito — non verranno segnate automaticamente finché non le correggi a mano."
+        msg += "\n\n_(Non ripeterò questo stesso avviso finché la situazione non cambia.)_"
 
         await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+        ultime_anomalie_segnalate = chiavi_attuali
     except Exception as e:
         logging.error(f"Errore task_controlla_anomalie_partite: {e}")
 
