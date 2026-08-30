@@ -539,10 +539,7 @@ with tab_live:
                         quota = row.get('Quota', '')
                         punti = row.get('Punti Partita', '0')
                         tipo = row.get('Tipologia', '')
-                        st.caption(
-                            f"{tipo} · Pronostico: **{pronostico}** · Quota: **@{quota}** · "
-                            f"Punti: **+{punti} pt**"
-                        )
+                        st.caption(f"{tipo} · Pronostico: **{pronostico}** · Quota: **@{quota}**")
                         # Non mostrare "Da giocare" se l'esito è già finale: capita quando i dati
                         # live di Football-Data non sono ancora allineati con un esito già calcolato
                         # dal bot — meglio non mostrare nulla che un'informazione contraddittoria.
@@ -555,6 +552,15 @@ with tab_live:
                             )
                     with col_esito:
                         st.badge(esito, icon=badge_icon, color=badge_color)
+                        colore_punti = {
+                            "green": "#22c55e", "red": "#ef4444", "yellow": "#eab308",
+                            "orange": "#f97316", "gray": "#94a3b8"
+                        }.get(badge_color, "#94a3b8")
+                        st.markdown(
+                            f"<div style='font-size:1.5rem; font-weight:800; "
+                            f"color:{colore_punti}; margin-top:0.2rem;'>+{punti} pt</div>",
+                            unsafe_allow_html=True
+                        )
         else:
             st.warning("Schedina non trovata per questo giocatore.", icon=":material/search_off:")
     else:
