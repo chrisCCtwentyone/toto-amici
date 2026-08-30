@@ -490,7 +490,11 @@ with tab_live:
                             f"{tipo} · Pronostico: **{pronostico}** · Quota: **@{quota}** · "
                             f"Punti: **+{punti} pt**"
                         )
-                        if risultato_match:
+                        # Non mostrare "Da giocare" se l'esito è già finale: capita quando i dati
+                        # live di Football-Data non sono ancora allineati con un esito già calcolato
+                        # dal bot — meglio non mostrare nulla che un'informazione contraddittoria.
+                        esito_gia_finale = any(tag in esito for tag in ("VINTA", "PERSA", "ANNULLATA"))
+                        if risultato_match and not (esito_gia_finale and risultato_match == "Da giocare"):
                             st.badge(
                                 f"Risultato: {risultato_match}",
                                 icon=":material/scoreboard:",
