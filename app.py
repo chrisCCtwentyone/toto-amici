@@ -67,6 +67,19 @@ RISULTATI_MANUALI = {
     "Juventus FC - Parma Calcio 1913": "2 - 0",
 }
 
+# --- VERSIONE E NOVITÀ ---
+# Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
+# (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
+VERSIONE_APP = "2.5.0"
+NOVITA = [
+    ("2.5.0", "30/08/2026", "Controlli automatici di affidabilità sui risultati live."),
+    ("2.4.0", "30/08/2026", "Corretti alcuni risultati della Giornata 2 mostrati in modo errato."),
+    ("2.3.0", "29/08/2026", "Nuove statistiche (Semper Fidelis, Giornata da incorniciare, Benedizione), grafico versamenti Cassa, nuova sezione Coppa (in arrivo)."),
+    ("2.2.0", "28/08/2026", "Promemoria per chi non ha ancora caricato la schedina, podio in classifica, colori sul confronto giocate."),
+    ("2.1.0", "27/08/2026", "Conferma manuale prima di salvare le schedine, orari delle partite in diretta."),
+    ("2.0.0", "27/08/2026", "Nuovo design del sito, tema scuro e chiaro automatico."),
+]
+
 # ==========================================
 # CREDENZIALI E SERVICE (CACHED)
 # ==========================================
@@ -212,6 +225,9 @@ col_title, col_refresh = st.columns([5, 1])
 with col_title:
     st.title(":material/sports_soccer: Toto-Amici 2026")
     st.caption("Risultati, classifiche, statistiche e montepremi in tempo reale · Serie A")
+    with st.expander(f"Versione {VERSIONE_APP} · novità", expanded=False):
+        for versione, data, descrizione in NOVITA:
+            st.caption(f"**v{versione}** ({data}) — {descrizione}")
 with col_refresh:
     st.write("")
     if st.button(":material/refresh: Aggiorna", key="btn_refresh"):
