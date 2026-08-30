@@ -70,8 +70,9 @@ RISULTATI_MANUALI = {
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.5.0"
+VERSIONE_APP = "2.6.0"
 NOVITA = [
+    ("2.6.0", "30/08/2026", "Calcolo punti più rigoroso: un pronostico che il sistema non riconosce non viene più considerato vinto, ma segnalato per un controllo."),
     ("2.5.0", "30/08/2026", "Controlli automatici di affidabilità sui risultati live."),
     ("2.4.0", "30/08/2026", "Corretti alcuni risultati della Giornata 2 mostrati in modo errato."),
     ("2.3.0", "29/08/2026", "Nuove statistiche (Semper Fidelis, Giornata da incorniciare, Benedizione), grafico versamenti Cassa, nuova sezione Coppa (in arrivo)."),
@@ -183,6 +184,25 @@ def scarica_risultati_api(giornata):
     except Exception:
         api_error = True
     return partite_ufficiali, risultati_mappati, api_error
+
+@st.cache_data(ttl=86400)
+def scarica_squadre_serie_a():
+    """Elenco delle 20 squadre della stagione: UNA sola chiamata, cache 24h.
+
+    Serve a normalizzare i nomi squadra senza interrogare l'API giornata per
+    giornata: quel pattern costava una chiamata per ogni giornata giocata e
+    avrebbe sfondato il rate limit (10 richieste/minuto) da meta' stagione in poi,
+    degradando anche la cache degli altri tab. I nomi delle squadre non cambiano
+    durante la stagione, quindi una sola richiesta basta. Vedi PROJECT_LOG.md, Sessione 8.
+    """
+    url = "https://api.football-data.org/v4/competitions/SA/teams"
+    try:
+        res = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10)
+        if res.status_code == 200:
+            return [t["name"] for t in res.json().get("teams", [])]
+    except Exception:
+        pass
+    return []
 
 # ==========================================
 # NORMALIZZAZIONE NOMI SQUADRE
@@ -498,6 +518,8 @@ with tab_live:
                     badge_color, badge_icon = "green", ":material/check_circle:"
                 elif "PERSA" in esito:
                     badge_color, badge_icon = "red", ":material/cancel:"
+                elif "VERIFICARE" in esito:
+                    badge_color, badge_icon = "yellow", ":material/report:"
                 elif "CORSO" in esito:
                     badge_color, badge_icon = "orange", ":material/schedule:"
                 elif "ANNULLATA" in esito:
@@ -782,21 +804,23 @@ with tab_stats:
                             )
 
                 # --- SEMPER FIDELIS: stesso segno sulla stessa squadra, giornata dopo giornata ---
+                # I nomi squadra vengono normalizzati con UNA sola chiamata API per l'intera
+                # stagione (scarica_squadre_serie_a), non una per giornata: vedi il commento
+                # su quella funzione per il motivo.
                 squadra_fedelta = {}
-                giornate_fedelta = [g for g in df_stats['Giornata'].dropna().unique() if str(g).strip() != ""]
-                for g in giornate_fedelta:
-                    g_num_api = str(g).lower().replace("giornata", "").strip()
-                    partite_uff_g, _, _ = scarica_risultati_api(g_num_api)
-                    for _, row in df_stats[df_stats['Giornata'] == g].iterrows():
+                squadre_ufficiali = scarica_squadre_serie_a()
+                if squadre_ufficiali:
+                    for _, row in df_stats.iterrows():
                         giocatore_f = str(row.get('Giocatore', '')).strip()
                         partita_raw = str(row.get('Partita', ''))
                         pronostico_f = str(row.get('Pronostico', '')).upper()
-                        if not giocatore_f or '-' not in partita_raw:
+                        if not giocatore_f or partita_raw.count('-') != 1:
                             continue
-                        partita_norm = normalizza_partita_completa(partita_raw, partite_uff_g)
-                        parti_f = [p.strip() for p in partita_norm.split('-')]
-                        if len(parti_f) != 2:
-                            continue
+                        casa_raw, ospite_raw = [p.strip() for p in partita_raw.split('-')]
+                        parti_f = [
+                            normalizza_nome_squadra(casa_raw, squadre_ufficiali),
+                            normalizza_nome_squadra(ospite_raw, squadre_ufficiali),
+                        ]
                         # Conta come "voto" per una squadra qualsiasi segno che non scommette
                         # contro di lei: "1"/"1X" per la squadra di casa, "2"/"X2" per l'ospite.
                         # "12" e "X" restano fuori: non favoriscono una squadra specifica.

@@ -83,9 +83,25 @@ def run_web_server():
 # FUNZIONI CORE DEL BOT
 # ==========================================
 def leggi_chiave_api():
+    """Chiave Gemini: prima la variabile d'ambiente, poi il file locale.
+
+    Su Render il filesystem e' effimero e i Secret File sono in sola lettura:
+    una chiave cambiata con /setkey vive solo fino al riavvio successivo, poi
+    si torna silenziosamente a quella vecchia. Con GEMINI_API_KEY impostata
+    come variabile d'ambiente il valore e' invece stabile fra i riavvii; il
+    file resta come fallback per l'uso in locale e per /setkey al volo.
+    """
+    chiave_env = os.environ.get("GEMINI_API_KEY", "").strip()
+    if chiave_env:
+        return chiave_env
     try:
         with open('chiave_api.txt', 'r') as f: return f.read().strip()
     except: return ""
+
+def chiave_api_da_env():
+    """True se la chiave in uso arriva dalla variabile d'ambiente (quindi /setkey
+    non ha effetto pratico finche' quella variabile resta impostata)."""
+    return bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
 def get_gemini_client():
     chiave = leggi_chiave_api()
@@ -255,30 +271,76 @@ def ottieni_giornata_corrente():
     except: return 1
 
 def estrai_numero(testo):
+    """Legge un numero scritto in formato italiano ("1.674,56" = milleseicento...).
+
+    ATTENZIONE: questa funzione legge anche le vincite che finiscono in Cassa.
+    La versione precedente faceva solo replace(',', '.'), quindi "1.674,56"
+    diventava "1.674.56" e il match si fermava a 1.674 -> in Cassa sarebbe finito
+    0,84 EUR invece di 837,28 EUR. Nessun dato storico ne e' stato intaccato
+    (l'unica schedina chiusa valeva 855,70, sotto i mille), ma sarebbe successo
+    alla prima vincita a quattro cifre. Vedi PROJECT_LOG.md, Sessione 8.
+    """
     try:
-        match = re.search(r'\d+(?:\.\d+)?', str(testo).replace(',', '.'))
+        s = re.sub(r'[^\d.,]', '', str(testo))
+        if ',' in s:
+            # Formato italiano: il punto separa le migliaia, la virgola i decimali.
+            s = s.replace('.', '').replace(',', '.')
+        match = re.search(r'\d+(?:\.\d+)?', s)
         return float(match.group()) if match else 0.0
     except: return 0.0
 
+ESITO_DA_VERIFICARE = "⚠️ DA VERIFICARE"
+
+def valuta_singolo_segno(p, gol_casa, gol_ospite):
+    """Valuta UN singolo segno (senza '+'). Ritorna:
+       True  = vinto
+       False = perso
+       None  = segno NON riconosciuto (non si indovina: va segnalato all'admin)
+
+    Il valore None e' il punto centrale di questa funzione. La versione precedente
+    di controlla_esito() considerava vinto tutto cio' che non riconosceva, quindi
+    un pronostico mai visto ("SI", "2X", una lettura IA vuota...) diventava punti
+    regalati in silenzio. Vedi PROJECT_LOG.md, Sessione 8.
+    """
+    tot = gol_casa + gol_ospite
+    segno = "1" if gol_casa > gol_ospite else ("2" if gol_ospite > gol_casa else "X")
+    entrambe = "GOAL" if (gol_casa > 0 and gol_ospite > 0) else "NOGOAL"
+
+    if p in ("1", "X", "2"): return p == segno
+    if p == "1X": return segno in ("1", "X")
+    if p == "X2": return segno in ("X", "2")
+    if p == "12": return segno in ("1", "2")
+    if p == "GOAL": return entrambe == "GOAL"
+    if p == "NOGOAL": return entrambe == "NOGOAL"
+    if p == "PARI": return (tot % 2) == 0
+    if p == "DISPARI": return (tot % 2) != 0
+
+    # OVER_x / UNDER_x con soglia esplicita. Le soglie in uso sono .5 (mai pareggio
+    # esatto col totale gol); si mantengono >= e <= per replicare esattamente il
+    # comportamento storico anche su eventuali soglie intere.
+    m = re.match(r'^(OVER|UNDER)_(\d+(?:\.\d+)?)$', p)
+    if m:
+        soglia = float(m.group(2))
+        return tot >= soglia if m.group(1) == "OVER" else tot <= soglia
+
+    return None
+
 def controlla_esito(pronostico, gol_casa, gol_ospite):
-    if "ANNULLATA" in pronostico: return "➖ ANNULLATA"
-    tot, segno = gol_casa + gol_ospite, "1" if gol_casa > gol_ospite else ("2" if gol_ospite > gol_casa else "X")
-    entrambe, vinta = "GOAL" if (gol_casa > 0 and gol_ospite > 0) else "NOGOAL", True
-    for p in pronostico.split('+'):
-        p = p.strip()
-        if p in ["1", "X", "2"] and p != segno: vinta = False
-        elif p == "1X" and segno not in ["1", "X"]: vinta = False
-        elif p == "X2" and segno not in ["X", "2"]: vinta = False
-        elif p == "12" and segno not in ["1", "2"]: vinta = False
-        elif p == "GOAL" and entrambe != "GOAL": vinta = False
-        elif p == "NOGOAL" and entrambe != "NOGOAL": vinta = False
-        elif p == "PARI" and (tot % 2) != 0: vinta = False
-        elif p == "DISPARI" and (tot % 2) == 0: vinta = False
-        elif "UNDER" in p or "OVER" in p:
-            try:
-                if "UNDER" in p and tot > float(p.split('_')[1]): vinta = False
-                if "OVER" in p and tot < float(p.split('_')[1]): vinta = False
-            except: pass
+    """Esito di un pronostico completo (eventualmente combo con '+').
+    Se anche un solo segno non e' riconosciuto, l'intero pronostico finisce in
+    DA VERIFICARE: mai assegnare punti su qualcosa che non sappiamo interpretare."""
+    if "ANNULLATA" in str(pronostico): return "➖ ANNULLATA"
+
+    segni = [p.strip() for p in str(pronostico).split('+')]
+    if not any(segni): return ESITO_DA_VERIFICARE
+
+    vinta = True
+    for p in segni:
+        risultato = valuta_singolo_segno(p, gol_casa, gol_ospite)
+        if risultato is None:
+            return ESITO_DA_VERIFICARE
+        if not risultato:
+            vinta = False
     return "✅ VINTA" if vinta else "❌ PERSA"
 
 def calcola_punteggio_partita(pronostico, quota):
@@ -301,7 +363,9 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
 
     righe_giocate = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I").execute().get('values', [])
     classifica, aggiornamenti_testo, richieste_stile = {}, [], []
+    da_verificare_dettaglio = []
     colore_verde, colore_rosso, colore_grigio = {"red":0.85,"green":0.95,"blue":0.85}, {"red":0.95,"green":0.85,"blue":0.85}, {"red":0.90,"green":0.90,"blue":0.90}
+    colore_giallo = {"red":1.0,"green":0.95,"blue":0.70}
     sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', []) if s['properties']['title'].lower() == 'giocate')
 
     for idx, riga in enumerate(righe_giocate):
@@ -310,7 +374,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
         esito_salvato = str(riga[6]).strip() if len(riga) > 6 else ""
 
-        if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "cassa": vincita}
+        if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "da_verificare": 0, "cassa": vincita}
         elif vincita > 0: classifica[gio]["cassa"] = vincita
 
         casa_sh, ospite_sh = [s.strip()[:5] for s in partita.lower().split('-')]
@@ -347,6 +411,12 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
                 testo_esito = controlla_esito(pron, gol_casa_riga, gol_ospite_riga)
                 if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
                 elif "ANNULLATA" in testo_esito: col = colore_grigio
+                elif testo_esito == ESITO_DA_VERIFICARE:
+                    # Pronostico non interpretabile: 0 punti, e NON conta come persa
+                    # (altrimenti marcherebbe la schedina come "bruciata" senza motivo).
+                    col = colore_giallo
+                    classifica[gio]["da_verificare"] += 1
+                    da_verificare_dettaglio.append(f"{gio.upper()} · {partita} · pronostico: `{pron or '(vuoto)'}`")
                 else: col = colore_rosso; classifica[gio]["perse"] += 1
 
             aggiornamenti_testo.extend([{'range': f"Giocate!G{idx+1}", 'values': [[testo_esito]]}, {'range': f"Giocate!I{idx+1}", 'values': [[punti_partita]]}])
@@ -358,14 +428,22 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
 
     vincitori, report = [], f"📊 *REPORT GIORNATA {giornata}*\n\n"
     for gio, dati in classifica.items():
-        if (dati["vinte"] + dati["perse"] + dati["in_corso"]) == 0: continue
+        if (dati["vinte"] + dati["perse"] + dati["in_corso"] + dati["da_verificare"]) == 0: continue
         if dati["perse"] > 0: stato = "❌ Bruciata"
+        # Una schedina con righe non interpretabili NON puo' essere dichiarata chiusa:
+        # bloccherebbe +10 punti e un pagamento in Cassa su dati non verificati.
+        elif dati["da_verificare"] > 0: stato = f"⚠️ Da verificare ({dati['da_verificare']})"
         elif dati["in_corso"] > 0: stato = f"⏳ In attesa ({dati['in_corso']})"
         else:
             stato, dati["punti"] = "🏆 CHIUSA! (+10 Pt)", dati["punti"] + 10
             v_euro = dati["cassa"] / 2.0
             if v_euro > 0: vincitori.append({"nome": gio, "importo": v_euro})
         report += f"👤 *{gio.upper()}* - {dati['punti']} Pt\n({dati['vinte']} V | {dati['perse']} P | {dati['in_corso']} C) -> {stato}\n\n"
+
+    if da_verificare_dettaglio:
+        report += "\n⚠️ *PRONOSTICI NON INTERPRETABILI — nessun punto assegnato:*\n"
+        report += "\n".join(f"- {d}" for d in da_verificare_dettaglio)
+        report += "\n\nIl bot non sa interpretare questi pronostici, quindi non ha assegnato nulla. Correggili sul foglio Giocate (colonna Pronostico) e poi rilancia *Aggiorna Risultati*.\n"
 
     righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z").execute().get('values', [["Giocatore", "Punti Totali"]])
     col_g = f"Giornata {giornata}"
@@ -459,6 +537,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Errore durante il controllo dello status: {e}")
 
+AVVISO_CHIAVE_SALVATA = (
+    "✅ **Chiave API Gemini salvata.**\n\n"
+    "⚠️ Su Render questo file può essere azzerato al prossimo riavvio: se vuoi che "
+    "la chiave resti per sempre, impostala anche come variabile d'ambiente "
+    "`GEMINI_API_KEY` nel pannello Render (ha la precedenza su questo file)."
+)
+
 async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     args = context.args
@@ -468,18 +553,18 @@ async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     nuova_chiave = args[0].strip()
     try:
         with open('chiave_api.txt', 'w') as f: f.write(nuova_chiave)
-        await update.message.reply_text("✅ **Chiave API Gemini aggiornata con successo!**", parse_mode="Markdown")
+        await update.message.reply_text(AVVISO_CHIAVE_SALVATA, parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Errore: {e}")
+        await update.message.reply_text(f"❌ Errore: {e}\n\nSe il filesystem è in sola lettura, aggiorna la variabile d'ambiente `GEMINI_API_KEY` su Render.", parse_mode="Markdown")
 
 async def gestisci_testo_chiave(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     nuova_chiave = update.message.text.strip()
     try:
         with open('chiave_api.txt', 'w') as f: f.write(nuova_chiave)
-        await update.message.reply_text("✅ **Chiave API Gemini aggiornata con successo!**\nScrivi /start per tornare al menu.", parse_mode="Markdown")
+        await update.message.reply_text(AVVISO_CHIAVE_SALVATA + "\n\nScrivi /start per tornare al menu.", parse_mode="Markdown")
     except Exception as e:
-        await update.message.reply_text(f"❌ Errore: {e}")
+        await update.message.reply_text(f"❌ Errore: {e}\n\nSe il filesystem è in sola lettura, aggiorna la variabile d'ambiente `GEMINI_API_KEY` su Render.", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):

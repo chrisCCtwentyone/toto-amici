@@ -51,6 +51,9 @@ Toto_Amici_Progetto/
 │   └── secrets.toml
 ├── .claude/launch.json     # ✅ Config locale (nessun segreto) per preview Streamlit in Claude Code
 ├── schedine_whatsapp/      # 🔒 Non in git — cartella foto locali
+├── tests/                  # ✅ Test automatici della logica del bot (pytest)
+│   └── test_logica_bot.py
+├── requirements-dev.txt    # ✅ Dipendenze di sviluppo (pytest) — la produzione usa solo requirements.txt
 └── temp_telegram/          # Cartella temporanea per foto ricevute via Telegram
 ```
 
@@ -97,6 +100,41 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 30/08/2026 — Sessione 8 (Revisione con Opus: due bug latenti gravi, primi test automatici)
+Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del codice. Sono emersi **due bug latenti mai andati in produzione ma già armati**, entrambi corretti.
+
+**🔴 1. Il calcolo esiti assegnava VINTA a qualsiasi pronostico non riconosciuto** (`controlla_esito`)
+- La funzione partiva da `vinta = True` e la smentiva solo se una regola nota falliva: se **nessuna** regola corrispondeva, l'esito restava "vinto". Quindi `SI`, `2X`, `X1`, `OVER 2.5` (con spazio), un mercato nuovo, o **un pronostico vuoto** (lettura IA fallita) diventavano punti regalati **in silenzio**.
+- **I bug "SI" e "2X" delle Sessioni 6/7 non erano due incidenti separati: erano lo stesso difetto strutturale manifestatosi due volte.** Ogni volta si era aggiunto l'alias mancante, lasciando la trappola armata per il formato successivo.
+- **Correzione**: logica invertita. Nuova `valuta_singolo_segno()` che ritorna `True`/`False`/`None`; `None` = segno sconosciuto → l'intero pronostico diventa `ESITO_DA_VERIFICARE` ("⚠️ DA VERIFICARE"), 0 punti, cella gialla, e il report Telegram elenca esattamente le righe da correggere.
+- **Protezioni a valle** (la parte più delicata): una riga da verificare **non** conta come persa (non marcherebbe la schedina "bruciata" a torto) e **blocca la dichiarazione di schedina chiusa** — altrimenti +10 punti e un pagamento in Cassa sarebbero partiti su dati non verificati. Verificato end-to-end con uno scenario costruito apposta.
+
+**🔴 2. Le vincite a quattro cifre finivano in Cassa divise per mille** (`estrai_numero`)
+- `estrai_numero` faceva solo `replace(',', '.')`: `"1.674,56"` diventava `"1.674.56"` e il match si fermava a **1.674**. La stessa funzione legge la Vincita Potenziale da cui si calcola il 50% da versare in Cassa → alla prima schedina chiusa sopra i mille euro, in Cassa sarebbero finiti **0,84 €** invece di 837,28 €.
+- Nessun dato storico intaccato: l'unica schedina chiusa finora (Paolo, 855,70) era sotto la soglia. Ma nel foglio ci sono già vincite potenziali da 1.008,29 / 1.674,56 / 2.414,56.
+- **Correzione**: parsing esplicito del formato italiano (punto = migliaia, virgola = decimali). È lo stesso difetto corretto in `app.py` in Sessione 6, che era rimasto nel bot.
+
+**🟠 3. Semper Fidelis: una chiamata API per giornata, sarebbe esplosa a metà stagione**
+- La statistica iterava sulle giornate chiamando `scarica_risultati_api` per ciascuna. Con 2 giornate = 2 chiamate; dalla **giornata ~11** avrebbe superato il rate limit di **10 richieste/minuto**, e i risultati vuoti sarebbero stati messi in cache 180s degradando anche gli altri tab.
+- **Correzione**: nuova `scarica_squadre_serie_a()` — endpoint `/competitions/SA/teams`, **una sola chiamata** per l'intera stagione (cache 24h), dato che i nomi squadra non cambiano. Verificato: stesso identico risultato (GIOVANNI → Juventus FC, 2×) con 1 chiamata invece di N.
+
+**🟠 4. Primi test automatici del progetto** (`tests/test_logica_bot.py`, 114 test)
+- Coprono `normalizza_pronostico`, `valuta_singolo_segno`, `controlla_esito`, `calcola_punteggio_partita`, `estrai_numero`, con test di regressione espliciti legati a ogni incidente realmente accaduto (SI, 2X, migliaia, ordine invertito).
+- Aggiunto `requirements-dev.txt` (la produzione continua a usare solo `requirements.txt`). Eseguire con `python3 -m pytest tests/ -v`.
+
+**🟡 5. Chiave Gemini resa stabile ai riavvii**
+- `/setkey` scrive su `chiave_api.txt`, ma su Render il filesystem è effimero e i Secret File sono in sola lettura: la chiave nuova sarebbe tornata silenziosamente a quella vecchia al riavvio. `leggi_chiave_api()` ora legge **prima** la variabile d'ambiente `GEMINI_API_KEY` (stabile fra i riavvii) e usa il file come fallback; i messaggi di `/setkey` avvisano di questo.
+- **Azione consigliata per l'utente**: impostare `GEMINI_API_KEY` come variabile d'ambiente su Render.
+
+**Verifiche eseguite prima del push** (nessuna modifica ai dati reali):
+- 114 test unitari verdi
+- Dry-run completo di `esegui_calcolo_risultati` su Giornate 1 e 2 dopo *tutte* le modifiche: **512 celle ricalcolate, 0 differenze**, 0 cambiamenti in Classifica, 0 movimenti di Cassa spuri
+- Scenario costruito: schedina vincente con una riga non interpretabile → confermato 0 punti, niente "chiusa", niente +10, niente pagamento in Cassa
+- `applica_risultato_manuale` ancora idempotente; monitoraggio anomalie e deduplica avvisi funzionanti
+- Tutti e 6 i tab del sito renderizzati senza errori in console né nei log del server
+
+**Valutato e scartato**: tracciare le quote di partecipazione (200€ a testa) — il gruppo si vede di persona, la rigidità non serve.
 
 ### 30/08/2026 — Sessione 7 (Versionamento, changelog in-app, monitoraggio, fix ordine invertito)
 - ✅ **Versione app**: aggiunto `VERSIONE_APP` + lista `NOVITA` in `app.py`, mostrati sotto al titolo in un expander pensato per i giocatori (linguaggio semplice, non tecnico). Versione attuale calcolata ripercorrendo le sessioni: **2.5.0** (2.0.0 = redesign Sessione 2, poi una minor per sessione di funzionalità). Convenzione documentata in `CLAUDE.md`: aggiornare ad ogni release.
@@ -214,7 +252,8 @@ Toto_Amici_Progetto/
 
 ### 🔴 Priorità Alta — Da fare ASAP
 - [ ] **Rimuovere `RISULTATI_MANUALI` da `app.py`** (aggiunta in Sessione 6) non appena Football-Data.org torna a riportare correttamente le 4 partite di Giornata 2 (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma) — è una toppa temporanea con punteggi scritti a mano, non deve restare nel codice più del necessario.
-- [ ] **STRESS TEST REVISIONE CLAUDE**: far controllare a Claude tutte le modifiche fatte da Gemini su `normalizza_nomi_partite` e il supporto al girone di ritorno. Ancora da fare in modo dedicato (in questa sessione è stato risolto solo il bug puntuale SI/NO).
+- [x] ~~**STRESS TEST REVISIONE CLAUDE**~~ — svolto in Sessione 8: revisione completa che ha portato alla luce due bug latenti gravi (esiti "vinti per default", vincite a quattro cifre in Cassa) e alla prima suite di test automatici. Resta da fare solo la verifica specifica del **girone di ritorno** (vedi Priorità Media).
+- [ ] **Impostare `GEMINI_API_KEY` come variabile d'ambiente su Render** (Sessione 8): senza, una chiave cambiata con `/setkey` torna silenziosamente a quella vecchia al primo riavvio.
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni

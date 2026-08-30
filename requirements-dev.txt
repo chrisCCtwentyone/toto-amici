@@ -1,0 +1,8 @@
+# Dipendenze per lo SVILUPPO locale (test).
+# La produzione (Streamlit Cloud / Render) usa solo requirements.txt.
+#
+#   pip3 install -r requirements-dev.txt
+#   python3 -m pytest tests/ -v
+
+-r requirements.txt
+pytest
