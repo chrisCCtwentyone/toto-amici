@@ -300,15 +300,28 @@ def esegui_calcolo_risultati(giornata):
         if len(riga) < 6 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]): continue
         gio, partita, pron, quota = str(riga[1]).strip(), str(riga[2]).strip(), str(riga[4]).strip().upper(), estrai_numero(riga[5])
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
+        esito_salvato = str(riga[6]).strip() if len(riga) > 6 else ""
 
         if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "cassa": vincita}
         elif vincita > 0: classifica[gio]["cassa"] = vincita
 
         casa_sh, ospite_sh = [s.strip()[:5] for s in partita.lower().split('-')]
         match = next((m for m in matches_api if (casa_sh in str(m["homeTeam"]["name"]).lower() or casa_sh in str(m.get("homeTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["awayTeam"]["name"]).lower() or ospite_sh in str(m.get("awayTeam",{}).get("shortName","")).lower())), None)
-        
+
         punti_partita = 0
         if match:
+            # Se l'esito era gia stato finalizzato (VINTA/PERSA/ANNULLATA) in un run precedente
+            # e l'API ora dice che la partita non e' FINISHED, non ci si fida del regresso:
+            # l'API a volte torna indietro su partite gia concluse (visto il 30/08/2026 su
+            # Giornata 2, football-data.org). Si mantiene il dato gia salvato e non si riscrive nulla.
+            gia_finalizzato = any(tag in esito_salvato for tag in ("VINTA", "PERSA", "ANNULLATA"))
+
+            if match["status"] != "FINISHED" and gia_finalizzato:
+                punti_partita = int(estrai_numero(riga[8])) if len(riga) > 8 else 0
+                if "VINTA" in esito_salvato: classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
+                elif "PERSA" in esito_salvato: classifica[gio]["perse"] += 1
+                continue  # nessuna scrittura su Sheets: la riga resta com'era
+
             if match["status"] != "FINISHED":
                 testo_esito, col = "⏳ IN CORSO", colore_grigio
                 classifica[gio]["in_corso"] += 1
@@ -317,7 +330,7 @@ def esegui_calcolo_risultati(giornata):
                 if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
                 elif "ANNULLATA" in testo_esito: col = colore_grigio
                 else: col = colore_rosso; classifica[gio]["perse"] += 1
-            
+
             aggiornamenti_testo.extend([{'range': f"Giocate!G{idx+1}", 'values': [[testo_esito]]}, {'range': f"Giocate!I{idx+1}", 'values': [[punti_partita]]}])
             richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
 
