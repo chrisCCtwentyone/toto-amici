@@ -15,3 +15,4 @@ Database: Google Sheets (nessun DB tradizionale).
 - Non committare mai `credenziali.json`, `chiave_api.txt`, `.env`, `.streamlit/secrets.toml` (già in `.gitignore`).
 - Prima di aggiungere una chiave/API key hardcoded in qualsiasi script di test, ricorda: il repo è pubblico su GitHub — vedi la sezione "Scoperte sicurezza" in `PROJECT_LOG.md` per i precedenti (chiavi trapelate in commit storici, mai completamente rimovibili dalla history senza rewrite).
 - Dopo ogni sessione di modifiche rilevanti, aggiorna il changelog in `PROJECT_LOG.md`.
+- Ad ogni release pubblicata su `app.py`, aggiorna anche `VERSIONE_APP` e la lista `NOVITA` in cima al file (schema MAJOR.MINOR.PATCH: MAJOR = redesign importante, MINOR = nuove funzionalità, PATCH = fix minori). `NOVITA` è per i giocatori: linguaggio semplice, niente dettagli tecnici — quelli restano nel changelog di `PROJECT_LOG.md`.
