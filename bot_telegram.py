@@ -713,6 +713,81 @@ async def task_schedula_promemoria(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Errore task_schedula_promemoria: {e}")
 
+async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
+    """Monitoraggio periodico della Giornata corrente: avvisa l'admin invece di
+    lasciare che se ne accorga da solo controllando la dashboard. Due controlli:
+
+    1) Partite con calcio d'inizio da oltre 3 ore ma stato ancora diverso da
+       FINISHED secondo Football-Data — possibile problema dati lato API
+       (visto il 30/08/2026 su Giornata 2).
+    2) Righe di Giocate ancora IN CORSO la cui Partita non trova corrispondenza
+       in nessuna partita ufficiale della giornata — probabile nome squadra
+       scritto in modo insolito o ordine invertito: a differenza del caso (1),
+       questa non si risolve da sola nemmeno quando l'API torna a funzionare,
+       perché esegui_calcolo_risultati non ritenta con l'ordine invertito.
+    """
+    try:
+        giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+        url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+        matches = await asyncio.to_thread(
+            lambda: requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        )
+        if not matches:
+            return
+
+        tz = pytz.timezone('Europe/Rome')
+        ora = datetime.now(tz)
+
+        bloccate = []
+        for m in matches:
+            utc_str = m.get("utcDate", "")
+            if not utc_str:
+                continue
+            utc_dt = datetime.strptime(utc_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+            ita_dt = utc_dt.astimezone(tz)
+            ore_passate = (ora - ita_dt).total_seconds() / 3600
+            if ore_passate > 3 and m["status"] != "FINISHED":
+                bloccate.append(f"{m['homeTeam']['name']} - {m['awayTeam']['name']} (iniziata {ore_passate:.0f}h fa, stato: {m['status']})")
+
+        service = await asyncio.to_thread(connetti_sheets)
+        righe = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Giocate!A:G"
+            ).execute().get('values', [])
+        )
+        non_riconosciute = set()
+        for riga in righe:
+            if len(riga) < 3 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]):
+                continue
+            esito = str(riga[6]).strip() if len(riga) > 6 else ""
+            if "CORSO" not in esito:
+                continue
+            partita = str(riga[2]).strip()
+            if partita.count('-') != 1:
+                non_riconosciute.add(partita)
+                continue
+            casa_sh, ospite_sh = [s.strip()[:5].lower() for s in partita.split('-')]
+            match = next((m for m in matches if (casa_sh in str(m["homeTeam"]["name"]).lower() or casa_sh in str(m.get("homeTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["awayTeam"]["name"]).lower() or ospite_sh in str(m.get("awayTeam",{}).get("shortName","")).lower())), None)
+            if not match:
+                non_riconosciute.add(partita)
+
+        if not bloccate and not non_riconosciute:
+            return
+
+        msg = f"🔍 *Controllo automatico Giornata {giornata}*\n\n"
+        if bloccate:
+            msg += "⚠️ *Partite iniziate da tempo ma non ancora concluse secondo l'API:*\n"
+            msg += "\n".join(f"- {b}" for b in bloccate)
+            msg += "\n\nPotrebbe essere lo stesso problema del 30/08 — controlla prima di lanciare Aggiorna Risultati.\n\n"
+        if non_riconosciute:
+            msg += "⚠️ *Partite in bolletta non riconosciute tra quelle ufficiali della giornata:*\n"
+            msg += "\n".join(f"- {p}" for p in non_riconosciute)
+            msg += "\n\nProbabile nome squadra insolito o ordine invertito — non verranno segnate automaticamente finché non le correggi a mano."
+
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"Errore task_controlla_anomalie_partite: {e}")
+
 async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
@@ -738,6 +813,9 @@ def main():
 
     # Job giornaliero: alle 10:00 controlla se ci sono partite oggi e schedula promemoria 30min prima
     app.job_queue.run_daily(task_schedula_promemoria, time=dt_time(hour=10, minute=0, tzinfo=tz))
+
+    # Job ricorrente ogni 2 ore: controlla anomalie nei dati Football-Data della giornata corrente
+    app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=7200, first=600)
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],

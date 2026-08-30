@@ -209,8 +209,7 @@ Toto_Amici_Progetto/
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
-- [ ] **Comando admin per correzioni manuali** (proposto in Sessione 6, in attesa di decisione): un modo dal bot per il solo admin di correggere a mano un esito/pronostico o inserire un risultato quando l'API è inaffidabile, senza dover passare da uno script ad hoc. Utile visto l'incidente del 30/08/2026 (Football-Data regredita su Giornata 2).
-- [ ] **Statistiche avanzate**: ancora da fare "striscia vincente/perdente" (giornate consecutive vinte/perse) e "tipologia preferita per giocatore" (1X2 secco vs combo/variabili rischiose). Fatte invece: giornata da incorniciare, Semper Fidelis, benedizione (vedi Sessione 5).
+- [ ] **Comando admin per correzioni manuali** — approvato in linea di principio (Sessione 6/7), progettato in dettaglio nel changelog di Sessione 7. Da implementare.
 - [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
 
 ### 🟢 Idee Future
