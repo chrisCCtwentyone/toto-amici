@@ -970,3 +970,19 @@ with tab_regolamento:
                 "Premio": ["1.200 €", "800 €", "500 €", "300 €", "200 €"]
             })
             st.table(df_premi.set_index("Posizione"))
+
+# ==========================================
+# FOOTER
+# ==========================================
+st.markdown(
+    """
+    <div style='text-align:center; opacity:0.55; font-size:0.85rem;
+                margin-top:2.5rem; padding-top:1.2rem;
+                border-top:1px solid rgba(128,128,128,0.25);'>
+        ⚽ Toto-Amici · sviluppato da
+        <a href="https://github.com/chrisCCtwentyone" target="_blank" style="color:inherit;">chrisCCtwentyone</a>
+        · <a href="https://github.com/chrisCCtwentyone/toto-amici" target="_blank" style="color:inherit;">codice su GitHub</a>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
