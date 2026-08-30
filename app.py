@@ -28,7 +28,7 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a {display: none !important;}
 # --- MODALITÀ MANUTENZIONE ---
 # Attiva a mano quando ci sono anomalie sui dati da controllare prima di mostrarli agli utenti.
 # Per riattivare il sito: rimettere MANUTENZIONE = False.
-MANUTENZIONE = True
+MANUTENZIONE = False
 
 if MANUTENZIONE:
     st.markdown("<br><br>", unsafe_allow_html=True)
