@@ -204,6 +204,7 @@ Toto_Amici_Progetto/
 ## 📋 TODO / Azioni Pendenti
 
 ### 🔴 Priorità Alta — Da fare ASAP
+- [ ] **Rimuovere `RISULTATI_MANUALI` da `app.py`** (aggiunta in Sessione 6) non appena Football-Data.org torna a riportare correttamente le 4 partite di Giornata 2 (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma) — è una toppa temporanea con punteggi scritti a mano, non deve restare nel codice più del necessario.
 - [ ] **STRESS TEST REVISIONE CLAUDE**: far controllare a Claude tutte le modifiche fatte da Gemini su `normalizza_nomi_partite` e il supporto al girone di ritorno. Ancora da fare in modo dedicato (in questa sessione è stato risolto solo il bug puntuale SI/NO).
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
