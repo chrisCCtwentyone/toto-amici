@@ -165,6 +165,14 @@ def normalizza_pronostico(pronostico_raw):
         p = "GOAL"
     elif p in ["NG", "NOGOAL", "NO GOAL", "NO/GOAL", "N/G", "NO"]:
         p = "NOGOAL"
+
+    # Alias doppie chance scritte in ordine invertito (es. "2X" -> "X2")
+    if p == "2X":
+        p = "X2"
+    elif p == "X1":
+        p = "1X"
+    elif p == "21":
+        p = "12"
         
     # Alias OVER / UNDER
     # Mappa roba tipo "PIU DI 2.5", "O2.5", "+2.5", "OVER 2,5" in "OVER_2.5"
@@ -187,6 +195,9 @@ def normalizza_pronostico(pronostico_raw):
             elif part in ["NG"]: part = "NOGOAL"
             elif part in ["O2.5", "O 2.5", "+2.5"]: part = "OVER_2.5"
             elif part in ["U2.5", "U 2.5", "-2.5"]: part = "UNDER_2.5"
+            elif part == "2X": part = "X2"
+            elif part == "X1": part = "1X"
+            elif part == "21": part = "12"
             nuove_parti.append(part)
         p = "+".join(nuove_parti)
 
