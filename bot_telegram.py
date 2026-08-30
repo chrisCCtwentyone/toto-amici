@@ -36,7 +36,9 @@ GIOCATORI = [
 LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
 
 # Stati Conversazione
-MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, CONFERMA_LETTURA_IA, SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY = range(8)
+(MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, CONFERMA_LETTURA_IA,
+ SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY, SCELTA_GIORNATA_MANUALE, SCELTA_PARTITA_MANUALE,
+ ATTESA_RISULTATO_MANUALE, CONFERMA_RISULTATO_MANUALE) = range(12)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -283,11 +285,16 @@ def calcola_punteggio_partita(pronostico, quota):
     punti = 6 if "+" in pronostico else (4 if pronostico in ["1","X","2"] else (1 if pronostico in ["1X","X2","12"] else 2))
     return punti * 2 if quota >= 3.50 else punti
 
-def esegui_calcolo_risultati(giornata):
+def esegui_calcolo_risultati(giornata, matches_api=None):
+    """Se matches_api non e' fornita, la scarica da Football-Data come sempre.
+    Un chiamante puo' passarla gia' pronta (es. applica_risultato_manuale) per
+    forzare il risultato di una partita specifica senza duplicare tutta la logica
+    di matching/punteggio/scrittura sottostante."""
     service = connetti_sheets()
-    url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
-    try: matches_api = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
-    except: return "Errore di connessione a Football-Data API."
+    if matches_api is None:
+        url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+        try: matches_api = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        except: return "Errore di connessione a Football-Data API."
 
     if not matches_api: return "Nessuna partita trovata per questa giornata."
 
@@ -390,6 +397,36 @@ def esegui_calcolo_risultati(giornata):
             report += "💰 *Vincite registrate in Cassa!*\n"
     return report
 
+def applica_risultato_manuale(giornata, casa_nome, ospite_nome, gol_casa, gol_ospite):
+    """Inserisce a mano il risultato di UNA partita (quando Football-Data non lo
+    riporta correttamente) senza perdere lo stato delle altre partite della
+    stessa giornata: scarica comunque l'elenco reale delle partite (serve per non
+    toccare quelle gia' segnate correttamente altrove) e sostituisce solo quella
+    indicata con il risultato forzato, poi riusa esegui_calcolo_risultati cosi'
+    com'e' — stessa logica, stessa protezione anti-regressione, nessuna scorciatoia."""
+    url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+    try:
+        matches_reali = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10).json().get("matches", [])
+    except Exception:
+        matches_reali = []
+
+    match_forzato = {
+        "homeTeam": {"name": casa_nome, "shortName": casa_nome},
+        "awayTeam": {"name": ospite_nome, "shortName": ospite_nome},
+        "status": "FINISHED",
+        "score": {"fullTime": {"home": gol_casa, "away": gol_ospite}}
+    }
+    matches_finali = [
+        m for m in matches_reali
+        if not (
+            casa_nome.lower() in str(m.get("homeTeam", {}).get("name", "")).lower()
+            and ospite_nome.lower() in str(m.get("awayTeam", {}).get("name", "")).lower()
+        )
+    ]
+    matches_finali.append(match_forzato)
+
+    return esegui_calcolo_risultati(giornata, matches_api=matches_finali)
+
 # ==========================================
 # GESTIONE TELEGRAM E MENU CON PULSANTE KEY
 # ==========================================
@@ -449,6 +486,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = [
         [InlineKeyboardButton("📥 Carica Schedina", callback_data="menu_carica")],
         [InlineKeyboardButton("⚽ Aggiorna Risultati & Punteggi", callback_data="menu_aggiorna")],
+        [InlineKeyboardButton("✍️ Inserisci Risultato Manuale", callback_data="menu_manuale")],
         [InlineKeyboardButton("⚙️ Cambia Chiave API", callback_data="menu_cambia_key")]
     ]
     await update.message.reply_text("👋 *Menu Principale Toto-Amici*\nCosa vuoi fare?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
@@ -471,6 +509,12 @@ async def gestisci_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
         await query.edit_message_text("🔑 **Cambio Chiave API**\nIncolla qui sotto la tua nuova chiave API di Google AI Studio (Gemini) come un normale messaggio di testo:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
         return ATTESA_NUOVA_KEY
+    elif query.data == "menu_manuale":
+        kb = [[InlineKeyboardButton(str(i), callback_data=f"manualeg_{i}") for i in range(r, r+5)] for r in range(1, 39, 5)]
+        kb[-1] = [InlineKeyboardButton(str(i), callback_data=f"manualeg_{i}") for i in range(36, 39)]
+        kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+        await query.edit_message_text("✍️ **Inserimento Risultato Manuale**\nPer quale **Giornata**?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        return SCELTA_GIORNATA_MANUALE
 
 async def ricevi_foto_multipla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -614,6 +658,129 @@ async def scegli_giornata_update(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(f"⏳ Aggiornamento manuale Giornata {giornata}...")
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
+    return ConversationHandler.END
+
+async def scegli_giornata_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    giornata = query.data.split('_')[1]
+    context.user_data['manuale_giornata'] = giornata
+    await query.edit_message_text(f"⏳ Recupero le partite della Giornata {giornata}...")
+
+    url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+    try:
+        matches = await asyncio.to_thread(
+            lambda: requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10).json().get("matches", [])
+        )
+    except Exception:
+        matches = []
+
+    if not matches:
+        kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text="⚠️ Non riesco a recuperare l'elenco partite per questa giornata (l'API non risponde). Riprova più tardi.",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return ConversationHandler.END
+
+    context.user_data['manuale_matches'] = matches
+    kb = []
+    for i, m in enumerate(matches):
+        casa = m['homeTeam'].get('shortName') or m['homeTeam']['name']
+        ospite = m['awayTeam'].get('shortName') or m['awayTeam']['name']
+        kb.append([InlineKeyboardButton(f"{casa} - {ospite}", callback_data=f"manualep_{i}")])
+    kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+    await context.bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"✍️ Giornata {giornata} — quale partita vuoi inserire?",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+    return SCELTA_PARTITA_MANUALE
+
+async def scegli_partita_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    idx = int(query.data.split('_')[1])
+    m = context.user_data['manuale_matches'][idx]
+    casa = m['homeTeam'].get('shortName') or m['homeTeam']['name']
+    ospite = m['awayTeam'].get('shortName') or m['awayTeam']['name']
+    context.user_data['manuale_casa'] = casa
+    context.user_data['manuale_ospite'] = ospite
+    context.user_data['manuale_casa_full'] = m['homeTeam']['name']
+    context.user_data['manuale_ospite_full'] = m['awayTeam']['name']
+
+    kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
+    await query.edit_message_text(
+        f"✍️ **{casa} - {ospite}**\n\n"
+        f"Scrivimi il risultato finale in **questo formato esatto**, solo numeri e un trattino, senz'altro testo:\n\n"
+        f"`gol{casa}-gol{ospite}`\n\n"
+        f"Esempio: se {casa} ha vinto 2 a 1, scrivi `2-1`",
+        reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'
+    )
+    return ATTESA_RISULTATO_MANUALE
+
+async def ricevi_risultato_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    casa = context.user_data.get('manuale_casa', '')
+    ospite = context.user_data.get('manuale_ospite', '')
+    testo = update.message.text.strip()
+
+    # Validazione rigida: SOLO cifre-trattino-cifre. Niente altro viene mai accettato,
+    # quindi niente rischio che un testo scritto male (es. che inizia con "=") finisca
+    # su una cella di Sheets con valueInputOption=USER_ENTERED e venga letto come formula.
+    match_formato = re.match(r'^(\d{1,2})-(\d{1,2})$', testo)
+    if not match_formato:
+        await update.message.reply_text(
+            f"⚠️ Formato non valido. Scrivi **solo** due numeri separati da un trattino, es. `2-1`.\n\n"
+            f"Riprova per **{casa} - {ospite}**:",
+            parse_mode='Markdown'
+        )
+        return ATTESA_RISULTATO_MANUALE
+
+    gol_casa, gol_ospite = int(match_formato.group(1)), int(match_formato.group(2))
+    if gol_casa > 20 or gol_ospite > 20:
+        await update.message.reply_text(
+            f"⚠️ Numero di gol non plausibile. Riprova per **{casa} - {ospite}**:",
+            parse_mode='Markdown'
+        )
+        return ATTESA_RISULTATO_MANUALE
+
+    context.user_data['manuale_gol_casa'] = gol_casa
+    context.user_data['manuale_gol_ospite'] = gol_ospite
+    giornata = context.user_data.get('manuale_giornata')
+
+    kb = [
+        [InlineKeyboardButton("✅ Conferma", callback_data="confermamanuale_si")],
+        [InlineKeyboardButton("❌ Annulla", callback_data="confermamanuale_no")]
+    ]
+    await update.message.reply_text(
+        f"⚠️ Stai per registrare:\n\n**{casa} {gol_casa} - {gol_ospite} {ospite}**\n📅 Giornata {giornata}\n\n"
+        f"Verranno segnate tutte le schedine con questa partita ancora IN CORSO. Le partite di questa giornata già segnate non verranno toccate.\n\n"
+        f"Confermi?",
+        reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown'
+    )
+    return CONFERMA_RISULTATO_MANUALE
+
+async def esegui_conferma_risultato_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    if query.data == "confermamanuale_no":
+        context.user_data.clear()
+        await query.edit_message_text("❌ Operazione annullata. Scrivi /start per riaprire il menu.")
+        return ConversationHandler.END
+
+    giornata = context.user_data.get('manuale_giornata')
+    casa_full = context.user_data.get('manuale_casa_full')
+    ospite_full = context.user_data.get('manuale_ospite_full')
+    gol_casa = context.user_data.get('manuale_gol_casa')
+    gol_ospite = context.user_data.get('manuale_gol_ospite')
+
+    await query.edit_message_text("⏳ Applico il risultato e ricalcolo i punteggi...")
+    try:
+        report = await asyncio.to_thread(applica_risultato_manuale, giornata, casa_full, ospite_full, gol_casa, gol_ospite)
+        await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Errore durante l'applicazione del risultato: {e}")
+
+    context.user_data.clear()
     return ConversationHandler.END
 
 async def annulla_azione_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -818,7 +985,11 @@ def main():
     # AVVIO DEL BOT TELEGRAM
     app = Application.builder().token(TOKEN).post_init(post_init).build()
     tz = pytz.timezone('Europe/Rome')
-    for h, m in [(17,30), (20,30), (23,0)]:
+    # Orari scelti per dare più occasioni di "agganciare" un dato corretto prima che
+    # Football-Data lo rielabori (visto il 30/08/2026): uno presto al mattino (prima di
+    # eventuali rielaborazioni notturne), uno tardo dopo mezzanotte per le partite serali,
+    # più i tre già esistenti nel corso della giornata/sera.
+    for h, m in [(1,0), (8,0), (17,30), (20,30), (23,0)]:
         app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=h, minute=m, tzinfo=tz))
 
     # Job giornaliero: alle 10:00 controlla se ci sono partite oggi e schedula promemoria 30min prima
@@ -859,6 +1030,21 @@ def main():
             ATTESA_NUOVA_KEY: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, gestisci_testo_chiave),
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
+            ],
+            SCELTA_GIORNATA_MANUALE: [
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$"),
+                CallbackQueryHandler(scegli_giornata_manuale, pattern="^manualeg_")
+            ],
+            SCELTA_PARTITA_MANUALE: [
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$"),
+                CallbackQueryHandler(scegli_partita_manuale, pattern="^manualep_")
+            ],
+            ATTESA_RISULTATO_MANUALE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ricevi_risultato_manuale),
+                CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$")
+            ],
+            CONFERMA_RISULTATO_MANUALE: [
+                CallbackQueryHandler(esegui_conferma_risultato_manuale, pattern="^confermamanuale_")
             ]
         },
         fallbacks=[CommandHandler("cancel", annulla_tutto)]
