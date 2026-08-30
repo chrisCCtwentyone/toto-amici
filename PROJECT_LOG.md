@@ -98,6 +98,24 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 30/08/2026 — Sessione 6 (Incidente dati Football-Data, manutenzione, fix normalizzazione)
+**Incidente — dati Football-Data.org regrediti su Giornata 2:**
+- ⚠️ Scoperto che football-data.org restituiva `TIMED`/punteggio `null` per partite di Giornata 2 già `FINISHED` in run precedenti (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma). Confermato **non** essere un problema del nostro account: stessa risposta sbagliata sia con la chiave nuova che con quella vecchia. Colpiva solo il turno "corrente"/appena concluso — Giornata 1 (archiviata) e dati storici di altre competizioni restavano perfetti sulle stesse chiavi. Ipotesi più probabile: problema temporaneo di elaborazione lato loro sul turno live, non un difetto strutturale del provider — **non è stato deciso di cambiare provider**, da rivalutare solo se il pattern si ripete nei prossimi turni.
+- ✅ **Sito messo in manutenzione temporanea** (`app.py`, flag `MANUTENZIONE`) finché i dati non sono stati verificati — poi rimesso online lo stesso giorno.
+- ✅ **Blindato `esegui_calcolo_risultati`** (`bot_telegram.py`): se una riga ha già un esito finale (VINTA/PERSA/ANNULLATA) e l'API dice che la partita non è FINISHED, non si retrocede più il dato — si mantiene quello già salvato. Non risolve il problema a monte (partite mai processate restano IN CORSO finché l'API non guarisce).
+- ✅ **Ripristinati manualmente i risultati reali delle 4 partite** (Sassuolo-Torino 2-1, Monza-Udinese 2-3, Fiorentina-Frosinone 0-3, Juventus-Parma 2-0, verificati incrociando pronostici/punti già salvati per altri giocatori) rieseguendo `esegui_calcolo_risultati` con l'API mockata sui risultati reali invece che chiamare l'endpoint rotto — stessa logica del bot, nessuna scorciatoia manuale sui punteggi.
+- ✅ **Fix UI**: in Schedine Live, se l'Esito è già finale ma il live-fetch dice ancora "Da giocare" (disallineamento con l'incidente sopra), il badge "Risultato" contraddittorio ora viene nascosto invece di mostrare un'informazione fuorviante.
+
+**Bug di normalizzazione confermati e corretti:**
+- ✅ Pronostici doppia chance scritti in ordine invertito (`2X`, `X1`, `21`) non venivano riconosciuti da `controlla_esito` → sarebbero sempre risultati vinti a prescindere dal risultato reale. Aggiunti gli alias (`normalizza_pronostico`), sia per pronostici singoli che dentro le combo. Corretta anche la riga già salvata di Michele (Sassuolo-Torino, era ancora IN CORSO, nessun ricalcolo necessario).
+
+**Altri fix minori:**
+- ✅ Confronto giocate: la riga "Vincita potenziale" mostrava 0€ per vincite oltre i 1.000€ — il parsing non gestiva il punto delle migliaia del formato italiano (`1.674,56` → `1.674.56`, non convertibile). Aggiunto anche il separatore delle migliaia in visualizzazione.
+- ✅ Semper Fidelis: ora anche le doppie chance (1X/X2) contano come voto per la squadra corrispondente, non solo le fisse pure (1/2) — "12" resta escluso (non favorisce una squadra specifica). Rimossa la spiegazione ridondante sotto la card.
+- ✅ Cassa Giornata 1: corretto manualmente a 430,00€ (Paolo ha versato in contanti una cifra arrotondata, non i 427,85€ calcolati) — **solo** su `Entrate`/`Saldo Totale` in Cassa, la Vincita Potenziale in Giocate resta quella reale (855,70€).
+
+**Idea proposta, in attesa di decisione:** comando admin per inserire/correggere dati a mano dal bot (vedi TODO) — utile visto l'incidente di oggi.
+
 ### 29-30/08/2026 — Sessione 5 (Sicurezza, rotazione chiavi, UI/statistiche, fix bot)
 **Sicurezza:**
 - ✅ Rigenerati `TELEGRAM_TOKEN` (via @BotFather) e `FOOTBALL_DATA_KEY` (nuovo account football-data.org, il piano free non ha un vero "rigenera token"), aggiornati su Render, Streamlit Cloud e file locali (`.env`, `.streamlit/secrets.toml`)
@@ -190,6 +208,7 @@ Toto_Amici_Progetto/
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
+- [ ] **Comando admin per correzioni manuali** (proposto in Sessione 6, in attesa di decisione): un modo dal bot per il solo admin di correggere a mano un esito/pronostico o inserire un risultato quando l'API è inaffidabile, senza dover passare da uno script ad hoc. Utile visto l'incidente del 30/08/2026 (Football-Data regredita su Giornata 2).
 - [ ] **Statistiche avanzate**: ancora da fare "striscia vincente/perdente" (giornate consecutive vinte/perse) e "tipologia preferita per giocatore" (1X2 secco vs combo/variabili rischiose). Fatte invece: giornata da incorniciare, Semper Fidelis, benedizione (vedi Sessione 5).
 - [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
 
