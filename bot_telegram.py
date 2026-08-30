@@ -307,6 +307,14 @@ def esegui_calcolo_risultati(giornata):
 
         casa_sh, ospite_sh = [s.strip()[:5] for s in partita.lower().split('-')]
         match = next((m for m in matches_api if (casa_sh in str(m["homeTeam"]["name"]).lower() or casa_sh in str(m.get("homeTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["awayTeam"]["name"]).lower() or ospite_sh in str(m.get("awayTeam",{}).get("shortName","")).lower())), None)
+        ordine_invertito = False
+        if not match:
+            # La partita in bolletta potrebbe essere stata scritta con le squadre invertite
+            # rispetto all'ordine ufficiale casa/trasferta (es. normalizzazione fallita
+            # all'upload). Si ritenta con l'ordine scambiato invece di lasciare la riga
+            # bloccata su IN CORSO per sempre senza nessun avviso.
+            match = next((m for m in matches_api if (casa_sh in str(m["awayTeam"]["name"]).lower() or casa_sh in str(m.get("awayTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["homeTeam"]["name"]).lower() or ospite_sh in str(m.get("homeTeam",{}).get("shortName","")).lower())), None)
+            ordine_invertito = True
 
         punti_partita = 0
         if match:
@@ -326,7 +334,9 @@ def esegui_calcolo_risultati(giornata):
                 testo_esito, col = "⏳ IN CORSO", colore_grigio
                 classifica[gio]["in_corso"] += 1
             else:
-                testo_esito = controlla_esito(pron, match["score"]["fullTime"]["home"], match["score"]["fullTime"]["away"])
+                gol_home, gol_away = match["score"]["fullTime"]["home"], match["score"]["fullTime"]["away"]
+                gol_casa_riga, gol_ospite_riga = (gol_away, gol_home) if ordine_invertito else (gol_home, gol_away)
+                testo_esito = controlla_esito(pron, gol_casa_riga, gol_ospite_riga)
                 if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
                 elif "ANNULLATA" in testo_esito: col = colore_grigio
                 else: col = colore_rosso; classifica[gio]["perse"] += 1
