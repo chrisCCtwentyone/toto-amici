@@ -6,6 +6,7 @@ import pytz
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+from api_utils import richiedi_con_retry
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
@@ -146,7 +147,7 @@ def scarica_risultati_api(giornata):
     risultati_mappati = {}
     api_error = False
     try:
-        res = requests.get(url, headers=headers_req, timeout=10)
+        res = richiedi_con_retry(url, headers=headers_req)
         if res.status_code == 200:
             for m in res.json().get("matches", []):
                 casa_full = m["homeTeam"]["name"]
@@ -197,7 +198,7 @@ def scarica_squadre_serie_a():
     """
     url = "https://api.football-data.org/v4/competitions/SA/teams"
     try:
-        res = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10)
+        res = richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY})
         if res.status_code == 200:
             return [t["name"] for t in res.json().get("teams", [])]
     except Exception:

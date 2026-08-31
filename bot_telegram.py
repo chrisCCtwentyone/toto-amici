@@ -4,6 +4,7 @@ import logging
 import re
 import asyncio
 import requests
+from api_utils import richiedi_con_retry
 from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
@@ -168,7 +169,7 @@ def analizza_schedine_multiple(lista_percorsi_foto):
 def normalizza_nomi_partite(dati_json, giornata_num):
     try:
         url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata_num}"
-        matches = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        matches = richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         if not matches: return dati_json
         
         dati = json.loads(dati_json)
@@ -282,7 +283,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
 # ==========================================
 def ottieni_giornata_corrente():
     try:
-        res = requests.get("https://api.football-data.org/v4/competitions/SA", headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json()
+        res = richiedi_con_retry("https://api.football-data.org/v4/competitions/SA", headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json()
         return res.get('currentSeason', {}).get('currentMatchday', 1)
     except: return 1
 
@@ -372,7 +373,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     service = connetti_sheets()
     if matches_api is None:
         url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
-        try: matches_api = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        try: matches_api = richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         except: return "Errore di connessione a Football-Data API."
 
     if not matches_api: return "Nessuna partita trovata per questa giornata."
@@ -501,7 +502,7 @@ def applica_risultato_manuale(giornata, casa_nome, ospite_nome, gol_casa, gol_os
     com'e' — stessa logica, stessa protezione anti-regressione, nessuna scorciatoia."""
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
     try:
-        matches_reali = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10).json().get("matches", [])
+        matches_reali = richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
     except Exception:
         matches_reali = []
 
@@ -771,7 +772,7 @@ async def scegli_giornata_manuale(update: Update, context: ContextTypes.DEFAULT_
     url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
     try:
         matches = await asyncio.to_thread(
-            lambda: requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=10).json().get("matches", [])
+            lambda: richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         )
     except Exception:
         matches = []
@@ -960,7 +961,7 @@ async def task_schedula_promemoria(context: ContextTypes.DEFAULT_TYPE):
         oggi_str = datetime.now(tz).date().strftime("%Y-%m-%d")
 
         url = f"https://api.football-data.org/v4/competitions/SA/matches?dateFrom={oggi_str}&dateTo={oggi_str}"
-        matches = requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+        matches = richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         if not matches:
             return  # Nessuna partita oggi, nessun promemoria
 
@@ -1009,7 +1010,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
         url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
         matches = await asyncio.to_thread(
-            lambda: requests.get(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+            lambda: richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
         )
         if not matches:
             return
