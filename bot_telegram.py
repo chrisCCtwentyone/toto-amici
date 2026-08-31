@@ -48,6 +48,7 @@ if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
 
 last_ping_time = None
 ultime_anomalie_segnalate = set()  # chiavi stabili delle anomalie dell'ultimo avviso inviato (per non ripetere lo stesso avviso ad ogni controllo)
+ultima_giornata_riepilogo_inviata = None  # per non rimandare due volte il riepilogo della stessa giornata
 
 # ==========================================
 # SERVER WEB PER MANTENERE IL BOT SVEGLIO (TRUCCO RENDER)
@@ -1145,12 +1146,138 @@ async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
         if percorso_file and os.path.exists(percorso_file):
             os.remove(percorso_file)
 
+def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa):
+    """Testo del riepilogo di fine giornata, pronto da incollare su WhatsApp.
+
+    Usa grassetto con un solo asterisco (*testo*) di proposito: e' la stessa
+    sintassi che usa WhatsApp per il grassetto. Il messaggio viene inviato su
+    Telegram SENZA parse_mode (vedi task_riepilogo_whatsapp), cosi' gli
+    asterischi restano testo letterale nel messaggio invece di essere
+    "consumati" dal rendering di Telegram — copiandolo e incollandolo su
+    WhatsApp, la formattazione funziona li' invece che sparire.
+    """
+    if not righe_classifica or len(righe_classifica) < 2:
+        return None
+    header = righe_classifica[0]
+    col_g = f"Giornata {giornata}"
+    if col_g not in header:
+        return None
+    idx_g = header.index(col_g)
+
+    giocatori = []
+    for riga in righe_classifica[1:]:
+        if not riga or not str(riga[0]).strip():
+            continue
+        nome = str(riga[0]).strip()
+        punti_tot = int(estrai_numero(riga[1])) if len(riga) > 1 else 0
+        punti_giornata = int(estrai_numero(riga[idx_g])) if len(riga) > idx_g else 0
+        giocatori.append((nome, punti_tot, punti_giornata))
+    if not giocatori:
+        return None
+
+    giocatori.sort(key=lambda x: -x[1])
+    medaglie = ["🥇", "🥈", "🥉"]
+    righe_testo = []
+    for i, (nome, tot, pg) in enumerate(giocatori):
+        pos = medaglie[i] if i < len(medaglie) else f"{i + 1}°"
+        variazione = f" (+{pg})" if pg > 0 else ""
+        righe_testo.append(f"{pos} {nome.capitalize()} - {tot} pt{variazione}")
+
+    testo = f"📊 *Giornata {giornata} — Riepilogo finale*\n\n" + "\n".join(righe_testo)
+
+    vincitori = [
+        str(r[1]) for r in righe_cassa
+        if len(r) > 1 and str(r[0]).strip() == col_g and "chiude la schedina" in str(r[1])
+    ]
+    if vincitori:
+        nomi_vincitori = [v.split(" chiude")[0].capitalize() for v in vincitori]
+        testo += "\n\n🏆 *Schedina chiusa:* " + ", ".join(nomi_vincitori) + " (+10 pt bonus)"
+
+    if righe_cassa and len(righe_cassa[-1]) > 3 and righe_cassa[-1][3] != "Saldo Totale":
+        testo += f"\n💰 *Fondo Cassa:* {righe_cassa[-1][3]}"
+
+    testo += "\n\n⚽ Prossima giornata in arrivo!"
+    return testo
+
+async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_se_non_pronto=False):
+    """Ogni mattina controlla se la giornata corrente e' completamente
+    conclusa (nessuna riga ancora IN CORSO in Giocate) e, se non l'ha gia'
+    fatto, manda all'admin il riepilogo pronto da incollare su WhatsApp.
+
+    La "conclusione" si basa sui NOSTRI dati (Giocate), non su una nuova
+    chiamata a Football-Data: una volta che una partita e' stata segnata
+    correttamente resta protetta dall'anti-regressione (Sessione 6), quindi
+    e' una base piu' affidabile di un controllo live che potrebbe trovare
+    l'API di nuovo bloccata (vedi incidente 30/08/2026).
+
+    notifica_se_non_pronto: se True (usato da /riepilogo), spiega all'admin
+    perche' non ha mandato nulla invece di restare silenzioso.
+    """
+    global ultima_giornata_riepilogo_inviata
+    try:
+        giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+
+        service = await asyncio.to_thread(connetti_sheets)
+        righe_giocate = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Giocate!A:G"
+            ).execute().get('values', [])
+        )
+        righe_giornata = [
+            r for r in righe_giocate
+            if len(r) >= 7 and "giornata" in str(r[0]).lower() and str(giornata) in str(r[0])
+        ]
+        if not righe_giornata:
+            if notifica_se_non_pronto:
+                await context.bot.send_message(chat_id=ADMIN_ID, text=f"ℹ️ Nessuna schedina ancora caricata per la Giornata {giornata}.")
+            return
+        if any("CORSO" in str(r[6]) for r in righe_giornata):
+            if notifica_se_non_pronto:
+                n_in_corso = sum(1 for r in righe_giornata if "CORSO" in str(r[6]))
+                await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏳ Giornata {giornata} non ancora conclusa: {n_in_corso} eventi ancora IN CORSO.")
+            return
+
+        if str(giornata) == str(ultima_giornata_riepilogo_inviata):
+            if notifica_se_non_pronto:
+                await context.bot.send_message(chat_id=ADMIN_ID, text=f"ℹ️ Il riepilogo della Giornata {giornata} è già stato mandato.")
+            return
+
+        righe_classifica = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z"
+            ).execute().get('values', [])
+        )
+        righe_cassa = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D"
+            ).execute().get('values', [])
+        )
+
+        testo = costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa)
+        if not testo:
+            return
+
+        await context.bot.send_message(chat_id=ADMIN_ID, text=testo)  # niente parse_mode: vedi costruisci_riepilogo_whatsapp
+        ultima_giornata_riepilogo_inviata = str(giornata)
+    except Exception as e:
+        logging.error(f"Errore task_riepilogo_whatsapp: {e}")
+
+async def riepilogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forza subito il controllo/invio del riepilogo, senza aspettare la mattina
+    (utile per testare, o per rimandarlo se serve). Ignora la deduplica."""
+    if update.effective_user.id != ADMIN_ID: return
+    global ultima_giornata_riepilogo_inviata
+    ultima_giornata_riepilogo_inviata = None
+    await update.message.reply_text("⏳ Controllo se la giornata è conclusa...")
+    await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True)
+
 async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
         ("start", "Apri il menu principale"),
         ("status", "Giornata corrente e schedine mancanti"),
         ("backup", "Esporta subito un backup dei dati"),
+        ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
         ("setkey", "Cambia al volo la chiave API di Gemini")
     ])
 
@@ -1181,6 +1308,10 @@ def main():
 
     # Backup settimanale (lunedì mattina, orario tranquillo) inviato come documento all'admin
     app.job_queue.run_daily(task_backup_periodico, time=dt_time(hour=9, minute=0, tzinfo=tz), days=(0,))
+
+    # Riepilogo di fine giornata per WhatsApp: controllato ogni mattina, si invia da
+    # solo (una volta sola) appena la giornata risulta completamente conclusa
+    app.job_queue.run_daily(task_riepilogo_whatsapp, time=dt_time(hour=9, minute=15, tzinfo=tz))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -1237,6 +1368,7 @@ def main():
     app.add_handler(CommandHandler("setkey", set_api_key_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("backup", backup_command))
+    app.add_handler(CommandHandler("riepilogo", riepilogo_command))
     app.add_handler(conv_handler)
     print("🤖 Super-Bot Telegram (con Web Service) avviato...")
     app.run_polling()

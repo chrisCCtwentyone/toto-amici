@@ -101,6 +101,21 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/08/2026 — Sessione 11 (Frontend: frecce di tendenza, riepilogo automatico per WhatsApp)
+Su richiesta dell'utente, due migliorie frontend/UX dopo il giro sulla robustezza backend.
+
+**1) Frecce di tendenza in classifica** (`app.py`)
+- Nuova colonna "Tend." nella Classifica completa: 🟢▲N / 🔴▼N / ⚪– per il cambio di posizione rispetto alla giornata precedente. Calcolata dai dati già in `Classifica` (nessuna chiamata API in più). Verificato a mano contro i dati reali (4 giocatori, incluso il caso estremo Michele -11 posizioni) — tutti corretti. Testati i casi limite (una sola giornata, classifica vuota): nessun crash.
+
+**2) Riepilogo automatico di fine giornata, pronto per WhatsApp** (`bot_telegram.py`)
+- Ogni mattina alle 09:15 il bot controlla se la giornata corrente è completamente conclusa (nessuna riga IN CORSO in `Giocate` — si basa sui nostri dati già protetti dall'anti-regressione, non su una nuova chiamata a Football-Data che potrebbe essere di nuovo bloccata) e, se non l'ha già mandato, invia all'admin il riepilogo: classifica ordinata con punti guadagnati in giornata, chi ha chiuso la schedina, saldo Cassa.
+- **Dettaglio pensato apposta**: il messaggio usa `*grassetto*` con un solo asterisco (sintassi di WhatsApp) ed è inviato su Telegram **senza** `parse_mode`, così gli asterischi restano testo letterale invece di essere "consumati" dal rendering di Telegram — copiato e incollato su WhatsApp, il grassetto funziona lì.
+- Nuovo comando **`/riepilogo`** per forzarlo a mano (utile per testare, o rimandarlo), con messaggi espliciti sul perché non ha inviato nulla (partite ancora in corso, già mandato, nessun dato).
+- **Bug trovato e corretto durante il test con dati finti**: se `Cassa` ha solo la riga di intestazione (nessun movimento ancora), il codice leggeva quella riga come se fosse un dato reale, mostrando "Saldo Totale" (il nome della colonna) invece di un importo — stesso tipo di guardia già presente altrove nel codice, mancava qui.
+- 16 nuovi test (funzione di costruzione del messaggio + il job schedulato con Sheets/Telegram mockati).
+
+**Suite di test**: da 129 a **145 test**, tutti verdi. Dry-run completo su Giornate 1-2 rifatto dopo tutte le modifiche: 576 celle, 0 differenze.
+
 ### 31/08/2026 — Sessione 10 (Robustezza backend: retry, girone di ritorno, backup)
 Su richiesta dell'utente, tre migliorie mirate a "irrobustire" backend e sito, dopo aver valutato e **scartato** il passaggio a un database vero (nessuno degli incidenti finora è nato da Google Sheets; il costo di migrazione sarebbe alto per 16 utenti, vedi discussione in chat).
 
