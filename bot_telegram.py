@@ -282,11 +282,37 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
 # ==========================================
 # CALCOLO RISULTATI E API
 # ==========================================
+def riga_e_della_giornata(valore_cella, giornata):
+    """True solo se la cella "Giornata" di una riga si riferisce ESATTAMENTE a quella giornata.
+
+    NON usare `str(giornata) in str(cella)`: e' una ricerca per sottostringa, quindi
+    la giornata "1" verrebbe trovata anche dentro "Giornata 12", "Giornata 13",
+    "Giornata 21"... Con quel confronto, ricalcolare la Giornata 1 riscriveva gli
+    esiti di 13 giornate diverse (dimostrato: una riga gia' vinta della Giornata 12
+    diventava PERSA con 0 punti, perche' agganciata al risultato della Giornata 1
+    tramite il fallback sull'ordine invertito, dato che andata e ritorno hanno le
+    stesse due squadre). Il problema sarebbe esploso dalla Giornata 10 in poi.
+    Vedi PROJECT_LOG.md, Sessione 13.
+    """
+    testo = str(valore_cella).strip().lower()
+    if not testo.startswith("giornata"):
+        return False
+    return testo.replace("giornata", "").strip() == str(giornata).strip()
+
 def ottieni_giornata_corrente():
+    """Giornata corrente secondo Football-Data, o None se l'API non risponde.
+
+    Ritorna None (non 1) di proposito: prima un errore di rete faceva ripiegare
+    sulla Giornata 1, e i job schedulati finivano per ricalcolare/controllare la
+    giornata sbagliata. Ogni chiamante deve gestire il None saltando il giro.
+    """
     try:
         res = richiedi_con_retry("https://api.football-data.org/v4/competitions/SA", headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json()
-        return res.get('currentSeason', {}).get('currentMatchday', 1)
-    except: return 1
+        giornata = res.get('currentSeason', {}).get('currentMatchday')
+        return giornata if giornata else None
+    except Exception:
+        logging.error("ottieni_giornata_corrente: API non raggiungibile, giro saltato")
+        return None
 
 def estrai_numero(testo):
     """Legge un numero scritto in formato italiano ("1.674,56" = milleseicento...).
@@ -387,7 +413,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3).get('sheets', []) if s['properties']['title'].lower() == 'giocate')
 
     for idx, riga in enumerate(righe_giocate):
-        if len(riga) < 6 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]): continue
+        if len(riga) < 6 or not riga_e_della_giornata(riga[0], giornata): continue
         gio, partita, pron, quota = str(riga[1]).strip(), str(riga[2]).strip(), str(riga[4]).strip().upper(), estrai_numero(riga[5])
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
         esito_salvato = str(riga[6]).strip() if len(riga) > 6 else ""
@@ -532,6 +558,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+        if giornata is None:
+            await update.message.reply_text("⚠️ Non riesco a contattare Football-Data per sapere la giornata corrente. Riprova fra poco.")
+            return
         service = await asyncio.to_thread(connetti_sheets)
         righe = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
@@ -541,7 +570,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         giocatori_presenti = set()
         for riga in righe:
-            if len(riga) >= 2 and str(giornata) in str(riga[0]):
+            if len(riga) >= 2 and riga_e_della_giornata(riga[0], giornata):
                 giocatori_presenti.add(str(riga[1]).strip().lower())
 
         mancanti = [g.capitalize() for g in GIOCATORI if g.lower() not in giocatori_presenti]
@@ -913,6 +942,10 @@ async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
 
 async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
     giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+    if giornata is None:
+        # Meglio saltare il giro che ricalcolare la giornata sbagliata.
+        logging.warning("task_aggiornamento_automatico: giornata corrente sconosciuta, giro saltato")
+        return
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
     await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
 
@@ -932,7 +965,7 @@ async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
         
         giocatori_presenti = set()
         for riga in righe:
-            if len(riga) >= 2 and str(giornata) in str(riga[0]):
+            if len(riga) >= 2 and riga_e_della_giornata(riga[0], giornata):
                 giocatori_presenti.add(str(riga[1]).strip().lower())
         
         mancanti = [g.capitalize() for g in GIOCATORI if g.lower() not in giocatori_presenti]
@@ -1016,6 +1049,8 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
     """
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+        if giornata is None:
+            return
         url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
         matches = await asyncio.to_thread(
             lambda: richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
@@ -1048,7 +1083,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
         )
         non_riconosciute = set()
         for riga in righe:
-            if len(riga) < 3 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]):
+            if len(riga) < 3 or not riga_e_della_giornata(riga[0], giornata):
                 continue
             esito = str(riga[6]).strip() if len(riga) > 6 else ""
             if "CORSO" not in esito:
@@ -1216,6 +1251,10 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
     global ultima_giornata_riepilogo_inviata
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+        if giornata is None:
+            if notifica_se_non_pronto:
+                await context.bot.send_message(chat_id=ADMIN_ID, text="⚠️ Non riesco a contattare Football-Data per sapere la giornata corrente. Riprova fra poco.")
+            return
 
         service = await asyncio.to_thread(connetti_sheets)
         righe_giocate = await asyncio.to_thread(
@@ -1225,7 +1264,7 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         )
         righe_giornata = [
             r for r in righe_giocate
-            if len(r) >= 7 and "giornata" in str(r[0]).lower() and str(giornata) in str(r[0])
+            if len(r) >= 7 and riga_e_della_giornata(r[0], giornata)
         ]
         if not righe_giornata:
             if notifica_se_non_pronto:
