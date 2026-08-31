@@ -113,6 +113,13 @@ Su richiesta dell'utente, tre migliorie mirate a "irrobustire" backend e sito, d
 - 4 test: andata/ritorno della stessa coppia di squadre segnate in modo indipendente senza contaminazione reciproca; il ritorno scritto con l'ordine "vecchio" (quello dell'andata) viene comunque valutato correttamente grazie al fallback sull'ordine invertito (Sessione 7); nessuna collisione tra i prefissi "Milan"/"Inter" nel matching.
 - **Validati non banali**: ho iniettato deliberatamente un bug nello scambio dei gol e verificato che il test lo intercetti (fallisce come previsto), prima di ripristinare il codice corretto — non erano verdi per caso.
 
+**3) Backup settimanale automatico** (`task_backup_periodico`)
+- Ogni lunedì alle 09:00 (fuso Europe/Rome), il bot esporta Giocate/Classifica/Cassa in un JSON e lo manda come documento all'admin su Telegram — una copia dei dati fuori da Google, richiamabile anche a mano col nuovo comando **`/backup`**.
+- Il file locale viene sempre cancellato dopo l'invio (anche se l'invio fallisce, grazie a un `finally`): su Render il disco è comunque effimero, Telegram è la copia che conta. `backup_toto_amici_*.json` aggiunto a `.gitignore` come rete di sicurezza.
+- Verificato con dati reali (321 righe Giocate, 17 Classifica, 2 Cassa esportate correttamente) sia il percorso di successo che quello di fallimento (nessun file orfano, admin avvisato). 5 test automatici aggiunti in `tests/test_backup.py`.
+
+**Suite di test**: da 114 a **129 test**, tutti verdi.
+
 ### 31/08/2026 — Sessione 9 (Riavvio inatteso del bot su Render)
 **Segnalato dall'utente**: alle 07:18 (05:18 UTC) il bot su Render è andato in "instance failed" e si è riavviato da solo. Anche il sito ha dato "Service Unavailable" per un momento nella stessa giornata, ma senza nulla nei log di Streamlit Cloud — verosimilmente un blip infrastrutturale non riconducibile al nostro codice (non genera mai quel messaggio).
 

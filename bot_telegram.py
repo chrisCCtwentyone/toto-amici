@@ -554,6 +554,13 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Errore durante il controllo dello status: {e}")
 
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Esporta subito Giocate/Classifica/Cassa e le manda come documento —
+    stessa logica del backup automatico del lunedì, richiamabile a mano."""
+    if update.effective_user.id != ADMIN_ID: return
+    await update.message.reply_text("⏳ Preparo il backup...")
+    await task_backup_periodico(context)
+
 AVVISO_CHIAVE_SALVATA = (
     "✅ **Chiave API Gemini salvata.**\n\n"
     "⚠️ Su Render questo file può essere azzerato al prossimo riavvio: se vuoi che "
@@ -1086,11 +1093,64 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Errore task_controlla_anomalie_partite: {e}")
 
+async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
+    """Backup settimanale: esporta Giocate/Classifica/Cassa in un file JSON e
+    lo manda all'admin come documento Telegram.
+
+    Perche' serve anche se Google Sheets ha gia' una cronologia versioni
+    (File -> Cronologia delle versioni): quella protegge da modifiche errate
+    ma resta dentro lo stesso account Google. Questo backup vive nella chat
+    Telegram dell'admin, un posto completamente separato — se mai ci fossero
+    problemi di accesso all'account Google, i dati restano comunque recuperabili
+    da li'. Il file locale viene cancellato subito dopo l'invio: su Render il
+    disco e' comunque effimero, Telegram e' la copia che conta.
+    """
+    percorso_file = None
+    try:
+        service = await asyncio.to_thread(connetti_sheets)
+        risultato = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().batchGet(
+                spreadsheetId=SPREADSHEET_ID,
+                ranges=["Giocate!A:I", "Classifica!A:Z", "Cassa!A:D"]
+            ).execute()
+        )
+        value_ranges = risultato.get("valueRanges", [])
+        backup = {
+            "esportato_il": datetime.now(pytz.timezone('Europe/Rome')).strftime("%Y-%m-%d %H:%M:%S"),
+            "giocate": value_ranges[0].get("values", []) if len(value_ranges) > 0 else [],
+            "classifica": value_ranges[1].get("values", []) if len(value_ranges) > 1 else [],
+            "cassa": value_ranges[2].get("values", []) if len(value_ranges) > 2 else [],
+        }
+
+        data_str = datetime.now(pytz.timezone('Europe/Rome')).strftime("%Y-%m-%d")
+        percorso_file = f"backup_toto_amici_{data_str}.json"
+        with open(percorso_file, "w", encoding="utf-8") as f:
+            json.dump(backup, f, ensure_ascii=False, indent=2)
+
+        n_giocate = len(backup["giocate"])
+        with open(percorso_file, "rb") as f:
+            await context.bot.send_document(
+                chat_id=ADMIN_ID,
+                document=f,
+                filename=percorso_file,
+                caption=f"💾 Backup settimanale — {data_str}\n{n_giocate} righe in Giocate."
+            )
+    except Exception as e:
+        logging.error(f"Errore task_backup_periodico: {e}")
+        try:
+            await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Backup settimanale fallito: {e}")
+        except Exception:
+            pass
+    finally:
+        if percorso_file and os.path.exists(percorso_file):
+            os.remove(percorso_file)
+
 async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
         ("start", "Apri il menu principale"),
         ("status", "Giornata corrente e schedine mancanti"),
+        ("backup", "Esporta subito un backup dei dati"),
         ("setkey", "Cambia al volo la chiave API di Gemini")
     ])
 
@@ -1118,6 +1178,9 @@ def main():
 
     # Job ricorrente ogni 2 ore: controlla anomalie nei dati Football-Data della giornata corrente
     app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=7200, first=600)
+
+    # Backup settimanale (lunedì mattina, orario tranquillo) inviato come documento all'admin
+    app.job_queue.run_daily(task_backup_periodico, time=dt_time(hour=9, minute=0, tzinfo=tz), days=(0,))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
@@ -1173,6 +1236,7 @@ def main():
 
     app.add_handler(CommandHandler("setkey", set_api_key_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(conv_handler)
     print("🤖 Super-Bot Telegram (con Web Service) avviato...")
     app.run_polling()

@@ -8,6 +8,10 @@ chiave_api.txt
 schedine_whatsapp/
 giocate_completate.txt
 
+# Backup temporanei (task_backup_periodico li cancella dopo l'invio;
+# questa è solo una rete di sicurezza se il processo venisse interrotto prima)
+backup_toto_amici_*.json
+
 # File di sistema Mac e cache
 .DS_Store
 __pycache__/
