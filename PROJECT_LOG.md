@@ -101,6 +101,18 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/08/2026 — Sessione 10 (Robustezza backend: retry, girone di ritorno, backup)
+Su richiesta dell'utente, tre migliorie mirate a "irrobustire" backend e sito, dopo aver valutato e **scartato** il passaggio a un database vero (nessuno degli incidenti finora è nato da Google Sheets; il costo di migrazione sarebbe alto per 16 utenti, vedi discussione in chat).
+
+**1) Retry con backoff su tutte le chiamate a Football-Data.org**
+- Nuovo modulo condiviso `api_utils.py` (`richiedi_con_retry`), usato sia da `app.py` che da `bot_telegram.py`: fino a 3 tentativi con attesa crescente prima di rilanciare l'eccezione al chiamante — copre i blip di rete transitori (come nell'incidente del 30/08) senza mascherare un guasto vero.
+- Sostituite tutte le chiamate dirette `requests.get()` a Football-Data (2 in `app.py`, 7 in `bot_telegram.py`).
+- 6 nuovi test con rete mockata + verifica contro l'API reale + dry-run completo (576 celle, 0 differenze).
+
+**2) Test dedicato al girone di ritorno** (`tests/test_girone_di_ritorno.py`)
+- 4 test: andata/ritorno della stessa coppia di squadre segnate in modo indipendente senza contaminazione reciproca; il ritorno scritto con l'ordine "vecchio" (quello dell'andata) viene comunque valutato correttamente grazie al fallback sull'ordine invertito (Sessione 7); nessuna collisione tra i prefissi "Milan"/"Inter" nel matching.
+- **Validati non banali**: ho iniettato deliberatamente un bug nello scambio dei gol e verificato che il test lo intercetti (fallisce come previsto), prima di ripristinare il codice corretto — non erano verdi per caso.
+
 ### 31/08/2026 — Sessione 9 (Riavvio inatteso del bot su Render)
 **Segnalato dall'utente**: alle 07:18 (05:18 UTC) il bot su Render è andato in "instance failed" e si è riavviato da solo. Anche il sito ha dato "Service Unavailable" per un momento nella stessa giornata, ma senza nulla nei log di Streamlit Cloud — verosimilmente un blip infrastrutturale non riconducibile al nostro codice (non genera mai quel messaggio).
 
@@ -263,12 +275,12 @@ Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del c
 
 ### 🔴 Priorità Alta — Da fare ASAP
 - [ ] **Rimuovere `RISULTATI_MANUALI` da `app.py`** (aggiunta in Sessione 6) non appena Football-Data.org torna a riportare correttamente le 4 partite di Giornata 2 (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma) — è una toppa temporanea con punteggi scritti a mano, non deve restare nel codice più del necessario.
-- [x] ~~**STRESS TEST REVISIONE CLAUDE**~~ — svolto in Sessione 8: revisione completa che ha portato alla luce due bug latenti gravi (esiti "vinti per default", vincite a quattro cifre in Cassa) e alla prima suite di test automatici. Resta da fare solo la verifica specifica del **girone di ritorno** (vedi Priorità Media).
+- [x] ~~**STRESS TEST REVISIONE CLAUDE**~~ — svolto in Sessione 8: revisione completa che ha portato alla luce due bug latenti gravi (esiti "vinti per default", vincite a quattro cifre in Cassa) e alla prima suite di test automatici.
 - [ ] **Impostare `GEMINI_API_KEY` come variabile d'ambiente su Render** (Sessione 8): senza, una chiave cambiata con `/setkey` torna silenziosamente a quella vecchia al primo riavvio.
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
-- [ ] **Stress Test Periodici**: verificare la robustezza del bot al giro di boa (girone di ritorno, inversioni casa/trasferta) e con elevate moli di dati.
+- [x] ~~**Girone di ritorno**~~ — svolto in Sessione 10 (`tests/test_girone_di_ritorno.py`, 4 test): andata/ritorno indipendenti senza contaminazione, ordine invertito nel ritorno gestito correttamente (verificato iniettando il bug e controllando che il test lo scopra), nessuna collisione di prefisso Milan/Inter. Resta genericamente da tenere d'occhio la robustezza con moli di dati molto più grandi (fine campionato).
 - [ ] **Multi-admin**: possibilità in futuro di aprire l'accesso al bot ad altri utenti admin (oltre a `ADMIN_ID`), che potrebbero così caricare schedine e correggere dati anche loro. Oggi il bot riconosce un solo `ADMIN_ID` hardcoded dall'env var — servirebbe passare a una lista di ID autorizzati (`ADMIN_IDS`) con lo stesso controllo ovunque viene fatto `update.effective_user.id != ADMIN_ID`.
 - [ ] **Modifica dati anche dalla web app** — valutato in Sessione 7, **sconsigliato per ora**: la Web App oggi è pubblica, senza alcun sistema di login, e legge Sheets in sola lettura (`spreadsheets.readonly`); aggiungere una modalità di scrittura richiederebbe (a) costruire un sistema di autenticazione admin dentro Streamlit da zero, (b) dare a un'app pubblica credenziali di scrittura su Sheets, aumentando la superficie d'attacco rispetto al bot Telegram (che ha già l'identità admin gratis tramite `ADMIN_ID`), (c) duplicare la logica di correzione in due posti invece di uno, con rischio di comportamenti divergenti. Il comando admin nel bot copre già il bisogno pratico. Da rivalutare solo se emerge un'esigenza che il bot non riesce a coprire.
 
