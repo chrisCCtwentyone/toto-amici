@@ -101,8 +101,8 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
-### 31/08/2026 — Sessione 11 (Frontend: frecce di tendenza, riepilogo automatico per WhatsApp)
-Su richiesta dell'utente, due migliorie frontend/UX dopo il giro sulla robustezza backend.
+### 31/08/2026 — Sessione 11 (Frontend: frecce di tendenza, riepilogo automatico per WhatsApp, skeleton di caricamento)
+Su richiesta dell'utente, tre migliorie frontend/UX dopo il giro sulla robustezza backend. Prima di proporre altre idee ho fatto una ricerca web su cosa permette Streamlit 2026 a livello grafico e cosa fanno bene le app di leghe fantasy — da lì sono nate le proposte poi accettate/scartate sotto.
 
 **1) Frecce di tendenza in classifica** (`app.py`)
 - Nuova colonna "Tend." nella Classifica completa: 🟢▲N / 🔴▼N / ⚪– per il cambio di posizione rispetto alla giornata precedente. Calcolata dai dati già in `Classifica` (nessuna chiamata API in più). Verificato a mano contro i dati reali (4 giocatori, incluso il caso estremo Michele -11 posizioni) — tutti corretti. Testati i casi limite (una sola giornata, classifica vuota): nessun crash.
@@ -115,6 +115,12 @@ Su richiesta dell'utente, due migliorie frontend/UX dopo il giro sulla robustezz
 - 16 nuovi test (funzione di costruzione del messaggio + il job schedulato con Sheets/Telegram mockati).
 
 **Suite di test**: da 129 a **145 test**, tutti verdi. Dry-run completo su Giornate 1-2 rifatto dopo tutte le modifiche: 576 celle, 0 differenze.
+
+**3) Skeleton animato al caricamento dati** (`app.py`)
+- `carica_tutti_i_dati()` (la chiamata batchGet a Google Sheets, prima di tutto il resto della pagina) ora gira dentro `with st.skeleton(height=420):` — funzionalità nativa di Streamlit 2026, nessuna libreria esterna. Mostra un placeholder animato al posto di una pagina bianca quando il caricamento richiede un attimo percepibile (cache scaduta dopo 3 minuti, o dopo aver premuto "Aggiorna"); se la cache è calda, Streamlit lo salta da solo senza sfarfallio.
+- **Verificato dal vivo iniettando un ritardo artificiale** (15s, poi rimosso) per catturare lo skeleton a schermo, dato che il caricamento reale è troppo rapido per osservarlo altrimenti: confermato che appare correttamente e sparisce da solo a fine caricamento, poi ripristinato il codice originale e ricontrollato che il comportamento normale (veloce, senza flash) resti intatto.
+
+**Idee scartate dopo discussione**: grafico andamento punti nel tempo, countdown prossima partita, notifiche push in tempo reale per ogni evento (troppo rumore per un gruppo di 16 amici che si coordina già su Telegram/WhatsApp).
 
 ### 31/08/2026 — Sessione 10 (Robustezza backend: retry, girone di ritorno, backup)
 Su richiesta dell'utente, tre migliorie mirate a "irrobustire" backend e sito, dopo aver valutato e **scartato** il passaggio a un database vero (nessuno degli incidenti finora è nato da Google Sheets; il costo di migrazione sarebbe alto per 16 utenti, vedi discussione in chat).

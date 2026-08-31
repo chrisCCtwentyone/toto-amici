@@ -236,7 +236,11 @@ def normalizza_partita_completa(partita_sheet, partite_ufficiali):
 # ==========================================
 # CARICAMENTO INIZIALE DATI
 # ==========================================
-df_classifica, df_cassa, df_giocate = carica_tutti_i_dati()
+# Skeleton animato invece di una pagina bianca: si vede solo quando il
+# caricamento richiede un attimo (cache scaduta, o dopo "Aggiorna"). Se la
+# cache e' calda, Streamlit lo salta da solo senza sfarfallio.
+with st.skeleton(height=420):
+    df_classifica, df_cassa, df_giocate = carica_tutti_i_dati()
 _data_load_time = datetime.now(pytz.timezone("Europe/Rome")).strftime("%H:%M")
 
 # ==========================================
