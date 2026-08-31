@@ -120,7 +120,7 @@ class FakeSheetsBase:
             dati = self.cassa
 
         class _R:
-            def execute(self_inner):
+            def execute(self_inner, **kwargs):
                 return {"values": dati}
         return _R()
 

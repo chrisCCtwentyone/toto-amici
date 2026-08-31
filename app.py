@@ -116,7 +116,7 @@ def carica_tutti_i_dati():
         result = service.spreadsheets().values().batchGet(
             spreadsheetId=SPREADSHEET_ID,
             ranges=["Classifica!A:Z", "Cassa!A:D", "Giocate!A:I"]
-        ).execute()
+        ).execute(num_retries=3)
 
         dfs = []
         for vr in result.get("valueRanges", []):

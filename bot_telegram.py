@@ -275,7 +275,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
         sheets_service.spreadsheets().values().append(
             spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I",
             valueInputOption="USER_ENTERED", body=body
-        ).execute()
+        ).execute(num_retries=3)
         return True
     return False
 
@@ -379,12 +379,12 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
 
     if not matches_api: return "Nessuna partita trovata per questa giornata."
 
-    righe_giocate = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I").execute().get('values', [])
+    righe_giocate = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I").execute(num_retries=3).get('values', [])
     classifica, aggiornamenti_testo, richieste_stile = {}, [], []
     da_verificare_dettaglio = []
     colore_verde, colore_rosso, colore_grigio = {"red":0.85,"green":0.95,"blue":0.85}, {"red":0.95,"green":0.85,"blue":0.85}, {"red":0.90,"green":0.90,"blue":0.90}
     colore_giallo = {"red":1.0,"green":0.95,"blue":0.70}
-    sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute().get('sheets', []) if s['properties']['title'].lower() == 'giocate')
+    sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3).get('sheets', []) if s['properties']['title'].lower() == 'giocate')
 
     for idx, riga in enumerate(righe_giocate):
         if len(riga) < 6 or "giornata" not in str(riga[0]).lower() or str(giornata) not in str(riga[0]): continue
@@ -441,8 +441,8 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
             richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
 
     if aggiornamenti_testo:
-        service.spreadsheets().values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': aggiornamenti_testo}).execute()
-        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": richieste_stile}).execute()
+        service.spreadsheets().values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': aggiornamenti_testo}).execute(num_retries=3)
+        service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={"requests": richieste_stile}).execute(num_retries=3)
 
     vincitori, report = [], f"📊 *REPORT GIORNATA {giornata}*\n\n"
     for gio, dati in classifica.items():
@@ -463,7 +463,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         report += "\n".join(f"- {d}" for d in da_verificare_dettaglio)
         report += "\n\nIl bot non sa interpretare questi pronostici, quindi non ha assegnato nulla. Correggili sul foglio Giocate (colonna Pronostico) e poi rilancia *Aggiorna Risultati*.\n"
 
-    righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z").execute().get('values', [["Giocatore", "Punti Totali"]])
+    righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z").execute(num_retries=3).get('values', [["Giocatore", "Punti Totali"]])
     col_g = f"Giornata {giornata}"
     if col_g not in righe_class[0]: righe_class[0].append(col_g)
     idx_g = righe_class[0].index(col_g)
@@ -476,10 +476,10 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         while len(righe_class[mappa[gio.lower()]]) <= idx_g: righe_class[mappa[gio.lower()]].append("")
         righe_class[mappa[gio.lower()]][idx_g] = dati['punti']
         righe_class[mappa[gio.lower()]][1] = sum([int(str(x)) for x in righe_class[mappa[gio.lower()]][2:] if str(x).isdigit()])
-    service.spreadsheets().values().update(spreadsheetId=SPREADSHEET_ID, range="Classifica!A1", valueInputOption="USER_ENTERED", body={"values": righe_class}).execute()
+    service.spreadsheets().values().update(spreadsheetId=SPREADSHEET_ID, range="Classifica!A1", valueInputOption="USER_ENTERED", body={"values": righe_class}).execute(num_retries=3)
 
     if vincitori:
-        res_cassa = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D").execute()
+        res_cassa = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D").execute(num_retries=3)
         righe_cassa = res_cassa.get('values', []) or [["Giornata", "Descrizione", "Entrate", "Saldo Totale"]]
         saldo = estrai_numero(righe_cassa[-1][3]) if len(righe_cassa[-1]) > 3 and righe_cassa[-1][3] != "Saldo Totale" else 0.0
         nuove = []
@@ -490,7 +490,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
                 nuove.append([f"Giornata {giornata}", descr, f"{v['importo']:.2f} €".replace(".", ","), f"{saldo:.2f} €".replace(".", ",")])
                 righe_cassa.append(nuove[-1])
         if nuove:
-            service.spreadsheets().values().append(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D", valueInputOption="USER_ENTERED", body={"values": nuove}).execute()
+            service.spreadsheets().values().append(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D", valueInputOption="USER_ENTERED", body={"values": nuove}).execute(num_retries=3)
             report += "💰 *Vincite registrate in Cassa!*\n"
     return report
 
@@ -536,7 +536,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         righe = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
-            ).execute().get('values', [])
+            ).execute(num_retries=3).get('values', [])
         )
 
         giocatori_presenti = set()
@@ -928,7 +928,7 @@ async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
         service = connetti_sheets()
         righe = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
-        ).execute().get('values', [])
+        ).execute(num_retries=3).get('values', [])
         
         giocatori_presenti = set()
         for riga in righe:
@@ -1044,7 +1044,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
         righe = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID, range="Giocate!A:G"
-            ).execute().get('values', [])
+            ).execute(num_retries=3).get('values', [])
         )
         non_riconosciute = set()
         for riga in righe:
@@ -1113,7 +1113,7 @@ async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
             lambda: service.spreadsheets().values().batchGet(
                 spreadsheetId=SPREADSHEET_ID,
                 ranges=["Giocate!A:I", "Classifica!A:Z", "Cassa!A:D"]
-            ).execute()
+            ).execute(num_retries=3)
         )
         value_ranges = risultato.get("valueRanges", [])
         backup = {
@@ -1221,7 +1221,7 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         righe_giocate = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID, range="Giocate!A:G"
-            ).execute().get('values', [])
+            ).execute(num_retries=3).get('values', [])
         )
         righe_giornata = [
             r for r in righe_giocate
@@ -1245,12 +1245,12 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         righe_classifica = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z"
-            ).execute().get('values', [])
+            ).execute(num_retries=3).get('values', [])
         )
         righe_cassa = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
                 spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D"
-            ).execute().get('values', [])
+            ).execute(num_retries=3).get('values', [])
         )
 
         testo = costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa)

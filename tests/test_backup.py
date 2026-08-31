@@ -23,7 +23,7 @@ class _Esec:
     def __init__(self, dati):
         self._dati = dati
 
-    def execute(self):
+    def execute(self, **kwargs):
         return self._dati
 
 

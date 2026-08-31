@@ -27,7 +27,7 @@ import bot_telegram as bt
 
 
 class _Esec:
-    def execute(self):
+    def execute(self, **kwargs):
         return {}
 
 
@@ -63,7 +63,7 @@ class _RispostaGet:
     def __init__(self, valori):
         self._valori = valori
 
-    def execute(self):
+    def execute(self, **kwargs):
         return {"values": self._valori}
 
 
@@ -76,7 +76,7 @@ class FakeSpreadsheets:
 
     def get(self, **kw):
         class _R:
-            def execute(self_inner):
+            def execute(self_inner, **kwargs):
                 return {"sheets": [{"properties": {"sheetId": 0, "title": "Giocate"}}]}
         return _R()
 

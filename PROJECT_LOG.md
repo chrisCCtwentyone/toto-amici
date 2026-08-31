@@ -101,6 +101,17 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/08/2026 — Sessione 12 (Retry mancante su Google Sheets: l'utente ha beccato l'errore in flagrante)
+L'utente ha catturato uno screenshot con l'errore in diretta: `HttpError 503 ... "The service is currently unavailable."` sulla `batchGet` di Google Sheets in `app.py`. A differenza degli episodi precedenti (dove i log non bastavano a essere certi della causa), qui il messaggio è inequivocabile: è un **503 di Google Sheets stesso**, non un blip generico di piattaforma.
+
+**Causa della lacuna**: il retry con backoff aggiunto in Sessione 10 (`api_utils.richiedi_con_retry`) copre solo le chiamate a Football-Data.org via `requests.get()`. Le chiamate a Google Sheets passano da un client completamente diverso (`googleapiclient`), che non transita mai da quella funzione — quindi restavano scoperte, ed è bastato un 503 per far fallire il caricamento dell'intera pagina.
+
+**Correzione**: `googleapiclient` ha un meccanismo di retry integrato apposta per errori 5xx, semplicemente non lo stavamo usando — basta passare `num_retries=N` a `.execute()` (retry con backoff esponenziale e jitter, gestito internamente dalla libreria). Aggiunto `num_retries=3` a **tutte** le chiamate `.execute()`: 1 in `app.py`, 16 in `bot_telegram.py`.
+
+**Verifiche**: aggiornati i mock nei test (accettano ora `**kwargs` su `execute()`, dato che il codice reale ora passa `num_retries`) — 145 test ancora verdi. Dry-run completo su Giornate 1-2 rifatto: 576 celle, 0 differenze. Sito e bot ricontrollati dal vivo dopo la modifica.
+
+**Nota per il futuro**: se un'altra chiamata a Sheets viene aggiunta in seguito, ricordarsi `num_retries=3` — vedi anche la regola aggiunta in `CLAUDE.md`.
+
 ### 31/08/2026 — Sessione 11 (Frontend: frecce di tendenza, riepilogo automatico per WhatsApp, skeleton di caricamento)
 Su richiesta dell'utente, tre migliorie frontend/UX dopo il giro sulla robustezza backend. Prima di proporre altre idee ho fatto una ricerca web su cosa permette Streamlit 2026 a livello grafico e cosa fanno bene le app di leghe fantasy — da lì sono nate le proposte poi accettate/scartate sotto.
 
