@@ -27,6 +27,11 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY")
 SERVICE_ACCOUNT_FILE = 'credenziali.json'
 
+# Fogli di lavoro della stagione IN CORSO. Le stagioni passate restano nello
+# stesso spreadsheet con il suffisso dell'annata (es. "Giocate 2026-27"),
+# create da /archiviastagione. Vedi PROJECT_LOG.md, Sessione 13.
+FOGLI_STAGIONE = ("Giocate", "Classifica", "Cassa")
+
 GIOCATORI = [
     "cecilia", "dario", "davide", "fazio", 
     "gaetano", "giacomo", "giovanni", "mario", 
@@ -39,7 +44,7 @@ LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
 # Stati Conversazione
 (MENU, ATTESA_FOTO_MULTIPLE, SCELTA_GIORNATA, SCELTA_GIOCATORE, CONFERMA, CONFERMA_LETTURA_IA,
  SCELTA_GIORNATA_UPDATE, ATTESA_NUOVA_KEY, SCELTA_GIORNATA_MANUALE, SCELTA_PARTITA_MANUALE,
- ATTESA_RISULTATO_MANUALE, CONFERMA_RISULTATO_MANUALE) = range(12)
+ ATTESA_RISULTATO_MANUALE, CONFERMA_RISULTATO_MANUALE, CONFERMA_ARCHIVIA_STAGIONE) = range(13)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -313,6 +318,86 @@ def ottieni_giornata_corrente():
     except Exception:
         logging.error("ottieni_giornata_corrente: API non raggiungibile, giro saltato")
         return None
+
+def etichetta_stagione(data_inizio):
+    """Da "2026-08-23" ricava "2026-27".
+
+    La Serie A va da agosto a maggio, quindi una stagione sta a cavallo di due
+    anni solari e non basta l'anno della data.
+    """
+    # Deve essere una data ISO tipo "2026-08-23": un input malformato deve dare
+    # None, non un'etichetta plausibile ma sbagliata usata poi per nominare fogli.
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', str(data_inizio or "")):
+        return None
+    anno = int(str(data_inizio)[:4])
+    return f"{anno}-{str(anno + 1)[2:]}"
+
+def stagione_corrente():
+    """Etichetta della stagione in corso secondo Football-Data, o None."""
+    try:
+        res = richiedi_con_retry(
+            "https://api.football-data.org/v4/competitions/SA",
+            headers={"X-Auth-Token": FOOTBALL_DATA_KEY}
+        ).json()
+        return etichetta_stagione(res.get("currentSeason", {}).get("startDate"))
+    except Exception:
+        return None
+
+def archivia_stagione(etichetta):
+    """Congela la stagione conclusa e prepara i fogli per quella nuova.
+
+    Per ogni foglio di lavoro: ne crea una copia rinominata "<Nome> <etichetta>"
+    e poi svuota l'originale lasciando la riga di intestazione.
+
+    L'ordine conta: prima si duplicano TUTTI i fogli e si verifica che le copie
+    esistano davvero, e solo dopo si cancella qualcosa. Se una duplicazione
+    fallisce si interrompe senza aver toccato i dati.
+
+    Ritorna un riepilogo testuale di cosa e' stato fatto.
+    """
+    service = connetti_sheets()
+    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3)
+    fogli = {f["properties"]["title"]: f["properties"]["sheetId"] for f in meta.get("sheets", [])}
+
+    # 1) Controlli preliminari: niente sovrascritture accidentali
+    for nome in FOGLI_STAGIONE:
+        if nome not in fogli:
+            raise Exception(f"Foglio '{nome}' non trovato: archiviazione annullata.")
+        if f"{nome} {etichetta}" in fogli:
+            raise Exception(f"Esiste gia' un foglio '{nome} {etichetta}': archiviazione gia' fatta?")
+
+    # 2) Duplicazione di tutti i fogli
+    richieste = [{
+        "duplicateSheet": {
+            "sourceSheetId": fogli[nome],
+            "newSheetName": f"{nome} {etichetta}",
+        }
+    } for nome in FOGLI_STAGIONE]
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=SPREADSHEET_ID, body={"requests": richieste}
+    ).execute(num_retries=3)
+
+    # 3) Verifica che le copie ci siano DAVVERO prima di cancellare
+    meta_dopo = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3)
+    titoli_dopo = {f["properties"]["title"] for f in meta_dopo.get("sheets", [])}
+    mancanti = [f"{n} {etichetta}" for n in FOGLI_STAGIONE if f"{n} {etichetta}" not in titoli_dopo]
+    if mancanti:
+        raise Exception(f"Copie non create ({', '.join(mancanti)}): NON ho cancellato nulla.")
+
+    # 4) Solo ora si svuotano i fogli di lavoro, mantenendo l'intestazione
+    righe_archiviate = {}
+    for nome in FOGLI_STAGIONE:
+        valori = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range=f"{nome}!A:Z"
+        ).execute(num_retries=3).get("values", [])
+        righe_archiviate[nome] = max(0, len(valori) - 1)
+        if len(valori) > 1:
+            service.spreadsheets().values().clear(
+                spreadsheetId=SPREADSHEET_ID, range=f"{nome}!A2:Z", body={}
+            ).execute(num_retries=3)
+
+    dettaglio = "\n".join(f"- {n}: {righe_archiviate[n]} righe → «{n} {etichetta}»" for n in FOGLI_STAGIONE)
+    return f"✅ *Stagione {etichetta} archiviata.*\n\n{dettaglio}\n\nI fogli di lavoro sono ora vuoti e pronti per la nuova stagione."
 
 def saldo_cassa(righe_cassa):
     """Saldo del fondo cassa, RICALCOLATO sommando tutte le entrate.
@@ -623,6 +708,51 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     await update.message.reply_text("⏳ Preparo il backup...")
     await task_backup_periodico(context)
+
+async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Avvia l'archiviazione della stagione. Operazione che SVUOTA i fogli di
+    lavoro, quindi: backup automatico prima, poi conferma esplicita."""
+    if update.effective_user.id != ADMIN_ID: return
+
+    etichetta = await asyncio.to_thread(stagione_corrente)
+    if not etichetta:
+        await update.message.reply_text("⚠️ Non riesco a determinare la stagione corrente (API non raggiungibile). Riprova più tardi.")
+        return
+
+    context.user_data['stagione_da_archiviare'] = etichetta
+    await update.message.reply_text("💾 Prima di tutto ti mando un backup di sicurezza...")
+    await task_backup_periodico(context)
+
+    kb = [
+        [InlineKeyboardButton(f"✅ Sì, archivia la {etichetta}", callback_data="archivia_si")],
+        [InlineKeyboardButton("❌ Annulla", callback_data="archivia_no")],
+    ]
+    await update.message.reply_text(
+        f"⚠️ *Archiviazione stagione {etichetta}*\n\n"
+        f"Farò una copia di Giocate, Classifica e Cassa nei fogli «... {etichetta}», "
+        f"poi *svuoterò i fogli di lavoro* per la nuova stagione.\n\n"
+        f"I dati storici restano consultabili nello spreadsheet, e hai appena ricevuto il backup qui sopra.\n\n"
+        f"Procedo?",
+        reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown"
+    )
+    return CONFERMA_ARCHIVIA_STAGIONE
+
+async def esegui_archivia_stagione(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    if query.data == "archivia_no":
+        context.user_data.pop('stagione_da_archiviare', None)
+        await query.edit_message_text("❌ Archiviazione annullata. Nessun dato è stato toccato.")
+        return ConversationHandler.END
+
+    etichetta = context.user_data.get('stagione_da_archiviare')
+    await query.edit_message_text(f"⏳ Archivio la stagione {etichetta}...")
+    try:
+        esito = await asyncio.to_thread(archivia_stagione, etichetta)
+        await context.bot.send_message(chat_id=ADMIN_ID, text=esito, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Archiviazione fallita: {e}")
+    context.user_data.pop('stagione_da_archiviare', None)
+    return ConversationHandler.END
 
 AVVISO_CHIAVE_SALVATA = (
     "✅ **Chiave API Gemini salvata.**\n\n"
@@ -1353,6 +1483,7 @@ async def post_init(application: Application):
         ("status", "Giornata corrente e schedine mancanti"),
         ("backup", "Esporta subito un backup dei dati"),
         ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
+        ("archiviastagione", "Chiudi la stagione e azzera i fogli"),
         ("setkey", "Cambia al volo la chiave API di Gemini")
     ])
 
@@ -1444,6 +1575,11 @@ def main():
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("archiviastagione", archivia_stagione_command)],
+        states={CONFERMA_ARCHIVIA_STAGIONE: [CallbackQueryHandler(esegui_archivia_stagione, pattern="^archivia_")]},
+        fallbacks=[CommandHandler("cancel", annulla_tutto)],
+    ))
     app.add_handler(conv_handler)
     print("🤖 Super-Bot Telegram (con Web Service) avviato...")
     app.run_polling()

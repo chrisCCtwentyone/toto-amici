@@ -51,8 +51,11 @@ Toto_Amici_Progetto/
 │   └── secrets.toml
 ├── .claude/launch.json     # ✅ Config locale (nessun segreto) per preview Streamlit in Claude Code
 ├── schedine_whatsapp/      # 🔒 Non in git — cartella foto locali
-├── tests/                  # ✅ Test automatici della logica del bot (pytest)
-│   └── test_logica_bot.py
+├── api_utils.py            # ✅ Chiamate HTTP con retry/backoff (condiviso app+bot)
+├── tests/                  # ✅ Test automatici (pytest) — 262 test
+│   ├── test_logica_bot.py, test_invarianti.py, test_api_utils.py
+│   ├── test_girone_di_ritorno.py, test_backup.py
+│   └── test_riepilogo_whatsapp.py, test_archivio_stagione.py
 ├── requirements-dev.txt    # ✅ Dipendenze di sviluppo (pytest) — la produzione usa solo requirements.txt
 └── temp_telegram/          # Cartella temporanea per foto ricevute via Telegram
 ```
@@ -66,6 +69,8 @@ Toto_Amici_Progetto/
 | `Giocate` | A: Giornata, B: Giocatore, C: Partita, D: Tipologia, E: Pronostico, F: Quota, G: Esito, H: Vincita Potenziale, I: Punti Partita | Archivio analitico di ogni singola selezione giocata |
 | `Classifica` | A: Giocatore, B: Punti Totali, C+: Punteggio per Giornata | Leaderboard generale con storico per giornata |
 | `Cassa` | A: Giornata, B: Descrizione, C: Entrate, D: Saldo Totale | Registro movimenti del fondo montepremi |
+
+> **Stagioni passate**: `/archiviastagione` duplica i tre fogli in `«Giocate 2026-27»`, `«Classifica 2026-27»`, `«Cassa 2026-27»` e svuota quelli di lavoro. I fogli senza suffisso sono sempre la stagione in corso.
 
 ---
 
@@ -100,6 +105,41 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 31/08/2026 — Sessione 13 (Revisione Opus: bug critico, invarianti, multi-stagione, Coppa)
+Seconda revisione completa con Opus. Ne è uscito **un bug critico con la miccia già accesa**, più quattro lavori richiesti dall'utente.
+
+**🔴 1. La giornata veniva confrontata per SOTTOSTRINGA**
+- In 5 punti il bot filtrava le righe con `str(giornata) in str(riga[0])`: cerca `"1"` *dentro* `"Giornata 1"`, ma `"1"` è contenuto anche in **"Giornata 12"**, "Giornata 13", "Giornata 21"… Ricalcolare la Giornata 1 selezionava righe di **13 giornate diverse** (la 2 idem, la 3 ne tocca 12).
+- **Danno dimostrato eseguendo la funzione vera**: una riga della Giornata 12 già vinta (2 punti) veniva riscritta a **PERSA con 0 punti**, perché agganciata al risultato della Giornata 1 tramite il fallback sull'ordine invertito — andata e ritorno hanno le stesse due squadre scambiate, quindi il fallback le considera la stessa partita. In più i punti delle righe estranee finivano sommati nella colonna della giornata ricalcolata in Classifica.
+- Non se n'erano accorti perché **il problema scatta dalla Giornata 10 in poi** (circa due mesi).
+- **Correzione**: nuova `riga_e_della_giornata()` con confronto esatto sul numero, applicata a tutti e 5 i punti.
+- **Aggravante correlata corretta**: `ottieni_giornata_corrente()` ripiegava su `1` quando l'API non risponde, ed è usata da 4 job — un singolo errore di rete avrebbe fatto ricalcolare la Giornata 1, cioè 13 giornate. Ora ritorna `None` e tutti i chiamanti saltano il giro.
+
+**🟠 2. Partite rinviate distinte da "in corso"**
+- Tutto ciò che non era `FINISHED` diventava IN CORSO, comprese POSTPONED/SUSPENDED/CANCELLED. Ma il riepilogo di fine giornata parte solo quando nessuna riga è IN CORSO: **una partita rinviata lo avrebbe bloccato indefinitamente**.
+- Nuovo esito `⏸️ RINVIATA`: 0 punti, non conta come persa, impedisce di dichiarare chiusa la schedina e di pagare la Cassa finché il recupero non è giocato (regolamento: "per i punti si aspetta il recupero"). Il riepilogo ora parte lo stesso segnalando gli eventi in attesa. Badge viola in Schedine Live.
+
+**🟠 3. Test di invariante** (`tests/test_invarianti.py`, 101 test)
+- Il bug della sottostringa è passato inosservato pur con 145 test verdi, perché ogni test guardava *un* caso e nessuno chiedeva la *proprietà*: «ricalcolare la giornata N può toccare righe di un'altra giornata?».
+- Invarianti coperte: isolamento delle 38 giornate (su una stagione con andata/ritorno invertiti), nessuna giornata riconosce l'etichetta di un'altra (38×38), ogni pronostico valido ha sempre un esito deciso, gli esiti complementari (1/X/2, GOAL/NOGOAL, PARI/DISPARI, OVER/UNDER) ne hanno sempre esattamente uno vincente, le doppie chance vincono esattamente quando vince uno dei due singoli, i punti restano fra 0 e 12, nessuno stato diverso da FINISHED può pagare la Cassa.
+- **Validati reintroducendo il bug**: 10 test falliscono subito. Non sono verdi per caso.
+
+**🟡 4. Cassa: saldo ricalcolato invece che ereditato**
+- Prima il saldo si leggeva dall'ultima riga e ci si sommava sopra: una correzione manuale (come i 430 € di Paolo, arrotondati sui 427,85 calcolati) o una riga fuori ordine faceva divergere il saldo in silenzio, e ogni movimento successivo ereditava l'errore. Nuova `saldo_cassa()` che somma le entrate: autocorrettiva. Verificato sul foglio vero — vecchio e nuovo metodo danno entrambi 430,00.
+
+**🏆 5. Coppa: tabellone pronto, sfidanti sfocati**
+- Il tab non è più un placeholder: tabellone completo (ottavi → quarti → semifinali → finale con trofeo) con i nomi **volutamente sfocati via CSS**, su richiesta dell'utente: la struttura è decisa e visibile, il mistero resta solo su chi incontra chi.
+- Formato proposto (da confermare dal creatore del torneo): tutti e 16 i giocatori, ultime 4 giornate, ogni turno è uno scontro diretto su una giornata, parità risolta dalla classifica generale, nessuna schedina extra.
+
+**📚 6. Supporto multi-stagione**
+- La Serie A va da agosto a maggio: `etichetta_stagione()` ricava "2026-27" dalla data di inizio riportata dall'API (un input malformato dà `None` invece di un'etichetta plausibile ma sbagliata — debolezza scoperta proprio da un test).
+- Nuovo comando **`/archiviastagione`**: manda prima un backup di sicurezza, chiede conferma esplicita, poi duplica Giocate/Classifica/Cassa in fogli `«... 2026-27»` e svuota quelli di lavoro lasciando le intestazioni.
+- **Sicurezza dell'operazione** (l'unica che cancella dati): prima duplica *tutti* i fogli, poi **verifica che le copie esistano davvero**, e solo allora cancella. Si rifiuta di partire se un foglio manca o se l'archivio di quella stagione esiste già. Testato anche il caso in cui la duplicazione fallisce: nessuna cancellazione.
+
+**Verifiche**: suite da 145 a **262 test**, tutti verdi. Dry-run su Giornate 1-2 ripetuto dopo *ogni* modifica: 576 celle, 0 differenze ogni volta. Sito verificato dal vivo. Versione app **2.7.0**.
+
+**Idea scartata**: pagina profilo per giocatore (l'utente non l'ha voluta).
 
 ### 31/08/2026 — Sessione 12 (Retry mancante su Google Sheets: l'utente ha beccato l'errore in flagrante)
 L'utente ha catturato uno screenshot con l'errore in diretta: `HttpError 503 ... "The service is currently unavailable."` sulla `batchGet` di Google Sheets in `app.py`. A differenza degli episodi precedenti (dove i log non bastavano a essere certi della causa), qui il messaggio è inequivocabile: è un **503 di Google Sheets stesso**, non un blip generico di piattaforma.
