@@ -563,6 +563,8 @@ with tab_live:
                     badge_color, badge_icon = "red", ":material/cancel:"
                 elif "VERIFICARE" in esito:
                     badge_color, badge_icon = "yellow", ":material/report:"
+                elif "RINVIATA" in esito:
+                    badge_color, badge_icon = "violet", ":material/pause_circle:"
                 elif "CORSO" in esito:
                     badge_color, badge_icon = "orange", ":material/schedule:"
                 elif "ANNULLATA" in esito:

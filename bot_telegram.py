@@ -334,6 +334,10 @@ def estrai_numero(testo):
     except: return 0.0
 
 ESITO_DA_VERIFICARE = "⚠️ DA VERIFICARE"
+ESITO_RINVIATA = "⏸️ RINVIATA"
+# Stati Football-Data che indicano una partita non giocata e rimandata: il
+# regolamento dice di aspettare il recupero per assegnare i punti.
+STATI_PARTITA_RINVIATA = ("POSTPONED", "SUSPENDED", "CANCELLED")
 
 def valuta_singolo_segno(p, gol_casa, gol_ospite):
     """Valuta UN singolo segno (senza '+'). Ritorna:
@@ -418,7 +422,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
         esito_salvato = str(riga[6]).strip() if len(riga) > 6 else ""
 
-        if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "da_verificare": 0, "cassa": vincita}
+        if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "da_verificare": 0, "rinviate": 0, "cassa": vincita}
         elif vincita > 0: classifica[gio]["cassa"] = vincita
 
         casa_sh, ospite_sh = [s.strip()[:5] for s in partita.lower().split('-')]
@@ -446,7 +450,13 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
                 elif "PERSA" in esito_salvato: classifica[gio]["perse"] += 1
                 continue  # nessuna scrittura su Sheets: la riga resta com'era
 
-            if match["status"] != "FINISHED":
+            if match["status"] in STATI_PARTITA_RINVIATA:
+                # Regolamento: "per i punti si aspetta il recupero". Distinta da
+                # IN CORSO perche' l'attesa puo' durare settimane: se restasse
+                # IN CORSO, il riepilogo di fine giornata non partirebbe mai.
+                testo_esito, col = ESITO_RINVIATA, colore_grigio
+                classifica[gio]["rinviate"] += 1
+            elif match["status"] != "FINISHED":
                 testo_esito, col = "⏳ IN CORSO", colore_grigio
                 classifica[gio]["in_corso"] += 1
             else:
@@ -472,11 +482,12 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
 
     vincitori, report = [], f"📊 *REPORT GIORNATA {giornata}*\n\n"
     for gio, dati in classifica.items():
-        if (dati["vinte"] + dati["perse"] + dati["in_corso"] + dati["da_verificare"]) == 0: continue
+        if (dati["vinte"] + dati["perse"] + dati["in_corso"] + dati["da_verificare"] + dati["rinviate"]) == 0: continue
         if dati["perse"] > 0: stato = "❌ Bruciata"
         # Una schedina con righe non interpretabili NON puo' essere dichiarata chiusa:
         # bloccherebbe +10 punti e un pagamento in Cassa su dati non verificati.
         elif dati["da_verificare"] > 0: stato = f"⚠️ Da verificare ({dati['da_verificare']})"
+        elif dati["rinviate"] > 0: stato = f"⏸️ In attesa di recupero ({dati['rinviate']})"
         elif dati["in_corso"] > 0: stato = f"⏳ In attesa ({dati['in_corso']})"
         else:
             stato, dati["punti"] = "🏆 CHIUSA! (+10 Pt)", dati["punti"] + 10
@@ -1181,7 +1192,7 @@ async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
         if percorso_file and os.path.exists(percorso_file):
             os.remove(percorso_file)
 
-def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa):
+def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rinviate=0):
     """Testo del riepilogo di fine giornata, pronto da incollare su WhatsApp.
 
     Usa grassetto con un solo asterisco (*testo*) di proposito: e' la stessa
@@ -1219,6 +1230,8 @@ def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa):
         righe_testo.append(f"{pos} {nome.capitalize()} - {tot} pt{variazione}")
 
     testo = f"📊 *Giornata {giornata} — Riepilogo finale*\n\n" + "\n".join(righe_testo)
+    if n_rinviate:
+        testo += f"\n\n⏸️ _{n_rinviate} event{'o' if n_rinviate == 1 else 'i'} in attesa di recupero: i punti verranno assegnati a partita giocata._"
 
     vincitori = [
         str(r[1]) for r in righe_cassa
@@ -1292,7 +1305,8 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
             ).execute(num_retries=3).get('values', [])
         )
 
-        testo = costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa)
+        n_rinviate = sum(1 for r in righe_giornata if ESITO_RINVIATA in str(r[6]))
+        testo = costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rinviate)
         if not testo:
             return
 
