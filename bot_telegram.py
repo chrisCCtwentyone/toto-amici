@@ -314,6 +314,28 @@ def ottieni_giornata_corrente():
         logging.error("ottieni_giornata_corrente: API non raggiungibile, giro saltato")
         return None
 
+def saldo_cassa(righe_cassa):
+    """Saldo del fondo cassa, RICALCOLATO sommando tutte le entrate.
+
+    Prima si leggeva il saldo dall'ultima riga ("Saldo Totale") e ci si sommava
+    sopra il nuovo movimento. Funziona finche' nessuno tocca il foglio a mano: ma
+    basta una riga inserita fuori ordine, una correzione manuale di un importo
+    (come i 430 EUR di Paolo, arrotondati rispetto ai 427,85 calcolati) o un
+    riordino delle righe perche' il saldo diverga in silenzio, e da li' in poi
+    ogni movimento successivo eredita l'errore.
+
+    Ricalcolarlo dalla somma delle entrate lo rende autocorrettivo: se una riga
+    viene corretta a mano, il saldo si riallinea da solo al movimento dopo.
+    Vedi PROJECT_LOG.md, Sessione 13.
+    """
+    totale = 0.0
+    for i, riga in enumerate(righe_cassa):
+        if i == 0 and len(riga) > 2 and str(riga[2]).strip() == "Entrate":
+            continue  # riga di intestazione
+        if len(riga) > 2 and str(riga[2]).strip():
+            totale += estrai_numero(riga[2])
+    return totale
+
 def estrai_numero(testo):
     """Legge un numero scritto in formato italiano ("1.674,56" = milleseicento...).
 
@@ -518,7 +540,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     if vincitori:
         res_cassa = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D").execute(num_retries=3)
         righe_cassa = res_cassa.get('values', []) or [["Giornata", "Descrizione", "Entrate", "Saldo Totale"]]
-        saldo = estrai_numero(righe_cassa[-1][3]) if len(righe_cassa[-1]) > 3 and righe_cassa[-1][3] != "Saldo Totale" else 0.0
+        saldo = saldo_cassa(righe_cassa)
         nuove = []
         for v in vincitori:
             descr = f"{v['nome'].upper()} chiude la schedina!"

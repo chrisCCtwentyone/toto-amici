@@ -217,3 +217,35 @@ class TestEstraiNumero:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# =========================================================
+# saldo_cassa — ricalcolo del fondo dai movimenti
+# =========================================================
+class TestSaldoCassa:
+    H = ["Giornata", "Descrizione", "Entrate", "Saldo Totale"]
+
+    def test_cassa_vuota(self):
+        assert bt.saldo_cassa([self.H]) == 0.0
+
+    def test_somma_i_movimenti(self):
+        righe = [self.H,
+                 ["Giornata 1", "A", "430,00€", "430,00€"],
+                 ["Giornata 3", "B", "200,50€", "630,50€"]]
+        assert bt.saldo_cassa(righe) == pytest.approx(630.50)
+
+    def test_si_autocorregge_se_il_saldo_scritto_e_sbagliato(self):
+        """Il punto della funzione: un saldo corretto a mano in modo errato non
+        deve piu' essere ereditato da tutti i movimenti successivi."""
+        righe = [self.H,
+                 ["Giornata 1", "A", "430,00€", "430,00€"],
+                 ["Giornata 3", "B", "200,50€", "999,99€"]]  # saldo finale sbagliato
+        assert bt.saldo_cassa(righe) == pytest.approx(630.50)
+
+    def test_gestisce_importi_a_quattro_cifre(self):
+        righe = [self.H, ["Giornata 1", "A", "1.008,29€", "1.008,29€"]]
+        assert bt.saldo_cassa(righe) == pytest.approx(1008.29)
+
+    def test_ignora_righe_senza_importo(self):
+        righe = [self.H, ["Giornata 1", "A", "", ""], ["Giornata 2", "B", "50,00€", "50,00€"]]
+        assert bt.saldo_cassa(righe) == pytest.approx(50.00)
