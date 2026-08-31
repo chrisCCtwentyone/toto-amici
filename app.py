@@ -71,8 +71,9 @@ RISULTATI_MANUALI = {
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.6.0"
+VERSIONE_APP = "2.7.0"
 NOVITA = [
+    ("2.7.0", "31/08/2026", "Tabellone della Coppa svelato (gli accoppiamenti restano segreti fino al sorteggio), frecce di tendenza in classifica e gestione delle partite rinviate."),
     ("2.6.0", "30/08/2026", "Calcolo punti più rigoroso: un pronostico che il sistema non riconosce non viene più considerato vinto, ma segnalato per un controllo."),
     ("2.5.0", "30/08/2026", "Controlli automatici di affidabilità sui risultati live."),
     ("2.4.0", "30/08/2026", "Corretti alcuni risultati della Giornata 2 mostrati in modo errato."),
@@ -953,15 +954,85 @@ with tab_stats:
 # ==========================================
 with tab_coppa:
     st.subheader(":material/emoji_events: Coppa Toto-Amici")
-    with st.container(border=True):
-        st.markdown("### 🏆 In arrivo prossimamente...")
-        st.markdown("""
-Nelle ultime giornate di campionato, oltre alla classifica generale, partirà una **Coppa a eliminazione diretta**:
-ottavi, quarti, semifinale e finale tra i migliori giocatori del torneo.
+    st.caption("Il tabellone è pronto. Gli accoppiamenti si sveleranno al momento del sorteggio.")
 
-Il formato degli scontri diretti (tabellone, criteri di accoppiamento) è ancora in fase di definizione — questa pagina si popolerà non appena i dettagli saranno decisi.
-        """)
-        st.caption("Resta sintonizzato 👀")
+    # I nomi degli sfidanti restano volutamente illeggibili (sfocati) finché il
+    # sorteggio non viene effettuato: la struttura del torneo è già decisa e
+    # visibile, il mistero è solo su CHI incontra chi.
+    st.html("""
+    <style>
+    .coppa-griglia { display:flex; gap:1.5rem; overflow-x:auto; padding:0.5rem 0 1rem 0; }
+    .coppa-turno { min-width:190px; flex:1; }
+    .coppa-turno h4 {
+        font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;
+        opacity:0.65; margin:0 0 0.75rem 0; text-align:center; font-weight:700;
+    }
+    .coppa-sfida {
+        border:1px solid rgba(128,128,128,0.3); border-radius:8px;
+        padding:0.55rem 0.7rem; margin-bottom:0.6rem;
+        background:rgba(128,128,128,0.05);
+    }
+    .coppa-nome {
+        filter:blur(5px); user-select:none; font-weight:600; font-size:0.9rem;
+        letter-spacing:0.02em; opacity:0.75; display:block; text-align:center;
+    }
+    .coppa-vs {
+        font-size:0.7rem; opacity:0.5; text-align:center; margin:0.25rem 0;
+        font-weight:700; display:block; width:100%;
+    }
+    .coppa-trofeo {
+        display:flex; align-items:center; justify-content:center;
+        min-height:70px; font-size:2.2rem;
+    }
+    </style>
+    <div class="coppa-griglia">
+      <div class="coppa-turno"><h4>Ottavi</h4>
+        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
+      </div>
+      <div class="coppa-turno"><h4>Quarti</h4>
+        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
+      </div>
+      <div class="coppa-turno"><h4>Semifinali</h4>
+        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
+        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
+      </div>
+      <div class="coppa-turno"><h4>Finale</h4>
+        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
+        <div class="coppa-trofeo">🏆</div>
+      </div>
+    </div>
+    """)
+
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        with st.container(border=True):
+            st.markdown("#### :material/help: Come funziona")
+            st.markdown("""
+- **Partecipano tutti e 16** i giocatori: nessuno resta fuori.
+- Si gioca sulle **ultime 4 giornate** di campionato: ottavi, quarti, semifinale e finale.
+- Ogni turno è uno **scontro diretto su una giornata**: passa chi fa più punti in quella giornata.
+- La Coppa è **parallela al campionato**: gli stessi punti valgono per entrambi, non serve giocare una schedina in più.
+            """)
+    with col_c2:
+        with st.container(border=True):
+            st.markdown("#### :material/casino: Il sorteggio")
+            st.markdown("""
+- Gli accoppiamenti verranno **estratti a fine campionato** — per questo i nomi qui sopra sono ancora oscurati.
+- In caso di **parità di punti** in una sfida, passa il turno chi è più in alto nella classifica generale.
+- Il regolamento definitivo verrà confermato dal creatore del torneo prima dell'inizio.
+            """)
+
+    st.info("Il tabellone è già pronto: manca solo sapere **chi incontra chi**. 👀", icon=":material/visibility_off:")
 
 # ==========================================
 # TAB 6: REGOLAMENTO
