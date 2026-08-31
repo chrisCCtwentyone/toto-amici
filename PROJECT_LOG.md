@@ -101,6 +101,17 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/08/2026 — Sessione 9 (Riavvio inatteso del bot su Render)
+**Segnalato dall'utente**: alle 07:18 (05:18 UTC) il bot su Render è andato in "instance failed" e si è riavviato da solo. Anche il sito ha dato "Service Unavailable" per un momento nella stessa giornata, ma senza nulla nei log di Streamlit Cloud — verosimilmente un blip infrastrutturale non riconducibile al nostro codice (non genera mai quel messaggio).
+
+**Analisi del log Render fornito dall'utente**: l'ultima riga prima del riavvio è `file_cache is only supported with oauth2client<4.0.0` — stampata sempre da `googleapiclient` quando costruisce un client Sheets da zero — seguita subito da `==> Running 'python bot_telegram.py'` (il marcatore di Render per un riavvio del processo), **senza nessun traceback Python in mezzo**. L'assenza di un errore Python gestito è il segnale tipico di un kill esterno (OOM o riavvio forzato dalla piattaforma), non di un'eccezione nel nostro codice. Il timing coincide esattamente con `task_controlla_anomalie_partite` (schedulata ogni 2 ore) che chiama `connetti_sheets()`.
+
+**Trovato e corretto**: `connetti_sheets()` **ricostruiva l'intero client Google Sheets da zero ad ogni chiamata** (rilettura credenziali + `build()`, che ri-scopre l'API), invece di riusare un'istanza — lo stesso problema già risolto in `app.py` con `@st.cache_resource`, mai applicato al bot. Con job schedulati fino a ~20+ volte/giorno (monitoraggio ogni 2h, calcolo risultati 5x/giorno, comandi manuali), è un carico ripetuto e non necessario su un piano Render da 512MB — una causa plausibile (non certa: non ho accesso alle metriche di memoria di Render) del riavvio.
+
+**Correzione**: `connetti_sheets()` ora costruisce il client una sola volta e lo riusa (stesso pattern di `app.py`); il token OAuth del service account si rinnova comunque da solo quando serve, quindi è sicuro. Verificato: `build()` chiamata 1 sola volta su 3 richieste consecutive, stessa istanza riusata, connessione funzionante. Dry-run completo su Giornate 1 e 2 dopo la modifica: **576 celle ricalcolate, 0 differenze**.
+
+**Nota per il futuro**: non ho accesso ai log/metriche di Streamlit Cloud né di Render (nessuna credenziale per quelle piattaforme in questo ambiente) — l'analisi si è basata solo sul frammento di log incollato dall'utente. Se il riavvio si ripete anche dopo questa correzione, andrebbe controllato il grafico di utilizzo memoria nel pannello Render per confermare o escludere l'OOM.
+
 ### 30/08/2026 — Sessione 8 (Revisione con Opus: due bug latenti gravi, primi test automatici)
 Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del codice. Sono emersi **due bug latenti mai andati in produzione ma già armati**, entrambi corretti.
 

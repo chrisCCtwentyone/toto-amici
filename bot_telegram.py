@@ -107,9 +107,25 @@ def get_gemini_client():
     chiave = leggi_chiave_api()
     return genai.Client(api_key=chiave) if chiave else None
 
+_sheets_service_cache = None
+
 def connetti_sheets():
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/spreadsheets'])
-    return build('sheets', 'v4', credentials=creds)
+    """Client Sheets riusato invece di ricostruito ad ogni chiamata.
+
+    Prima si rifaceva Credentials.from_service_account_file() + build() ogni
+    volta — chiamato da job schedulati fino a ~20+ volte/giorno (monitoraggio
+    ogni 2h, calcolo risultati 5x/giorno, /status, ecc.). Ogni build() rilegge
+    il file di credenziali e ricostruisce l'intero client scoprendo l'API da
+    zero: costoso su un piano Render da 512MB. Il token OAuth del service
+    account si rinnova comunque da solo quando serve, quindi riusare
+    l'istanza e' sicuro (stesso pattern gia' in uso in app.py per la web app).
+    Vedi PROJECT_LOG.md, Sessione 9 (riavvio inatteso su Render, 31/08/2026).
+    """
+    global _sheets_service_cache
+    if _sheets_service_cache is None:
+        creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=['https://www.googleapis.com/auth/spreadsheets'])
+        _sheets_service_cache = build('sheets', 'v4', credentials=creds)
+    return _sheets_service_cache
 
 def analizza_schedine_multiple(lista_percorsi_foto):
     client = get_gemini_client()
