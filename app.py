@@ -327,10 +327,48 @@ with tab_classifica:
 
         st.write("")
 
+        # --- FRECCE DI TENDENZA: variazione di posizione rispetto alla giornata precedente ---
+        def _numero_giornata_col(col):
+            try:
+                return int(str(col).lower().replace('giornata', '').strip())
+            except:
+                return 0
+
+        tendenza_per_giocatore = {}
+        if colonne_giornate:
+            colonne_ordinate = sorted(colonne_giornate, key=_numero_giornata_col)
+            ultima_giocata = None
+            for cg in reversed(colonne_ordinate):
+                if pd.to_numeric(df_classifica[cg], errors='coerce').fillna(0).ne(0).any():
+                    ultima_giocata = cg
+                    break
+            if ultima_giocata:
+                colonne_precedenti = colonne_ordinate[:colonne_ordinate.index(ultima_giocata)]
+                if colonne_precedenti:
+                    punti_prec = df_classifica[colonne_precedenti].apply(
+                        pd.to_numeric, errors='coerce'
+                    ).fillna(0).sum(axis=1)
+                    ordine_prec = punti_prec.sort_values(ascending=False).index
+                    pos_prec = {df_classifica.loc[idx, 'Giocatore']: i for i, idx in enumerate(ordine_prec)}
+                    pos_att = {row['Giocatore']: i for i, row in df_classifica.iterrows()}
+                    for g in df_classifica['Giocatore']:
+                        if g in pos_prec:
+                            delta_pos = pos_prec[g] - pos_att[g]  # positivo = salito in classifica
+                            if delta_pos > 0:
+                                tendenza_per_giocatore[g] = f"🟢 ▲{delta_pos}"
+                            elif delta_pos < 0:
+                                tendenza_per_giocatore[g] = f"🔴 ▼{abs(delta_pos)}"
+                            else:
+                                tendenza_per_giocatore[g] = "⚪ –"
+
         # --- CLASSIFICA COMPLETA (full width, mobile-friendly) ---
         st.subheader("Classifica completa")
+        if tendenza_per_giocatore:
+            st.caption("La tendenza mostra il cambio di posizione rispetto alla giornata precedente")
         df_display = df_classifica[['Giocatore', 'Punti Totali']].copy()
         df_display['Punti Totali'] = df_display['Punti Totali'].astype(str) + " pt"
+        if tendenza_per_giocatore:
+            df_display['Tend.'] = df_display['Giocatore'].map(lambda g: tendenza_per_giocatore.get(g, ""))
         posizioni = []
         for i in range(len(df_display)):
             if i == 0:
