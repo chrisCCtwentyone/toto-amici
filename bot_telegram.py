@@ -62,18 +62,30 @@ app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
+    """Endpoint di keep-alive. Render spegne un servizio gratuito dopo 15 MINUTI
+    senza traffico HTTP IN ENTRATA: i ping esterni (cron-job.org) servono a questo.
+
+    Ogni ping viene registrato nel log con l'intervallo dal precedente: senza
+    questa riga, dai log non si distingueva un servizio spento da Render per
+    mancanza di ping da un crash del bot (incidente del 01/09/2026, in cui
+    l'assenza di richieste in entrata nei log e' stata l'indizio decisivo).
+    """
     global last_ping_time
     from datetime import datetime
     now = datetime.now()
+    if last_ping_time is None:
+        logging.info("PING keep-alive ricevuto (primo dall'avvio)")
+    else:
+        logging.info(f"PING keep-alive ricevuto ({int((now - last_ping_time).total_seconds())}s dal precedente)")
     if last_ping_time is not None:
         delta = (now - last_ping_time).total_seconds()
-        if delta > 1800:  # > 30 minuti
+        if delta > 900:  # > 15 minuti: oltre questa soglia Render spegne il servizio
             try:
                 requests.post(
                     f"https://api.telegram.org/bot{TOKEN}/sendMessage",
                     json={
                         "chat_id": ADMIN_ID,
-                        "text": f"⚠️ **ALLARME DOWNTIME**\nMi sono appena svegliato, ma non ricevevo ping da {int(delta/60)} minuti. \nControlla Render o cron-job.org!",
+                        "text": f"⚠️ **ALLARME KEEP-ALIVE**\nSono passati {int(delta/60)} minuti dall'ultimo ping (Render spegne il servizio dopo 15).\nControlla che il job su cron-job.org sia attivo e riuscito.",
                         "parse_mode": "Markdown"
                     }
                 )
@@ -1581,7 +1593,7 @@ def main():
         fallbacks=[CommandHandler("cancel", annulla_tutto)],
     ))
     app.add_handler(conv_handler)
-    print("🤖 Super-Bot Telegram (con Web Service) avviato...")
+    logging.info("🤖 Super-Bot Telegram avviato: in ascolto su Telegram e pronto ai ping di keep-alive.")
     app.run_polling()
 
 if __name__ == '__main__':
