@@ -10,7 +10,7 @@
 | Componente | Piattaforma | Sorgente | Note |
 |---|---|---|---|
 | Web Dashboard (`app.py`) | Streamlit Community Cloud | GitHub `main` | Pubblica, sempre online |
-| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Mantenuto sveglio da Flask + ping cron-job.org ogni 14 min |
+| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + cron-job.org ogni 10 min. Render spegne dopo 15 min senza traffico **in entrata** |
 | Database | Google Sheets | — | SPREADSHEET_ID: `1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE` |
 
 ### Variabili d'Ambiente Necessarie
@@ -105,6 +105,27 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 01/09/2026 — Sessione 14 (Il bot cadeva e non si rialzava: keep-alive irrobustito)
+**Sintomo**: da tre giorni il bot spariva e serviva riavviarlo a mano da Render. Errore mostrato: `Exited with status 137`.
+
+**Cosa NON era** (verificato, non ipotizzato):
+- **Non la memoria**: misurata, 96 MB a riposo su 512 disponibili, e 98 MB stabili dopo 300 cicli di ricalcolo con una stagione intera di dati. Nessuna perdita.
+- **Non un crash del codice**: i log di Render mostravano `Application is stopping` — lo spegnimento *ordinato* di python-telegram-bot su SIGTERM — senza alcun traceback, con `getUpdates` a 200 OK fino all'ultimo secondo. Era Render a fermarlo.
+- **Non il nostro endpoint**: interrogandolo dal vivo risponde 200 OK, 69 byte, 0,25s, senza redirect.
+
+**Causa reale** (emersa dallo screenshot di cron-job.org fornito dall'utente): **tutte** le esecuzioni del pinger fallivano con *"output troppo grande"*. Trovando il servizio già spento, il ping riceveva la pagina d'errore di Render, molto più grande dei nostri 69 byte. Da cui il **circolo vizioso**: servizio giù → ping riceve pagina d'errore → fallisce → non lo risveglia → resta giù per sempre. Ecco perché serviva sempre l'intervento manuale.
+> Nota: il salvataggio delle risposte su cron-job.org era **già disattivato**, quindi non è una impostazione regolabile — la pagina d'errore di Render è grande di suo.
+
+**Correzioni**:
+- **`task_autoping`**: il bot chiama il proprio indirizzo pubblico (`RENDER_EXTERNAL_URL`, impostata da Render) generando da sé il traffico in entrata che impedisce lo spegnimento. Non resuscita un processo morto, ma toglie il **punto singolo di rottura**: finché il bot è vivo basta che funzioni una delle due fonti, invece di dipendere solo da un servizio esterno.
+- **Intervallo di 5 minuti, non 10**: Render spegne dopo 15 minuti di silenzio, quindi con intervallo di 10 minuti **un solo ping perso** crea un buco di 20 minuti e uccide il servizio. A 5 minuti ne sopravvive due consecutivi.
+- **Il ping usa `richiedi_con_retry`**: un blip di rete non deve valere come ping perso, perché ogni ping perso avvicina lo spegnimento.
+- **Server web esplicitamente multi-thread**: una richiesta lenta non deve impedire di rispondere ai ping successivi.
+- **Log dei ping in entrata** con l'intervallo dal precedente: prima la diagnosi richiedeva di dedurre il problema dall'*assenza* di righe nei log. Allarme Telegram abbassato da 30 a 15 minuti, cioè la soglia reale oltre cui Render spegne (a 30 il servizio era già morto da un pezzo).
+- Il messaggio di avvio passa da `print()` a `logging`: senza flush restava nel buffer e compariva nei log solo allo spegnimento, facendo sembrare un riavvio che non c'era stato.
+
+**Lezione**: in questa sessione ho sbagliato **due ipotesi** dette con troppa sicurezza (esaurimento delle ore mensili del piano gratuito; intervallo del ping troppo lungo — era già a 10 minuti). In entrambi i casi è stato un dato fornito dall'utente (log di Render, poi screenshot di cron-job.org) a dare la risposta vera. Davanti a un guasto di piattaforma, chiedere i dati grezzi prima di teorizzare.
 
 ### 31/08/2026 — Sessione 13 (Revisione Opus: bug critico, invarianti, multi-stagione, Coppa)
 Seconda revisione completa con Opus. Ne è uscito **un bug critico con la miccia già accesa**, più quattro lavori richiesti dall'utente.
@@ -359,6 +380,7 @@ Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del c
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
+- [ ] **Secondo controllore esterno (UptimeRobot o simile)** — deciso in Sessione 14 di **non** farlo per ora, ma tenerlo pronto. Oggi le fonti di keep-alive sono due (auto-ping interno + cron-job.org); un terzo controllore gratuito indipendente (ping ogni 5 min) coprirebbe anche il caso in cui il processo muore davvero, che l'auto-ping per definizione non può gestire. Da valutare se il problema si ripresenta.
 - [x] ~~**Girone di ritorno**~~ — svolto in Sessione 10 (`tests/test_girone_di_ritorno.py`, 4 test): andata/ritorno indipendenti senza contaminazione, ordine invertito nel ritorno gestito correttamente (verificato iniettando il bug e controllando che il test lo scopra), nessuna collisione di prefisso Milan/Inter. Resta genericamente da tenere d'occhio la robustezza con moli di dati molto più grandi (fine campionato).
 - [ ] **Multi-admin**: possibilità in futuro di aprire l'accesso al bot ad altri utenti admin (oltre a `ADMIN_ID`), che potrebbero così caricare schedine e correggere dati anche loro. Oggi il bot riconosce un solo `ADMIN_ID` hardcoded dall'env var — servirebbe passare a una lista di ID autorizzati (`ADMIN_IDS`) con lo stesso controllo ovunque viene fatto `update.effective_user.id != ADMIN_ID`.
 - [ ] **Modifica dati anche dalla web app** — valutato in Sessione 7, **sconsigliato per ora**: la Web App oggi è pubblica, senza alcun sistema di login, e legge Sheets in sola lettura (`spreadsheets.readonly`); aggiungere una modalità di scrittura richiederebbe (a) costruire un sistema di autenticazione admin dentro Streamlit da zero, (b) dare a un'app pubblica credenziali di scrittura su Sheets, aumentando la superficie d'attacco rispetto al bot Telegram (che ha già l'identità admin gratis tramite `ADMIN_ID`), (c) duplicare la logica di correzione in due posti invece di uno, con rischio di comportamenti divergenti. Il comando admin nel bot copre già il bisogno pratico. Da rivalutare solo se emerge un'esigenza che il bot non riesce a coprire.

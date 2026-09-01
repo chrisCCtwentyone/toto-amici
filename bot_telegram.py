@@ -96,7 +96,7 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    app_web.run(host="0.0.0.0", port=port)
+    app_web.run(host="0.0.0.0", port=port, threaded=True)
 
 # ==========================================
 # FUNZIONI CORE DEL BOT
@@ -1509,7 +1509,9 @@ async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     if not url:
         return  # in locale non serve
     try:
-        await asyncio.to_thread(lambda: requests.get(url, timeout=20))
+        # richiedi_con_retry riprova da solo: un blip di rete non deve valere
+        # come ping perso, perche' ogni ping perso avvicina lo spegnimento.
+        await asyncio.to_thread(lambda: richiedi_con_retry(url, timeout=20))
         logging.info("Auto-ping keep-alive eseguito")
     except Exception as e:
         logging.warning(f"Auto-ping fallito: {e}")
@@ -1550,8 +1552,10 @@ def main():
     # Job ricorrente ogni 2 ore: controlla anomalie nei dati Football-Data della giornata corrente
     app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=7200, first=600)
 
-    # Auto-ping ogni 10 minuti: margine di 5 minuti sui 15 oltre i quali Render spegne
-    app.job_queue.run_repeating(task_autoping, interval=600, first=60)
+    # Auto-ping ogni 5 minuti. Non e' eccesso di zelo: Render spegne dopo 15 minuti
+    # senza traffico, quindi a 10 minuti di intervallo UN SOLO ping perso creerebbe
+    # un buco di 20 minuti e ucciderebbe il servizio. A 5 ne sopravvive due di fila.
+    app.job_queue.run_repeating(task_autoping, interval=300, first=60)
 
     # Backup settimanale (lunedì mattina, orario tranquillo) inviato come documento all'admin
     app.job_queue.run_daily(task_backup_periodico, time=dt_time(hour=9, minute=0, tzinfo=tz), days=(0,))
