@@ -1488,6 +1488,32 @@ async def riepilogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Controllo se la giornata è conclusa...")
     await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True)
 
+async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
+    """Il bot chiama il proprio indirizzo pubblico per generare traffico in entrata.
+
+    Perche' serve: Render spegne un servizio gratuito dopo 15 minuti senza
+    richieste HTTP in ENTRATA, e finora l'unica cosa che le generava era un
+    servizio esterno (cron-job.org). Il 01/09/2026 quel servizio ha iniziato a
+    fallire ogni esecuzione ("output troppo grande": trovando il servizio gia'
+    giu' riceveva la pagina d'errore di Render, molto piu' grande dei 69 byte
+    che restituiamo noi) e il bot e' rimasto spento finche' non e' stato
+    riavviato a mano.
+
+    Questo job non sostituisce il pinger esterno - se il processo e' morto non
+    puo' certo risvegliarsi da solo - ma toglie il punto singolo di rottura
+    finche' il bot e' vivo: basta che UNA delle due fonti funzioni.
+
+    RENDER_EXTERNAL_URL viene impostata automaticamente da Render.
+    """
+    url = os.environ.get("RENDER_EXTERNAL_URL")
+    if not url:
+        return  # in locale non serve
+    try:
+        await asyncio.to_thread(lambda: requests.get(url, timeout=20))
+        logging.info("Auto-ping keep-alive eseguito")
+    except Exception as e:
+        logging.warning(f"Auto-ping fallito: {e}")
+
 async def post_init(application: Application):
     """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
     await application.bot.set_my_commands([
@@ -1523,6 +1549,9 @@ def main():
 
     # Job ricorrente ogni 2 ore: controlla anomalie nei dati Football-Data della giornata corrente
     app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=7200, first=600)
+
+    # Auto-ping ogni 10 minuti: margine di 5 minuti sui 15 oltre i quali Render spegne
+    app.job_queue.run_repeating(task_autoping, interval=600, first=60)
 
     # Backup settimanale (lunedì mattina, orario tranquillo) inviato come documento all'admin
     app.job_queue.run_daily(task_backup_periodico, time=dt_time(hour=9, minute=0, tzinfo=tz), days=(0,))
