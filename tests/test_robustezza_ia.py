@@ -65,71 +65,104 @@ class TestEscapeMarkdown:
         assert bt.escape_markdown(2.10) == "2.1"
 
 
-class TestChiamaGeminiConRetry:
+SOVRACCARICO = ("503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is "
+                "currently experiencing high demand.', 'status': 'UNAVAILABLE'}}")
+
+
+@pytest.fixture(autouse=True)
+def niente_attese(monkeypatch):
+    """I test non devono pagare il backoff reale."""
+    monkeypatch.setattr(bt.time, "sleep", lambda _: None)
+
+
+class TestChiamaGeminiConFallback:
 
     def test_successo_al_primo_colpo_non_riprova(self):
-        chiamate = []
+        usati = []
+        assert bt.chiama_gemini_con_fallback(lambda m: usati.append(m) or "ok") == "ok"
+        assert len(usati) == 1
+        assert usati[0] == bt.MODELLI_GEMINI[0]
 
-        def chiamata():
-            chiamate.append(1)
-            return "ok"
-
-        assert bt.chiama_gemini_con_retry(chiamata) == "ok"
-        assert len(chiamate) == 1
-
-    def test_riprova_sul_503_e_poi_riesce(self, monkeypatch):
+    def test_riprova_lo_stesso_modello_e_poi_riesce(self):
         """Il caso reale: 'This model is currently experiencing high demand'."""
-        monkeypatch.setattr(bt.time, "sleep", lambda _: None)
         tentativi = []
 
-        def chiamata():
-            tentativi.append(1)
-            if len(tentativi) < 3:
-                raise Exception("503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand.', 'status': 'UNAVAILABLE'}}")
+        def chiamata(modello):
+            tentativi.append(modello)
+            if len(tentativi) < 2:
+                raise Exception(SOVRACCARICO)
             return "letta"
 
-        assert bt.chiama_gemini_con_retry(chiamata) == "letta"
-        assert len(tentativi) == 3
+        assert bt.chiama_gemini_con_fallback(chiamata) == "letta"
+        assert tentativi == [bt.MODELLI_GEMINI[0], bt.MODELLI_GEMINI[0]]
+
+    def test_passa_al_modello_di_riserva_se_il_primo_e_saturo(self):
+        """Il cuore della correzione: riprovare lo stesso modello saturo non basta,
+        perche' la congestione dura minuti. Deve cambiare modello."""
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            if modello == bt.MODELLI_GEMINI[0]:
+                raise Exception(SOVRACCARICO)
+            return "letta dal secondo"
+
+        assert bt.chiama_gemini_con_fallback(chiamata) == "letta dal secondo"
+        assert usati.count(bt.MODELLI_GEMINI[0]) == 2, "doveva riprovare il primo prima di cambiare"
+        assert usati[-1] == bt.MODELLI_GEMINI[1]
+
+    def test_modello_ritirato_passa_oltre_senza_riprovare(self):
+        """gemini-2.5-flash e' gia' 'no longer available': la catena non deve
+        sprecare tentativi su un modello che non esiste piu'."""
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            if modello == bt.MODELLI_GEMINI[0]:
+                raise Exception("404 NOT_FOUND. This model is no longer available.")
+            return "ok"
+
+        assert bt.chiama_gemini_con_fallback(chiamata) == "ok"
+        assert usati.count(bt.MODELLI_GEMINI[0]) == 1, "su un 404 non ha senso riprovare lo stesso modello"
 
     @pytest.mark.parametrize("errore", [
-        "503 UNAVAILABLE",
-        "429 RESOURCE_EXHAUSTED",
-        "500 INTERNAL",
+        "503 UNAVAILABLE", "429 RESOURCE_EXHAUSTED", "500 INTERNAL", "504 DEADLINE_EXCEEDED",
     ])
-    def test_considera_transitori_i_codici_giusti(self, errore, monkeypatch):
-        monkeypatch.setattr(bt.time, "sleep", lambda _: None)
-        tentativi = []
+    def test_considera_transitori_i_codici_giusti(self, errore):
+        usati = []
 
-        def chiamata():
-            tentativi.append(1)
+        def chiamata(modello):
+            usati.append(modello)
             raise Exception(errore)
 
-        with pytest.raises(Exception):
-            bt.chiama_gemini_con_retry(chiamata)
-        assert len(tentativi) == 3, f"'{errore}' doveva passare dai retry"
+        with pytest.raises(bt.GeminiSovraccarico):
+            bt.chiama_gemini_con_fallback(chiamata)
+        assert len(usati) == len(bt.MODELLI_GEMINI) * 2, f"'{errore}' doveva far scorrere tutta la catena"
 
-    def test_non_riprova_su_errore_definitivo(self, monkeypatch):
-        """Chiave sbagliata: riprovare fa solo perdere tempo all'admin."""
-        monkeypatch.setattr(bt.time, "sleep", lambda _: None)
-        tentativi = []
+    def test_non_riprova_su_errore_definitivo(self):
+        """Chiave sbagliata: riprovare (su 4 modelli!) fa solo perdere tempo."""
+        usati = []
 
-        def chiamata():
-            tentativi.append(1)
+        def chiamata(modello):
+            usati.append(modello)
             raise Exception("400 INVALID_ARGUMENT: API key not valid")
 
         with pytest.raises(Exception, match="API key not valid"):
-            bt.chiama_gemini_con_retry(chiamata)
-        assert len(tentativi) == 1, "un errore non transitorio non deve passare dai retry"
+            bt.chiama_gemini_con_fallback(chiamata)
+        assert len(usati) == 1, "un errore non transitorio non deve far scorrere la catena"
 
-    def test_dopo_i_tentativi_rilancia_l_errore_originale(self, monkeypatch):
-        """Il chiamante deve continuare a vedere l'errore vero da mostrare all'admin."""
-        monkeypatch.setattr(bt.time, "sleep", lambda _: None)
+    def test_se_tutti_sono_saturi_solleva_GeminiSovraccarico(self):
+        """Serve un'eccezione dedicata per poter dire all'admin 'riprova tra
+        qualche minuto' invece di mostrargli il JSON grezzo del 503."""
+        with pytest.raises(bt.GeminiSovraccarico) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception(SOVRACCARICO)))
+        assert "sovraccarichi" in str(errore.value)
+        assert "high demand" in str(errore.value), "l'errore originale resta visibile nei log"
 
-        def chiamata():
-            raise Exception("503 UNAVAILABLE high demand")
-
-        with pytest.raises(Exception, match="high demand"):
-            bt.chiama_gemini_con_retry(chiamata)
+    def test_la_catena_contiene_piu_di_un_modello(self):
+        """Invariante: con un solo modello il fallback non esisterebbe."""
+        assert len(bt.MODELLI_GEMINI) >= 2
+        assert len(set(bt.MODELLI_GEMINI)) == len(bt.MODELLI_GEMINI), "modelli duplicati nella catena"
 
 
 if __name__ == "__main__":

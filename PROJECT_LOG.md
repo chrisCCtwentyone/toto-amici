@@ -115,14 +115,32 @@ Toto_Amici_Progetto/
 **Causa 1 — non era l'IA, era la formattazione.** Il prompt di `analizza_schedine_multiple` impone all'IA di restituire pronostici normalizzati come `OVER_2.5`, `UNDER_2.5`, `1+OVER_2.5`: **contengono underscore per costruzione**. Il riepilogo veniva inviato con `parse_mode="Markdown"`, dove l'underscore apre il corsivo. Con un numero **dispari** di underscore nel messaggio, Telegram non trova la chiusura e **rifiuta l'intero messaggio**. Ricostruendo un riepilogo realistico (10 eventi secondo `LIMITI_SCHEDINA`, 3 pronostici con underscore) si ottengono **520 byte** con l'ultimo underscore spaiato in coda — l'errore reale indicava il byte 522. Riscontro quantitativo, non solo plausibile.
 > Il danno vero: la lettura IA era **corretta**, ma il `try` di `esegui_conferma` avvolgeva anche l'invio, quindi il fallimento di formattazione veniva etichettato come errore dell'IA e `pulisci_dati()` buttava via il lavoro, costringendo a ricaricare le foto.
 
-**Causa 2 — Gemini senza retry.** `client.models.generate_content` era l'**unica** chiamata esterna del progetto rimasta senza retry: Football-Data passa da `richiedi_con_retry()`, Sheets da `num_retries=3`, Gemini da niente. Un 503 per sovraccarico momentaneo — che rientra da solo in pochi secondi — costringeva a rifare tutto a mano. Stessa identica lacuna della Sessione 12 (503 su Sheets), su un client diverso.
+**Causa 2 — Gemini senza retry, e poi: il retry non bastava.** `client.models.generate_content` era l'**unica** chiamata esterna del progetto rimasta senza retry (Football-Data ha `richiedi_con_retry()`, Sheets ha `num_retries=3`). Prima correzione: 3 tentativi con backoff 2s/4s. **Non ha funzionato** — l'errore si è ripresentato identico al primo caricamento successivo.
+
+**Perché non bastava** (misurato interrogando l'API con la chiave del progetto, non ipotizzato): `gemini-3.6-flash` non era *giù*, era **saturo in modo cronico** — ha risposto a un banale "dì solo OK" in **96 secondi**. Riprovare lo stesso modello 3 volte in 6 secondi non poteva servire a niente: la congestione dura minuti, non secondi. Misure sullo stesso identico carico (immagine + JSON):
+
+| modello | esito |
+|---|---|
+| `gemini-3.8-flash` | 503 UNAVAILABLE (il più recente, sempre saturo) |
+| `gemini-3.7-flash` | 38s |
+| `gemini-3.6-flash` ← era il primario | 96s, oppure 503 |
+| `gemini-3.5-flash` | 18s sulla schedina completa, **10/10 pronostici corretti** |
+| `gemini-flash-latest` | 2s in un test, **503 dieci minuti dopo** |
+
+Il dato decisivo è l'ultima riga: **la congestione si sposta da un modello all'altro nel giro di minuti**. Nessun singolo modello è affidabile da solo, quindi la soluzione non era cambiare modello ma avere una **catena di riserve**.
+
+**Correzione definitiva**:
+- **`chiama_gemini_con_fallback()`** su `MODELLI_GEMINI` (3.5-flash → flash-latest → 3.7-flash → 3.6-flash), con tre comportamenti distinti: errore transitorio (503/429/500/timeout) → riprova, poi cambia modello; modello ritirato (404, come `gemini-2.5-flash` che è già "no longer available") → passa oltre subito senza sprecare tentativi; errore definitivo (chiave non valida) → rilancia subito invece di far aspettare l'admin per 4 modelli.
+- **Timeout di 60s per richiesta** (`http_options`): senza tetto, un modello congestionato tiene il bot occupato per 96s mentre l'admin fissa "L'IA sta analizzando le foto...". Il minimo accettato dall'API è 10s.
+- **Eccezione dedicata `GeminiSovraccarico`**: se tutta la catena è satura, l'admin riceve *"Gemini è sovraccarico, non è un problema del bot né delle tue foto, riprova tra qualche minuto"* invece del JSON grezzo del 503.
+- **Verifica di qualità prima del cambio di modello**: `gemini-3.5-flash` è stato scelto dopo averlo testato con il **prompt reale** su una schedina sintetica a 10 eventi contenente le insidie note (`U 2.5`, `Entrambe segnano: Sì`, `GG`, `1 + Over 2.5`): 10/10 pronostici normalizzati correttamente, vincita letta giusta. Poi verifica end-to-end sulla vera `analizza_schedine_multiple`: 15,4s, 10/10. Un modello più veloce ma che legge peggio sarebbe stato un downgrade mascherato da fix.
 
 **Correzioni**:
 - **`escape_markdown()`**: neutralizza `_`, `*`, `` ` ``, `[` in **qualsiasi** testo non scritto da noi (output IA: partita, pronostico, quota, vincita) prima di inserirlo in un messaggio Markdown. Il grassetto scritto da noi continua a funzionare.
 - **Fallback in testo semplice**: se Telegram rifiuta comunque la formattazione, il riepilogo viene rimandato senza `parse_mode` invece di distruggere una lettura riuscita. Un problema di *visualizzazione* non deve più costare il lavoro dell'IA.
 - **`chiama_gemini_con_retry()`**: 3 tentativi con backoff 2s/4s, ma **solo** sugli errori transitori (503/UNAVAILABLE, 429/RESOURCE_EXHAUSTED, 500/INTERNAL). Una chiave sbagliata viene rilanciata subito, senza far aspettare l'admin per un guasto che riprovare non risolve.
 - **`import time`** aggiunto: c'era solo l'alias `dt_time` da `datetime`, quindi `time.sleep()` sarebbe esploso con `NameError` al primo retry.
-- **20 nuovi test** in `tests/test_robustezza_ia.py` (totale: **282**), incluso il caso reale con numero dispari di underscore e la distinzione tra errore transitorio e definitivo.
+- **24 nuovi test** in `tests/test_robustezza_ia.py` (totale: **286**), incluso il caso reale con numero dispari di underscore e la distinzione tra errore transitorio e definitivo.
 
 **Nota su un punto lasciato com'è**: in `esegui_calcolo_risultati` il report include il pronostico non interpretabile racchiuso tra backtick (`` `{pron}` ``), dove in Markdown legacy gli underscore sono letterali — per questo quel percorso non ha mai dato problemi nonostante contenga gli stessi `OVER_2.5`. Resta un punto da ricordare se un giorno quei backtick venissero tolti.
 

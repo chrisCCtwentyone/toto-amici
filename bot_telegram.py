@@ -169,39 +169,77 @@ def escape_markdown(testo):
     return testo
 
 
-ERRORI_GEMINI_TRANSITORI = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
+ERRORI_GEMINI_TRANSITORI = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "504", "DEADLINE")
+ERRORI_MODELLO_NON_DISPONIBILE = ("404", "NOT_FOUND", "NOT FOUND")
+
+# Catena di modelli, provati in quest'ordine. NON e' ridondanza per eccesso di
+# zelo: misurazioni del 02/09/2026 sullo stesso identico carico (immagine +
+# risposta JSON) con la chiave del progetto:
+#   gemini-3.8-flash    -> 503 UNAVAILABLE (il piu' recente, sempre saturo)
+#   gemini-3.6-flash    -> 96s su un prompt banale, oppure 503  <- era il primario
+#   gemini-3.7-flash    -> 38s
+#   gemini-3.5-flash    -> 18s sulla schedina completa, 10/10 pronostici corretti
+#   gemini-flash-latest ->  2s in un test, 503 dieci minuti dopo
+# La congestione SI SPOSTA da un modello all'altro nel giro di minuti: nessun
+# singolo modello e' affidabile da solo, per questo serve una catena e non
+# semplicemente un modello diverso (Sessione 15).
+MODELLI_GEMINI = ("gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash")
+
+# Il minimo accettato dall'API e' 10s. Senza un tetto, un modello congestionato
+# tiene occupato il bot per oltre un minuto e mezzo (96s misurati) mentre
+# l'admin aspetta davanti a "L'IA sta analizzando le foto...".
+TIMEOUT_GEMINI_MS = 60000
 
 
-def chiama_gemini_con_retry(chiamata, tentativi=3, backoff_base=2.0):
-    """Esegue una chiamata a Gemini riprovando sui soli errori transitori.
+class GeminiSovraccarico(Exception):
+    """Tutti i modelli della catena sono congestionati: e' un problema di Google,
+    non del bot, e si risolve solo aspettando. Distinta dalle altre eccezioni per
+    poter mostrare all'admin un messaggio utile invece del JSON grezzo del 503."""
+
+
+def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_modello=2, backoff_base=2.0):
+    """Esegue `chiamata(modello)` scorrendo la catena finche' uno risponde.
 
     Perche' non basta richiedi_con_retry() di api_utils: quello avvolge
     requests.get(), mentre Gemini passa dall'SDK google-genai — client HTTP
     diverso, stessa identica situazione di googleapiclient per Sheets (vedi
     la regola su num_retries=3 in CLAUDE.md).
 
-    Si riprova SOLO su 503/429/500 ("This model is currently experiencing high
-    demand", quota momentanea, errore interno): sono picchi di carico che
-    rientrano da soli in pochi secondi. Un errore di chiave o di prompt viene
-    invece rilanciato subito, senza far aspettare l'admin per un guasto che
-    non si risolve riprovando.
-
-    Backoff piu' largo di quello di api_utils (2s, poi 4s): un modello
-    sovraccarico ha bisogno di piu' tempo di un blip di rete.
+    Tre comportamenti distinti, perche' non tutti gli errori vanno trattati
+    allo stesso modo:
+    - transitorio (503/429/500/timeout): riprova sullo stesso modello, poi
+      passa al successivo. Riprovare *lo stesso* modello saturo non basta:
+      la prima versione di questo retry (3 tentativi in 6 secondi) non ha
+      risolto niente, perche' la saturazione dura minuti, non secondi.
+    - modello non disponibile (404): passa subito al successivo senza
+      riprovare. I modelli vengono ritirati (gemini-2.5-flash e' gia'
+      "no longer available"): la catena non deve morire per questo.
+    - qualsiasi altro errore (chiave non valida, prompt rifiutato): rilanciato
+      subito, perche' riprovare non lo risolve e farebbe solo aspettare.
     """
     ultimo_errore = None
-    for tentativo in range(1, tentativi + 1):
-        try:
-            return chiamata()
-        except Exception as e:
-            ultimo_errore = e
-            testo_errore = str(e).upper()
-            if not any(codice in testo_errore for codice in ERRORI_GEMINI_TRANSITORI):
-                raise
-            if tentativo < tentativi:
-                logging.warning(f"Gemini non disponibile (tentativo {tentativo}/{tentativi}), riprovo: {e}")
-                time.sleep(backoff_base ** tentativo)
-    raise ultimo_errore
+    for modello in modelli:
+        for tentativo in range(1, tentativi_per_modello + 1):
+            try:
+                risposta = chiamata(modello)
+                if modello != modelli[0]:
+                    logging.warning(f"Gemini: risposta ottenuta dal modello di riserva '{modello}'")
+                return risposta
+            except Exception as e:
+                ultimo_errore = e
+                testo_errore = str(e).upper()
+                if any(codice in testo_errore for codice in ERRORI_MODELLO_NON_DISPONIBILE):
+                    logging.warning(f"Gemini: modello '{modello}' non disponibile, passo al successivo")
+                    break
+                if not any(codice in testo_errore for codice in ERRORI_GEMINI_TRANSITORI):
+                    raise
+                logging.warning(f"Gemini: '{modello}' non disponibile (tentativo {tentativo}/{tentativi_per_modello}): {str(e)[:120]}")
+                if tentativo < tentativi_per_modello:
+                    time.sleep(backoff_base ** tentativo)
+    raise GeminiSovraccarico(
+        f"Tutti i modelli Gemini provati sono sovraccarichi ({', '.join(modelli)}). "
+        f"Ultimo errore: {ultimo_errore}"
+    )
 
 
 def analizza_schedine_multiple(lista_percorsi_foto):
@@ -235,10 +273,13 @@ def analizza_schedine_multiple(lista_percorsi_foto):
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
        - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
-    response = chiama_gemini_con_retry(lambda: client.models.generate_content(
-        model='gemini-3.6-flash',
+    response = chiama_gemini_con_fallback(lambda modello: client.models.generate_content(
+        model=modello,
         contents=[prompt] + immagini_ottimizzate,
-        config=types.GenerateContentConfig(response_mime_type="application/json")
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI_MS),
+        )
     ))
     return response.text
 
@@ -1008,6 +1049,20 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             testo_semplice = msg_riepilogo.replace("**", "").replace("\\", "")
             await query.edit_message_text(testo_semplice, reply_markup=InlineKeyboardMarkup(kb))
         return CONFERMA_LETTURA_IA
+
+    except GeminiSovraccarico:
+        # Non e' un guasto del bot: sono i server di Google congestionati.
+        # L'admin deve sapere che basta riprovare, non che c'e' da riparare qualcosa.
+        logging.warning("Lettura schedina non riuscita: tutti i modelli Gemini sovraccarichi")
+        await query.edit_message_text(
+            "⏳ *Gemini è sovraccarico in questo momento.*\n\n"
+            "Ho provato tutti i modelli disponibili, sono tutti congestionati lato Google — "
+            "non è un problema del bot né delle tue foto.\n\n"
+            "Riprova tra qualche minuto con /start: di solito rientra da solo.",
+            parse_mode="Markdown"
+        )
+        await pulisci_dati(context)
+        return ConversationHandler.END
 
     except Exception as e:
         await query.edit_message_text(f"❌ Errore durante l'elaborazione IA: {e}")
