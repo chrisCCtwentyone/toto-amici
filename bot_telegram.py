@@ -147,6 +147,97 @@ def connetti_sheets():
         _sheets_service_cache = build('sheets', 'v4', credentials=creds)
     return _sheets_service_cache
 
+CATEGORIE_SCHEDINA = ("Combo", "Fisse", "Doppie Chance", "Variabili")
+
+# Schema imposto all'API: la forma del JSON non deve dipendere dal modello che
+# risponde. Il 02/09/2026 lo stesso gemini-3.5-flash ha restituito le categorie
+# dentro "eventi" in una richiesta e al primo livello in quella dopo; un modello
+# di riserva ha risposto con una forma che il codice non riconosceva, e il bot
+# ha mostrato "0 eventi" su una schedina piena, senza alcun errore (Sessione 15).
+_SCHEMA_EVENTO = {
+    "type": "object",
+    "properties": {
+        "partita": {"type": "string"},
+        "pronostico": {"type": "string"},
+        "quota": {"type": "string"},
+    },
+    "required": ["partita", "pronostico", "quota"],
+}
+SCHEMA_SCHEDINA = {
+    "type": "object",
+    "properties": {
+        "vincita_potenziale": {"type": "string"},
+        "eventi": {
+            "type": "object",
+            "properties": {c: {"type": "array", "items": _SCHEMA_EVENTO} for c in CATEGORIE_SCHEDINA},
+            "required": list(CATEGORIE_SCHEDINA),
+        },
+    },
+    "required": ["vincita_potenziale", "eventi"],
+}
+
+
+def _chiave_categoria(testo):
+    """'Doppia Chance', 'doppie_chance', 'DOPPIE CHANCE' -> 'doppiechance'."""
+    return re.sub(r"[^a-z]", "", str(testo).lower())
+
+
+_ALIAS_CATEGORIE = {_chiave_categoria(c): c for c in CATEGORIE_SCHEDINA}
+_ALIAS_CATEGORIE.update({
+    "doppiachance": "Doppie Chance",
+    "doppiechances": "Doppie Chance",
+    "doppie": "Doppie Chance",
+    "combinate": "Combo",
+    "combo": "Combo",
+    "fissa": "Fisse",
+    "variabile": "Variabili",
+})
+
+
+def estrai_eventi_per_categoria(dati):
+    """Riporta il JSON dell'IA alla forma attesa dal resto del codice, comunque
+    sia arrivato: {"Combo": [...], "Fisse": [...], ...}.
+
+    Difesa in profondita' accanto a SCHEMA_SCHEDINA: lo schema impedisce il
+    problema a monte, questa funzione lo sopravvive se un modello lo ignora.
+    Prima il codice faceva `dati.get("eventi", dati).get(categoria, [])`, cioe'
+    pretendeva le chiavi ESATTE: bastava "Doppia Chance" al posto di "Doppie
+    Chance" per far leggere 0 eventi senza sollevare nessun errore — che e' il
+    modo peggiore di fallire, perche' sembra una schedina vuota invece di un
+    bug (Sessione 15).
+
+    Forme gestite:
+    - {"eventi": {"Combo": [...]}}          (quella dichiarata nello schema)
+    - {"Combo": [...], "Fisse": [...]}      (categorie al primo livello)
+    - chiavi con maiuscole/spazi/underscore diversi
+    - {"eventi": [{"categoria": "Combo", ...}]}  (lista piatta)
+    """
+    risultato = {c: [] for c in CATEGORIE_SCHEDINA}
+    if not isinstance(dati, dict):
+        return risultato
+
+    contenitore = dati.get("eventi", dati)
+
+    if isinstance(contenitore, list):
+        for evento in contenitore:
+            if not isinstance(evento, dict):
+                continue
+            etichetta = evento.get("categoria") or evento.get("tipo") or ""
+            canonica = _ALIAS_CATEGORIE.get(_chiave_categoria(etichetta))
+            if canonica:
+                risultato[canonica].append(evento)
+        return risultato
+
+    if not isinstance(contenitore, dict):
+        return risultato
+
+    for chiave, valore in contenitore.items():
+        canonica = _ALIAS_CATEGORIE.get(_chiave_categoria(chiave))
+        if canonica and isinstance(valore, list):
+            risultato[canonica].extend(v for v in valore if isinstance(v, dict))
+    return risultato
+
+
 def escape_markdown(testo):
     """Neutralizza i caratteri che Telegram interpreta come formattazione.
 
@@ -169,8 +260,13 @@ def escape_markdown(testo):
     return testo
 
 
-ERRORI_GEMINI_TRANSITORI = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "504", "DEADLINE")
+ERRORI_GEMINI_TRANSITORI = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "504", "DEADLINE", "TIMED OUT", "TIMEOUT")
 ERRORI_MODELLO_NON_DISPONIBILE = ("404", "NOT_FOUND", "NOT FOUND")
+# Un 503 arriva in una frazione di secondo: riprovare lo stesso modello costa
+# nulla. Un timeout invece ha gia' bruciato 60 secondi, e riprovare lo stesso
+# modello congestionato quasi certamente ne brucia altri 60 mentre l'admin
+# aspetta. In quel caso conviene cambiare modello subito.
+ERRORI_SENZA_SECONDO_TENTATIVO = ("504", "DEADLINE", "TIMED OUT", "TIMEOUT")
 
 # Catena di modelli, provati in quest'ordine. NON e' ridondanza per eccesso di
 # zelo: misurazioni del 02/09/2026 sullo stesso identico carico (immagine +
@@ -234,6 +330,9 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
                 if not any(codice in testo_errore for codice in ERRORI_GEMINI_TRANSITORI):
                     raise
                 logging.warning(f"Gemini: '{modello}' non disponibile (tentativo {tentativo}/{tentativi_per_modello}): {str(e)[:120]}")
+                if any(codice in testo_errore for codice in ERRORI_SENZA_SECONDO_TENTATIVO):
+                    logging.warning(f"Gemini: '{modello}' ha superato il tempo massimo, passo al successivo senza riprovarlo")
+                    break
                 if tentativo < tentativi_per_modello:
                     time.sleep(backoff_base ** tentativo)
     raise GeminiSovraccarico(
@@ -278,6 +377,7 @@ def analizza_schedine_multiple(lista_percorsi_foto):
         contents=[prompt] + immagini_ottimizzate,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
+            response_schema=SCHEMA_SCHEDINA,
             http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI_MS),
         )
     ))
@@ -290,8 +390,11 @@ def normalizza_nomi_partite(dati_json, giornata_num):
         if not matches: return dati_json
         
         dati = json.loads(dati_json)
-        for cat in ["Combo", "Fisse", "Doppie Chance", "Variabili"]:
-            for ev in dati.get("eventi", dati).get(cat, []):
+        # Gli eventi restituiti sono gli stessi oggetti contenuti in `dati`:
+        # modificarli qui aggiorna il JSON che viene poi riserializzato.
+        eventi_per_categoria = estrai_eventi_per_categoria(dati)
+        for cat in CATEGORIE_SCHEDINA:
+            for ev in eventi_per_categoria.get(cat, []):
                 partita = ev.get("partita", "")
                 if "-" in partita:
                     c_sh, o_sh = [s.strip()[:5].lower() for s in partita.split('-')]
@@ -365,7 +468,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
         vincita = f"{float(vincita_raw):.2f}".replace('.', ',')
     except: vincita = "0,00"
 
-    eventi = dati.get("eventi", dati) 
+    eventi = estrai_eventi_per_categoria(dati)
     righe_da_inserire = []
     prima_riga = True
     
@@ -997,8 +1100,27 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Genera riepilogo per admin
         dati = json.loads(risultato_json)
         vincita = dati.get("vincita_potenziale", "0")
-        eventi = dati.get("eventi", dati)
-        
+        eventi = estrai_eventi_per_categoria(dati)
+
+        # Zero eventi NON e' un risultato da mostrare come se fosse una lettura
+        # riuscita: e' un fallimento. Il 02/09/2026 il bot ha presentato una
+        # schedina piena come "0/1, 0/4, 0/2, 0/3" con il tasto "Conferma e
+        # Salva" attivo — un clic distratto avrebbe scritto una schedina vuota
+        # in Giocate. Meglio fermarsi e loggare il JSON grezzo per la diagnosi.
+        if not any(eventi.get(c) for c in CATEGORIE_SCHEDINA):
+            logging.error(f"Lettura IA senza eventi. JSON grezzo ricevuto: {risultato_json[:1500]}")
+            await query.edit_message_text(
+                "❌ *Lettura non riuscita: nessun evento riconosciuto.*\n\n"
+                "Le foto sono arrivate e l'IA ha risposto, ma non ho trovato nessun pronostico. "
+                "Di solito succede se la schermata è tagliata, molto sfocata o mostra solo il riepilogo finale.\n\n"
+                "Riprova con /start allegando la schermata che elenca gli eventi. "
+                "Ho salvato la risposta grezza nei log per capire cosa è andato storto.",
+                parse_mode="Markdown"
+            )
+            await pulisci_dati(context)
+            return ConversationHandler.END
+
+
         msg_riepilogo = f"🤖 **Lettura IA Completata!**\n\n"
         msg_riepilogo += f"💰 **Vincita Potenziale:** {escape_markdown(vincita)} €\n"
         

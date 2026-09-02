@@ -8,7 +8,12 @@ Test delle due difese aggiunte in Sessione 15 dopo gli errori reali del
    legacy aprono il corsivo. La lettura IA era corretta: si perdeva solo per
    come veniva mostrata.
 2. "503 UNAVAILABLE ... This model is currently experiencing high demand" —
-   Gemini sovraccarico, nessun retry: l'admin doveva rifare tutto a mano.
+   Gemini sovraccarico. Il primo rimedio (riprovare lo stesso modello) non e'
+   bastato: la congestione dura minuti e si sposta tra i modelli, quindi serve
+   una catena di riserve.
+3. Lettura andata a buon fine ma con ZERO eventi riconosciuti su una schedina
+   piena: il JSON era valido, ma con una forma diversa da quella che il codice
+   pretendeva. Il fallimento peggiore, perche' silenzioso.
 """
 import os
 import sys
@@ -125,9 +130,7 @@ class TestChiamaGeminiConFallback:
         assert bt.chiama_gemini_con_fallback(chiamata) == "ok"
         assert usati.count(bt.MODELLI_GEMINI[0]) == 1, "su un 404 non ha senso riprovare lo stesso modello"
 
-    @pytest.mark.parametrize("errore", [
-        "503 UNAVAILABLE", "429 RESOURCE_EXHAUSTED", "500 INTERNAL", "504 DEADLINE_EXCEEDED",
-    ])
+    @pytest.mark.parametrize("errore", ["503 UNAVAILABLE", "429 RESOURCE_EXHAUSTED", "500 INTERNAL"])
     def test_considera_transitori_i_codici_giusti(self, errore):
         usati = []
 
@@ -138,6 +141,20 @@ class TestChiamaGeminiConFallback:
         with pytest.raises(bt.GeminiSovraccarico):
             bt.chiama_gemini_con_fallback(chiamata)
         assert len(usati) == len(bt.MODELLI_GEMINI) * 2, f"'{errore}' doveva far scorrere tutta la catena"
+
+    @pytest.mark.parametrize("errore", ["504 DEADLINE_EXCEEDED", "The read operation timed out"])
+    def test_un_timeout_non_viene_ritentato_sullo_stesso_modello(self, errore):
+        """Un 503 costa una frazione di secondo, un timeout ne ha gia' bruciati 60:
+        riprovare lo stesso modello congestionato ne brucerebbe altri 60."""
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            raise Exception(errore)
+
+        with pytest.raises(bt.GeminiSovraccarico):
+            bt.chiama_gemini_con_fallback(chiamata)
+        assert len(usati) == len(bt.MODELLI_GEMINI), "ogni modello doveva essere provato UNA volta sola"
 
     def test_non_riprova_su_errore_definitivo(self):
         """Chiave sbagliata: riprovare (su 4 modelli!) fa solo perdere tempo."""
@@ -163,6 +180,61 @@ class TestChiamaGeminiConFallback:
         """Invariante: con un solo modello il fallback non esisterebbe."""
         assert len(bt.MODELLI_GEMINI) >= 2
         assert len(set(bt.MODELLI_GEMINI)) == len(bt.MODELLI_GEMINI), "modelli duplicati nella catena"
+
+
+
+class TestEstraiEventiPerCategoria:
+    """Il 02/09/2026 il bot ha mostrato 0 eventi su una schedina piena: il JSON
+    dell'IA era valido ma con una forma che il codice non riconosceva, e la
+    lettura falliva in silenzio invece di segnalare l'errore."""
+
+    EVENTO = {"partita": "Milan - Inter", "pronostico": "1", "quota": "2.10"}
+
+    def test_forma_dichiarata_nello_schema(self):
+        dati = {"vincita_potenziale": "72.50", "eventi": {"Combo": [self.EVENTO], "Fisse": [], "Doppie Chance": [], "Variabili": []}}
+        assert bt.estrai_eventi_per_categoria(dati)["Combo"] == [self.EVENTO]
+
+    def test_categorie_al_primo_livello_senza_wrapper(self):
+        """Forma vista davvero da gemini-3.5-flash in una richiesta su due."""
+        dati = {"vincita_potenziale": "72.50", "Combo": [self.EVENTO], "Fisse": []}
+        assert bt.estrai_eventi_per_categoria(dati)["Combo"] == [self.EVENTO]
+
+    @pytest.mark.parametrize("variante", [
+        "Doppia Chance", "doppie chance", "DOPPIE CHANCE", "doppie_chance", "Doppie  Chance",
+    ])
+    def test_nomi_di_categoria_scritti_in_modo_diverso(self, variante):
+        """Bastava 'Doppia Chance' invece di 'Doppie Chance' per perdere tutto."""
+        dati = {"eventi": {variante: [self.EVENTO]}}
+        assert bt.estrai_eventi_per_categoria(dati)["Doppie Chance"] == [self.EVENTO]
+
+    def test_lista_piatta_con_campo_categoria(self):
+        dati = {"eventi": [dict(self.EVENTO, categoria="Fisse"), dict(self.EVENTO, categoria="Variabili")]}
+        estratti = bt.estrai_eventi_per_categoria(dati)
+        assert len(estratti["Fisse"]) == 1 and len(estratti["Variabili"]) == 1
+
+    def test_restituisce_sempre_tutte_le_categorie(self):
+        """Il chiamante fa .get(categoria) su tutte e quattro: non devono mancare."""
+        estratti = bt.estrai_eventi_per_categoria({})
+        assert set(estratti.keys()) == set(bt.CATEGORIE_SCHEDINA)
+        assert all(v == [] for v in estratti.values())
+
+    @pytest.mark.parametrize("spazzatura", [None, [], "testo", 42, {"eventi": None}, {"eventi": "boh"}])
+    def test_non_esplode_su_input_malformati(self, spazzatura):
+        estratti = bt.estrai_eventi_per_categoria(spazzatura)
+        assert set(estratti.keys()) == set(bt.CATEGORIE_SCHEDINA)
+
+    def test_gli_eventi_restituiti_sono_gli_stessi_oggetti(self):
+        """normalizza_nomi_partite modifica ev['partita'] sul posto: se l'helper
+        restituisse copie, la normalizzazione dei nomi squadra andrebbe persa."""
+        evento = dict(self.EVENTO)
+        dati = {"eventi": {"Combo": [evento]}}
+        bt.estrai_eventi_per_categoria(dati)["Combo"][0]["partita"] = "MODIFICATO"
+        assert evento["partita"] == "MODIFICATO"
+
+    def test_lo_schema_impone_le_quattro_categorie(self):
+        proprieta = bt.SCHEMA_SCHEDINA["properties"]["eventi"]["properties"]
+        assert set(proprieta.keys()) == set(bt.CATEGORIE_SCHEDINA)
+        assert set(bt.SCHEMA_SCHEDINA["properties"]["eventi"]["required"]) == set(bt.CATEGORIE_SCHEDINA)
 
 
 if __name__ == "__main__":
