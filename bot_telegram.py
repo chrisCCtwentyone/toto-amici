@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import re
+import time
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
@@ -146,10 +147,67 @@ def connetti_sheets():
         _sheets_service_cache = build('sheets', 'v4', credentials=creds)
     return _sheets_service_cache
 
+def escape_markdown(testo):
+    """Neutralizza i caratteri che Telegram interpreta come formattazione.
+
+    Serve per QUALSIASI testo che non abbiamo scritto noi (output dell'IA, nomi
+    partita, pronostici) prima di infilarlo in un messaggio con
+    parse_mode="Markdown". I pronostici normalizzati contengono underscore per
+    costruzione — `OVER_2.5`, `UNDER_2.5`, `1+OVER_2.5` (vedi il prompt di
+    analizza_schedine_multiple) — e in Markdown legacy l'underscore apre il
+    corsivo: con un numero dispari di underscore nel messaggio, Telegram
+    risponde "Can't parse entities: can't find end of the entity" e RIFIUTA
+    l'intero messaggio. E' successo il 02/09/2026 caricando una schedina della
+    Giornata 3: la lettura IA era perfetta, ma il riepilogo non partiva e il
+    lavoro veniva buttato via (Sessione 15).
+    """
+    if testo is None:
+        return ""
+    testo = str(testo)
+    for carattere in ("_", "*", "`", "["):
+        testo = testo.replace(carattere, "\\" + carattere)
+    return testo
+
+
+ERRORI_GEMINI_TRANSITORI = ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL")
+
+
+def chiama_gemini_con_retry(chiamata, tentativi=3, backoff_base=2.0):
+    """Esegue una chiamata a Gemini riprovando sui soli errori transitori.
+
+    Perche' non basta richiedi_con_retry() di api_utils: quello avvolge
+    requests.get(), mentre Gemini passa dall'SDK google-genai — client HTTP
+    diverso, stessa identica situazione di googleapiclient per Sheets (vedi
+    la regola su num_retries=3 in CLAUDE.md).
+
+    Si riprova SOLO su 503/429/500 ("This model is currently experiencing high
+    demand", quota momentanea, errore interno): sono picchi di carico che
+    rientrano da soli in pochi secondi. Un errore di chiave o di prompt viene
+    invece rilanciato subito, senza far aspettare l'admin per un guasto che
+    non si risolve riprovando.
+
+    Backoff piu' largo di quello di api_utils (2s, poi 4s): un modello
+    sovraccarico ha bisogno di piu' tempo di un blip di rete.
+    """
+    ultimo_errore = None
+    for tentativo in range(1, tentativi + 1):
+        try:
+            return chiamata()
+        except Exception as e:
+            ultimo_errore = e
+            testo_errore = str(e).upper()
+            if not any(codice in testo_errore for codice in ERRORI_GEMINI_TRANSITORI):
+                raise
+            if tentativo < tentativi:
+                logging.warning(f"Gemini non disponibile (tentativo {tentativo}/{tentativi}), riprovo: {e}")
+                time.sleep(backoff_base ** tentativo)
+    raise ultimo_errore
+
+
 def analizza_schedine_multiple(lista_percorsi_foto):
     client = get_gemini_client()
     if not client: raise Exception("Chiave API Gemini non configurata o vuota!")
-    
+
     immagini_ottimizzate = []
     for percorso in lista_percorsi_foto:
         img = Image.open(percorso)
@@ -177,11 +235,11 @@ def analizza_schedine_multiple(lista_percorsi_foto):
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
        - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
-    response = client.models.generate_content(
+    response = chiama_gemini_con_retry(lambda: client.models.generate_content(
         model='gemini-3.6-flash',
         contents=[prompt] + immagini_ottimizzate,
         config=types.GenerateContentConfig(response_mime_type="application/json")
-    )
+    ))
     return response.text
 
 def normalizza_nomi_partite(dati_json, giornata_num):
@@ -901,7 +959,7 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         eventi = dati.get("eventi", dati)
         
         msg_riepilogo = f"🤖 **Lettura IA Completata!**\n\n"
-        msg_riepilogo += f"💰 **Vincita Potenziale:** {vincita} €\n"
+        msg_riepilogo += f"💰 **Vincita Potenziale:** {escape_markdown(vincita)} €\n"
         
         # Avvisi intelligenti
         avvisi = []
@@ -920,7 +978,8 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if evs:
                 msg_riepilogo += f"\n📌 **{categoria} ({len(evs)}/{limite}):**\n"
                 for ev in evs:
-                    msg_riepilogo += f"- {ev.get('partita', '???')} -> {ev.get('pronostico', '')} (@{ev.get('quota', '')})\n"
+                    # escape_markdown su tutti e tre: arrivano dall'IA, non da noi.
+                    msg_riepilogo += f"- {escape_markdown(ev.get('partita', '???'))} -> {escape_markdown(ev.get('pronostico', ''))} (@{escape_markdown(ev.get('quota', ''))})\n"
             if len(evs) > limite:
                 avvisi.append(f"⚠️ {categoria}: trovati {len(evs)} eventi su {limite} consentiti — {len(evs) - limite} verranno annullati")
             elif len(evs) < limite:
@@ -938,9 +997,18 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("✅ Conferma e Salva su Sheets", callback_data="salva_ia_si")],
             [InlineKeyboardButton("❌ Annulla (Lettura Errata)", callback_data="salva_ia_no")]
         ]
-        await query.edit_message_text(msg_riepilogo, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        # Un problema di FORMATTAZIONE non deve mai buttare via una lettura IA
+        # riuscita: se Telegram rifiuta il Markdown, si rimanda lo stesso
+        # riepilogo in testo semplice e l'admin puo' comunque confermare, invece
+        # di dover ricaricare le foto da capo (Sessione 15).
+        try:
+            await query.edit_message_text(msg_riepilogo, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        except Exception as errore_formattazione:
+            logging.warning(f"Riepilogo rifiutato da Telegram in Markdown, rimando in testo semplice: {errore_formattazione}")
+            testo_semplice = msg_riepilogo.replace("**", "").replace("\\", "")
+            await query.edit_message_text(testo_semplice, reply_markup=InlineKeyboardMarkup(kb))
         return CONFERMA_LETTURA_IA
-        
+
     except Exception as e:
         await query.edit_message_text(f"❌ Errore durante l'elaborazione IA: {e}")
         await pulisci_dati(context)
