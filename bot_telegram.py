@@ -1,5 +1,7 @@
 import os
 import sys
+import gc
+import ctypes
 import json
 import logging
 import re
@@ -336,6 +338,39 @@ def memoria_mb():
     return memoria_picco_mb()
 
 
+def libera_memoria_al_sistema_operativo():
+    """Chiede esplicitamente all'allocatore di restituire all'OS la memoria
+    liberata, invece di lasciare che il processo se la tenga "in cassa".
+
+    Perche' serve: quando un oggetto Python viene liberato, l'interprete NON
+    restituisce sempre quella memoria al sistema operativo — su Linux (dove
+    gira il bot) la tiene riservata nell'arena di glibc per riusarla nelle
+    allocazioni successive. Con thread diversi (ogni chiamata passa da
+    asyncio.to_thread) glibc puo' arrivare a creare un'arena per thread: una
+    volta che un thread ha allocato memoria per un'operazione pesante, quella
+    memoria puo' restare "intrappolata" nella sua arena anche dopo che
+    l'oggetto Python e' stato liberato, senza che sia un vero leak — e senza
+    che gc.collect() da solo la riporti indietro, perche' gc.collect() ripulisce
+    i cicli di riferimento, non tocca l'allocatore sottostante.
+
+    Misurato con /diagnostica il 04/09/2026: 489 MB su 512 subito dopo il
+    caricamento di una schedina (Sessione 17) — troppo alto per essere
+    spiegato dalle sole foto, che Telegram comprime gia' a ~1280px prima di
+    consegnarle al bot (il caso da 46,7 MB per foto misurato in Sessione 16
+    era un file non compresso, un percorso che questo bot non riceve mai:
+    l'unico handler registrato e' filters.PHOTO, non filters.Document).
+
+    malloc_trim(0) e' la chiamata di glibc che chiede all'OS di riprendersi
+    la memoria libera in cima alle arene. Esiste solo su Linux: su macOS (dove
+    girano i test) fallisce silenziosamente, e va bene cosi'.
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 # Ultimo modello che ha risposto e quanto ci ha messo: serve a dire all'admin
 # "l'IA ha faticato" nel riepilogo, invece di lasciarlo solo nei log di Render.
 ultima_lettura_ia = {"modello": None, "secondi": 0.0, "di_riserva": False}
@@ -448,6 +483,15 @@ def analizza_schedine_multiple(lista_percorsi_foto):
             http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI_MS),
         )
     ))
+    # Le immagini decodificate non servono piu': e' il punto giusto per
+    # restituire la memoria all'OS invece di lasciarla intrappolata nell'arena
+    # del thread che ha appena fatto il lavoro pesante (vedi il commento di
+    # libera_memoria_al_sistema_operativo). Il log prima/dopo rende l'effetto
+    # verificabile in produzione, non solo teorico.
+    del immagini_ottimizzate
+    prima = memoria_mb()
+    libera_memoria_al_sistema_operativo()
+    logging.info(f"Analisi schedina completata: memoria {prima:.0f} MB -> {memoria_mb():.0f} MB dopo il rilascio")
     return response.text
 
 def normalizza_nomi_partite(dati_json, giornata_num):
@@ -918,6 +962,8 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         if nuove:
             service.spreadsheets().values().append(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D", valueInputOption="USER_ENTERED", body={"values": nuove}).execute(num_retries=3)
             report += "💰 *Vincite registrate in Cassa!*\n"
+    del righe_giocate, righe_class
+    libera_memoria_al_sistema_operativo()
     return report
 
 def applica_risultato_manuale(giornata, casa_nome, ospite_nome, gol_casa, gol_ospite):

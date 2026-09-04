@@ -106,6 +106,24 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 04/09/2026 — Sessione 17 (489 MB su 512: non erano le foto)
+
+**Sintomo**: `/diagnostica` (appena introdotto in Sessione 16) ha misurato **489 MB su 512** subito dopo il caricamento di una schedina — 95% del limite, un solo picco dal disastro.
+
+**La spiegazione della Sessione 16 non regge fino in fondo**: il calcolo dei "46,7 MB per foto" era su un file 4032x3024 **non compresso**. Verificato il codice: l'unico handler registrato per ricevere le foto è `filters.PHOTO`, non `filters.Document` — significa che **Telegram comprime sempre le foto a ~1280px prima di consegnarle al bot**, il caso "file grezzo" della Sessione 16 semplicemente non si presenta mai nell'uso reale. Tre foto reali costano una frazione di quei 140 MB stimati, non abbastanza per spiegare 489.
+
+**Il sospetto vero**: comportamento noto di Python su Linux (glibc). Quando un thread libera memoria, l'interprete non la restituisce sempre al sistema operativo — la tiene riservata nell'arena di quel thread per riusarla. Il bot passa **ogni** operazione pesante da `asyncio.to_thread` (lettura foto, calcolo risultati, chiamate API): ogni thread che ha fatto un lavoro grosso può restare con memoria "intrappolata" nella propria arena anche a oggetto Python già liberato — senza che sia un leak vero, e senza che `gc.collect()` da solo la riporti indietro (ripulisce i cicli di riferimento, non tocca l'allocatore sottostante).
+
+**Correzione — `libera_memoria_al_sistema_operativo()`**: `gc.collect()` seguito da `malloc_trim(0)`, la chiamata di glibc che chiede esplicitamente all'OS di riprendersi la memoria libera in cima alle arene. Richiamata in due punti, subito dopo `del` sugli oggetti grandi appena diventati inutili:
+- `analizza_schedine_multiple`, dopo aver ottenuto la risposta da Gemini (le immagini decodificate non servono più).
+- `esegui_calcolo_risultati`, dopo aver finito di scrivere su Sheets (le righe di Giocate/Classifica lette non servono più).
+
+Entrambi i punti loggano memoria **prima e dopo** il rilascio: la correzione si autoverifica nei log di produzione, invece di restare una teoria. Non testabile fino in fondo in locale — `malloc_trim` è una funzione di glibc, assente su macOS (dove girano lo sviluppo e i test): lì fallisce silenziosamente per costruzione, ed è il comportamento corretto.
+
+**Onestà sui limiti**: non c'è la controprova su Render che il numero scenda davvero. La prossima volta che il bot elabora una schedina in produzione, la riga di log `Analisi schedina completata: memoria X MB -> Y MB dopo il rilascio` dice se l'ipotesi era giusta. Se Y resta vicino a X, il sospetto era sbagliato e si torna a guardare altrove — con un dato in mano, non un'altra ipotesi.
+
+**Verifiche**: 323 test verdi; dry-run di non-regressione su dati di produzione (352 celle, 0 differenze); percorso reale (`analizza_schedine_multiple` con foto e chiamata Gemini vera) eseguito end-to-end con il log visibile.
+
 ### 04/09/2026 — Sessione 16 (Memoria: l'ipotesi era sbagliata, la misura l'ha smentita)
 
 **L'ipotesi da verificare** (da Sessione 15): "la memoria cresce con l'accumularsi delle giornate, prima o poi Render ucciderà il bot". Sembrava solidissima: tre funzioni rileggono tutto `Giocate` a ogni chiamata, e le righe crescono di 160 a giornata.

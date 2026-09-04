@@ -164,3 +164,41 @@ class TestMemoriaAttualeEPicco:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+class TestLiberaMemoriaAlSistemaOperativo:
+    """Sessione 17: /diagnostica ha misurato 489 MB su 512 subito dopo un
+    caricamento schedina — troppo alto per essere spiegato dalle sole foto
+    (Telegram le comprime gia' a ~1280px: l'handler registrato e' filters.PHOTO,
+    non filters.Document, quindi il caso "file non compresso" della Sessione 16
+    non capita mai nell'uso reale). Il sospetto principale e' che glibc non
+    restituisca all'OS la memoria liberata da un thread una volta che quel
+    thread ha allocato molto (ogni chiamata pesante passa da asyncio.to_thread)."""
+
+    def test_non_solleva_mai(self, monkeypatch):
+        """Deve essere sicura da chiamare ovunque, anche se qualcosa nel
+        sistema sottostante non si comporta come atteso."""
+        monkeypatch.setattr(bt.ctypes, "CDLL", lambda *a, **k: (_ for _ in ()).throw(OSError("niente libc")))
+        bt.libera_memoria_al_sistema_operativo()  # non deve sollevare
+
+    def test_chiama_sempre_gc_collect(self, monkeypatch):
+        chiamato = []
+        monkeypatch.setattr(bt.gc, "collect", lambda: chiamato.append(1))
+        bt.libera_memoria_al_sistema_operativo()
+        assert chiamato == [1]
+
+    def test_su_macos_malloc_trim_fallisce_silenziosamente(self):
+        """Qui girano i test: non deve sollevare nulla di visibile."""
+        bt.libera_memoria_al_sistema_operativo()
+
+    def test_analizza_schedine_chiama_il_rilascio(self):
+        """La funzione deve esistere e essere quella richiamata dopo l'analisi:
+        verifica statica, perche' testare l'effetto reale richiede Linux."""
+        sorgente = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_telegram.py")).read()
+        blocco_analisi = sorgente[sorgente.index("def analizza_schedine_multiple"):sorgente.index("def normalizza_nomi_partite")]
+        assert "libera_memoria_al_sistema_operativo()" in blocco_analisi
+
+    def test_calcolo_risultati_chiama_il_rilascio(self):
+        sorgente = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_telegram.py")).read()
+        blocco = sorgente[sorgente.index("def esegui_calcolo_risultati"):sorgente.index("def applica_risultato_manuale")]
+        assert "libera_memoria_al_sistema_operativo()" in blocco
