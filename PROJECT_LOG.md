@@ -133,6 +133,8 @@ Una singola foto di schedina costa **quasi 30 volte** tutti i dati di un campion
 - **"L'IA ha faticato" nel riepilogo**: se ha risposto un modello di riserva, o se la lettura ha superato i 30s, ora te lo dice nel messaggio invece di lasciarlo solo nei log di Render. È il primo segnale che i modelli stanno peggiorando.
 - **Auto update che non si ripete**: il ricalcolo avviene sempre (è quello che aggiorna Sheets), ma il messaggio parte solo se è cambiato qualcosa rispetto all'ultimo inviato. Un messaggio identico ogni sera smette di essere letto, e quando poi cambia davvero non lo noti più.
 
+**Dashboard più usabile da telefono** (`app.py` 2.7.1) — verificata nel browser a 375x812, non a occhio. Streamlit impila le colonne sotto i ~640px ma **non riduce i caratteri**: le tre metriche del Fondo Cassa diventavano una colonna di riquadri altissimi. Una media query `max-width: 640px` riduce metriche, titoli, margini laterali, schede e tabelle. Misurato disattivando e riattivando la regola sullo stesso viewport: la scheda Classifica passa da **2105px a 1925px** (-180px, -9%), e soprattutto podio completo e inizio classifica ora entrano in una sola schermata. Desktop verificato invariato (metriche di nuovo a 31,5px, margini a 70px).
+
 **Rimosso `RISULTATI_MANUALI`** da `app.py`: verificato in diretta sull'API che tutte e quattro le partite ora risultano `FINISHED` con risultati **identici** a quelli scritti a mano. Toppa nata in Sessione 6, rimossa a rischio zero.
 
 **Verifiche**: 318 test verdi; dry-run di non-regressione su dati di produzione (640 celle confrontate, **0 differenze**); `/diagnostica` eseguito per davvero contro Sheets, Football-Data e Gemini reali.

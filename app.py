@@ -23,6 +23,39 @@ header {visibility: hidden !important;}
 a.header-anchor {display: none !important;}
 h1 a, h2 a, h3 a, h4 a, h5 a, h6 a {display: none !important;}
 .block-container {padding-top: 1.5rem !important; padding-bottom: 2rem !important;}
+
+/* --- ADATTAMENTI PER TELEFONO ---
+   Streamlit impila le colonne sotto i ~640px ma NON riduce i caratteri: una
+   riga di tre metriche, che su desktop sta in una fascia, sul telefono diventa
+   una colonna di riquadri altissimi. Misurato sulla scheda Classifica: la
+   pagina era lunga 1930px, di cui ~400 per i soli tre numeri del Fondo Cassa.
+   Qui si interviene solo sull'aspetto: nessuna logica, nessun dato. */
+@media (max-width: 640px) {
+    /* Il numero grande delle metriche: da 31px a 21px (misurato) resta ben
+       leggibile ma restituisce parecchia altezza su ogni riquadro. */
+    [data-testid="stMetricValue"] {font-size: 1.5rem !important;}
+    [data-testid="stMetricLabel"] p {font-size: 0.8rem !important;}
+    [data-testid="stMetric"] {padding: 0.6rem 0.8rem !important;}
+
+    /* Titolo e sottotitolo: prima occupavano mezzo schermo prima ancora di
+       arrivare ai contenuti. */
+    h1 {font-size: 1.7rem !important; line-height: 1.2 !important;}
+    h2 {font-size: 1.25rem !important;}
+    h3 {font-size: 1.05rem !important;}
+
+    /* Margini laterali ridotti: su 375px di larghezza ogni pixel conta,
+       soprattutto per le tabelle di classifica. */
+    .block-container {padding-left: 0.7rem !important; padding-right: 0.7rem !important; padding-top: 0.75rem !important;}
+
+    /* Le schede sono 6: più compatte, se ne vedono più di tre alla volta
+       e si scorre meno in orizzontale per trovarle. */
+    button[data-baseweb="tab"] {padding-left: 0.55rem !important; padding-right: 0.55rem !important;}
+    button[data-baseweb="tab"] p {font-size: 0.85rem !important;}
+
+    /* Tabelle: testo un filo più piccolo per far entrare le colonne senza
+       scorrimento orizzontale. */
+    [data-testid="stTable"] td, [data-testid="stTable"] th {font-size: 0.82rem !important; padding: 0.35rem 0.4rem !important;}
+}
 </style>
 """)
 
@@ -61,8 +94,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.7.0"
+VERSIONE_APP = "2.7.1"
 NOVITA = [
+    ("2.7.1", "04/09/2026", "Sito più comodo da telefono: classifica, podio e montepremi occupano meno spazio, si scorre molto meno per vedere tutto."),
     ("2.7.0", "31/08/2026", "Tabellone della Coppa svelato (gli accoppiamenti restano segreti fino al sorteggio), frecce di tendenza in classifica e gestione delle partite rinviate."),
     ("2.6.0", "30/08/2026", "Calcolo punti più rigoroso: un pronostico che il sistema non riconosce non viene più considerato vinto, ma segnalato per un controllo."),
     ("2.5.0", "30/08/2026", "Controlli automatici di affidabilità sui risultati live."),
