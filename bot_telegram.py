@@ -4,6 +4,7 @@ import gc
 import ctypes
 import json
 import logging
+import random
 import re
 import time
 import resource
@@ -1157,7 +1158,16 @@ async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Avvia l'archiviazione della stagione. Operazione che SVUOTA i fogli di
-    lavoro, quindi: backup automatico prima, poi conferma esplicita."""
+    lavoro, quindi: backup automatico prima, poi conferma con codice.
+
+    Un bottone "Sì" e' un solo tap distratto di distanza dallo svuotamento dei
+    fogli di lavoro — troppo poco per l'unica operazione del progetto che
+    cancella dati, specialmente ora che l'accesso admin potrebbe non restare
+    per sempre a una sola persona (Sessione 17). La conferma richiede di
+    DIGITARE un codice a 6 cifre generato li' per li' e mostrato solo in
+    questo messaggio: non e' un tentativo di sicurezza crittografica (chi
+    arriva fin qui e' gia' un admin autorizzato), e' un freno contro il tap
+    a vuoto — costringe a fermarsi e leggere, non solo a toccare uno schermo."""
     if update.effective_user.id != ADMIN_ID: return
 
     etichetta = await asyncio.to_thread(stagione_corrente)
@@ -1165,39 +1175,53 @@ async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAUL
         await update.message.reply_text("⚠️ Non riesco a determinare la stagione corrente (API non raggiungibile). Riprova più tardi.")
         return
 
+    codice = f"{random.randint(0, 999999):06d}"
     context.user_data['stagione_da_archiviare'] = etichetta
+    context.user_data['codice_conferma_archiviazione'] = codice
     await update.message.reply_text("💾 Prima di tutto ti mando un backup di sicurezza...")
     await task_backup_periodico(context)
 
-    kb = [
-        [InlineKeyboardButton(f"✅ Sì, archivia la {etichetta}", callback_data="archivia_si")],
-        [InlineKeyboardButton("❌ Annulla", callback_data="archivia_no")],
-    ]
+    kb = [[InlineKeyboardButton("❌ Annulla", callback_data="archivia_no")]]
     await update.message.reply_text(
         f"⚠️ *Archiviazione stagione {etichetta}*\n\n"
         f"Farò una copia di Giocate, Classifica e Cassa nei fogli «... {etichetta}», "
         f"poi *svuoterò i fogli di lavoro* per la nuova stagione.\n\n"
         f"I dati storici restano consultabili nello spreadsheet, e hai appena ricevuto il backup qui sopra.\n\n"
-        f"Procedo?",
+        f"Per confermare, scrivi questo codice: `{codice}`",
         reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown"
     )
     return CONFERMA_ARCHIVIA_STAGIONE
 
-async def esegui_archivia_stagione(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def annulla_archiviazione(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
-    if query.data == "archivia_no":
-        context.user_data.pop('stagione_da_archiviare', None)
-        await query.edit_message_text("❌ Archiviazione annullata. Nessun dato è stato toccato.")
-        return ConversationHandler.END
+    context.user_data.pop('stagione_da_archiviare', None)
+    context.user_data.pop('codice_conferma_archiviazione', None)
+    await query.edit_message_text("❌ Archiviazione annullata. Nessun dato è stato toccato.")
+    return ConversationHandler.END
+
+async def verifica_codice_archiviazione(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confronta il testo digitato con il codice mostrato. Un codice sbagliato
+    non fa uscire dalla conversazione: si puo' ritentare o usare /cancel,
+    esattamente come capiterebbe rileggendo il messaggio con piu' calma."""
+    codice_atteso = context.user_data.get('codice_conferma_archiviazione')
+    digitato = (update.message.text or "").strip()
+
+    if digitato != codice_atteso:
+        await update.message.reply_text(
+            "❌ Codice non corretto. Ricontrolla il messaggio qui sopra e ridigitalo, "
+            "oppure /cancel per annullare."
+        )
+        return CONFERMA_ARCHIVIA_STAGIONE
 
     etichetta = context.user_data.get('stagione_da_archiviare')
-    await query.edit_message_text(f"⏳ Archivio la stagione {etichetta}...")
+    await update.message.reply_text(f"⏳ Codice corretto. Archivio la stagione {etichetta}...")
     try:
         esito = await asyncio.to_thread(archivia_stagione, etichetta)
         await context.bot.send_message(chat_id=ADMIN_ID, text=esito, parse_mode="Markdown")
     except Exception as e:
         await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Archiviazione fallita: {e}")
     context.user_data.pop('stagione_da_archiviare', None)
+    context.user_data.pop('codice_conferma_archiviazione', None)
     return ConversationHandler.END
 
 AVVISO_CHIAVE_SALVATA = (
@@ -1601,6 +1625,11 @@ async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
         for foto in context.user_data['foto_ricevute']:
             if os.path.exists(foto): os.remove(foto)
         del context.user_data['foto_ricevute']
+    # /cancel come fallback generico deve poter interrompere anche
+    # l'archiviazione a meta': altrimenti il codice resterebbe appeso in
+    # user_data pronto per essere confermato per sbaglio in una sessione dopo.
+    context.user_data.pop('stagione_da_archiviare', None)
+    context.user_data.pop('codice_conferma_archiviazione', None)
 
 async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
     """Ricalcola la giornata corrente e avvisa l'admin SOLO se e' cambiato qualcosa.
@@ -2130,7 +2159,10 @@ def main():
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("archiviastagione", archivia_stagione_command)],
-        states={CONFERMA_ARCHIVIA_STAGIONE: [CallbackQueryHandler(esegui_archivia_stagione, pattern="^archivia_")]},
+        states={CONFERMA_ARCHIVIA_STAGIONE: [
+            CallbackQueryHandler(annulla_archiviazione, pattern="^archivia_no$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, verifica_codice_archiviazione),
+        ]},
         fallbacks=[CommandHandler("cancel", annulla_tutto)],
     ))
     app.add_handler(conv_handler)
