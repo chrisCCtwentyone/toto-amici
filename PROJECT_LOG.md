@@ -106,6 +106,39 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 04/09/2026 — Sessione 16 (Memoria: l'ipotesi era sbagliata, la misura l'ha smentita)
+
+**L'ipotesi da verificare** (da Sessione 15): "la memoria cresce con l'accumularsi delle giornate, prima o poi Render ucciderà il bot". Sembrava solidissima: tre funzioni rileggono tutto `Giocate` a ogni chiamata, e le righe crescono di 160 a giornata.
+
+**La misura l'ha demolita in due minuti**:
+
+| cosa | costo reale in memoria |
+|---|---|
+| una **stagione intera** di Giocate (6080 righe) | **1,6 MB** |
+| **una sola foto** 4032x3024 al momento della decodifica | **46,7 MB** |
+| la stessa foto con `draft()` | **~0 MB** |
+
+Una singola foto di schedina costa **quasi 30 volte** tutti i dati di un campionato. Tre foto caricate insieme fanno ~140 MB di picco su un piano da 512 — mentre l'intero storico delle giocate, quello che temevamo, ne occupa meno di due. La direzione in cui stavamo per lavorare era quella sbagliata.
+
+**Cosa è stato fatto, di conseguenza**:
+- **`draft()` nella lettura delle foto**: dice al decoder JPEG di produrre già l'immagine ridotta invece di decodificarla a piena risoluzione per poi rimpicciolirla. È il cambio con il rapporto beneficio/rischio più alto dell'intera sessione: due righe, ~47 MB di picco risparmiati per foto.
+- **NON è stato fatto** il refactor "leggi solo le righe della giornata": avrebbe richiesto di toccare la scrittura per indice di riga in `esegui_calcolo_risultati` — la stessa area del bug che in Sessione 13 riscrisse 13 giornate — per guadagnare 1,6 MB. Rischio alto, beneficio misurato irrilevante.
+- **Strumentazione**: `memoria_mb()` (attuale, da `/proc/self/status`) e `memoria_picco_mb()` (massimo storico, da `getrusage`) loggate all'analisi schedina e al calcolo risultati. Distinguerle è essenziale: `ru_maxrss` non scende **mai**, quindi da sola farebbe sembrare critico un bot in salute.
+- **Controllo anomalie da 2h a 4h**: era il più frequente dei lavori che rileggono tutto Giocate (12 volte al giorno), ed è un avviso preventivo che non serve al minuto.
+
+**Comando `/diagnostica`** — nato dal dolore delle Sessioni 14-15, dove per scoprire che un modello metteva 96s a rispondere è servito scrivere script in locale con la chiave API. Controlla in un colpo solo: memoria (attuale e picco), ultimo ping keep-alive, Google Sheets (righe e latenza), Football-Data (giornata e latenza), e ogni modello della catena IA con i tempi reali.
+> **Ha mentito al primo test, ed è stato corretto prima di pubblicarlo.** Con la soglia a 10s (il minimo consentito dall'API) bocciava tutti e quattro i modelli — mentre in realtà tre rispondevano in 2,6s, 8,7s e 15,6s. Soglia portata a 30s, oltre la peggiore latenza valida osservata, e prove eseguite **in parallelo** (caso peggiore 30s invece di due minuti). Una diagnostica che grida al lupo è peggio di nessuna diagnostica.
+
+**Altre due migliorie richieste**:
+- **"L'IA ha faticato" nel riepilogo**: se ha risposto un modello di riserva, o se la lettura ha superato i 30s, ora te lo dice nel messaggio invece di lasciarlo solo nei log di Render. È il primo segnale che i modelli stanno peggiorando.
+- **Auto update che non si ripete**: il ricalcolo avviene sempre (è quello che aggiorna Sheets), ma il messaggio parte solo se è cambiato qualcosa rispetto all'ultimo inviato. Un messaggio identico ogni sera smette di essere letto, e quando poi cambia davvero non lo noti più.
+
+**Rimosso `RISULTATI_MANUALI`** da `app.py`: verificato in diretta sull'API che tutte e quattro le partite ora risultano `FINISHED` con risultati **identici** a quelli scritti a mano. Toppa nata in Sessione 6, rimossa a rischio zero.
+
+**Verifiche**: 318 test verdi; dry-run di non-regressione su dati di produzione (640 celle confrontate, **0 differenze**); `/diagnostica` eseguito per davvero contro Sheets, Football-Data e Gemini reali.
+
+**Lezione**: l'ipotesi sulla memoria era mia, era plausibile e l'utente l'aveva fatta propria come priorità numero uno. Bastavano due minuti di misura per scoprire che il bersaglio era un altro. Prima di ottimizzare, misurare — anche quando la spiegazione "ha senso".
+
 ### 02/09/2026 — Sessione 15 (Caricamento schedina bloccato: Markdown e Gemini 503)
 
 **Sintomo**: impossibile caricare le schedine di Giornata 3. Due errori diversi, entrambi mostrati come *"❌ Errore durante l'elaborazione IA"*:
@@ -420,13 +453,13 @@ Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del c
 ## 📋 TODO / Azioni Pendenti
 
 ### 🔴 Priorità Alta — Da fare ASAP
-- [ ] **Rimuovere `RISULTATI_MANUALI` da `app.py`** (aggiunta in Sessione 6) non appena Football-Data.org torna a riportare correttamente le 4 partite di Giornata 2 (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma) — è una toppa temporanea con punteggi scritti a mano, non deve restare nel codice più del necessario.
+- [x] ~~**Rimuovere `RISULTATI_MANUALI` da `app.py`**~~ — fatto in Sessione 16: verificato in diretta che l'API riporta ora tutte e quattro le partite come `FINISHED` con risultati identici alla toppa, quindi rimossa senza alcun cambiamento visibile ai giocatori. Testo originale: (aggiunta in Sessione 6) non appena Football-Data.org torna a riportare correttamente le 4 partite di Giornata 2 (Sassuolo-Torino, Monza-Udinese, Fiorentina-Frosinone, Juventus-Parma) — è una toppa temporanea con punteggi scritti a mano, non deve restare nel codice più del necessario.
 - [x] ~~**STRESS TEST REVISIONE CLAUDE**~~ — svolto in Sessione 8: revisione completa che ha portato alla luce due bug latenti gravi (esiti "vinti per default", vincite a quattro cifre in Cassa) e alla prima suite di test automatici.
-- [ ] **Impostare `GEMINI_API_KEY` come variabile d'ambiente su Render** (Sessione 8): senza, una chiave cambiata con `/setkey` torna silenziosamente a quella vecchia al primo riavvio.
+- [x] ~~**Impostare `GEMINI_API_KEY` come variabile d'ambiente su Render**~~ — fatto dall'utente (confermato in Sessione 16).
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
 
 ### 🟡 Priorità Media — Prossime sessioni
-- [ ] **Crescita memoria con l'accumularsi delle giornate** (Sessione 15): il 01/09/2026 Render ha ucciso il processo per superamento del limite di memoria (mail "exceeded memory limit"), riavviato da Render stessa in autonomia. Il crash coincide esattamente con l'orario di `task_aggiornamento_automatico` (20:30/23:00 CEST) — correlazione precisa ma su un solo evento, non ancora una prova. Cosa si sa per certo: `esegui_calcolo_risultati` (chiamata da quel task, 2 volte al giorno + su richiesta admin) rilegge per intero `Giocate!A:I` a ogni chiamata anche se elabora solo una giornata; `task_controlla_anomalie_partite` (ogni 2h, quindi il più frequente) rilegge per intero `Giocate!A:G`; `task_backup_periodico` (settimanale) fa un `batchGet` su tutto `Giocate!A:I`. Tutte e tre crescono linearmente con le giornate giocate in stagione (16 giocatori × 10 partite/giornata). Non sono la prova certa del crash, ma sono l'unico meccanismo concreto nel codice che peggiora con l'andare avanti del campionato. **Prima mossa se ricapita**: aggiungere un log di `resource.getrusage(...).ru_maxrss` (o `psutil`) a inizio/fine di `esegui_calcolo_risultati` e `task_controlla_anomalie_partite`, per avere numeri reali invece di una correlazione temporale. Altre leve, da valutare solo se il problema si ripresenta: abbassare la frequenza di `task_controlla_anomalie_partite` (2h → 4-6h, è il meno critico dei tre); far leggere a queste funzioni solo le righe della giornata invece di tutto il foglio (richiede una ricerca preliminare più leggera del range di riga — cambio non banale, da fare con test di non-regressione). La crescita comunque NON è illimitata anno su anno: `archivia_stagione()` (Sessione 13) svuota i fogli a fine stagione, quindi il tetto massimo resta legato a una sola stagione (~38 giornate), non accumula per sempre.
+- [x] ~~**Crescita memoria con l'accumularsi delle giornate**~~ — **ipotesi smentita dalla misura** in Sessione 16: una stagione intera di Giocate occupa 1,6 MB, mentre una singola foto di schedina ne costava 46,7 in fase di decodifica. Risolto alla radice con `draft()` (~0 MB) invece che con il rischioso refactor delle letture. Restano strumentazione nei log e `/diagnostica` per vedere i numeri veri al prossimo episodio.
 - [ ] **Secondo controllore esterno (UptimeRobot o simile)** — deciso in Sessione 14 di **non** farlo per ora, ma tenerlo pronto. Oggi le fonti di keep-alive sono due (auto-ping interno + cron-job.org); un terzo controllore gratuito indipendente (ping ogni 5 min) coprirebbe anche il caso in cui il processo muore davvero, che l'auto-ping per definizione non può gestire. Da valutare se il problema si ripresenta.
 - [x] ~~**Girone di ritorno**~~ — svolto in Sessione 10 (`tests/test_girone_di_ritorno.py`, 4 test): andata/ritorno indipendenti senza contaminazione, ordine invertito nel ritorno gestito correttamente (verificato iniettando il bug e controllando che il test lo scopra), nessuna collisione di prefisso Milan/Inter. Resta genericamente da tenere d'occhio la robustezza con moli di dati molto più grandi (fine campionato).
 - [ ] **Multi-admin**: possibilità in futuro di aprire l'accesso al bot ad altri utenti admin (oltre a `ADMIN_ID`), che potrebbero così caricare schedine e correggere dati anche loro. Oggi il bot riconosce un solo `ADMIN_ID` hardcoded dall'env var — servirebbe passare a una lista di ID autorizzati (`ADMIN_IDS`) con lo stesso controllo ovunque viene fatto `update.effective_user.id != ADMIN_ID`.

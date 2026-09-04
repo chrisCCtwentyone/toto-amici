@@ -1,8 +1,10 @@
 import os
+import sys
 import json
 import logging
 import re
 import time
+import resource
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
@@ -54,6 +56,7 @@ if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
 
 last_ping_time = None
 ultime_anomalie_segnalate = set()  # chiavi stabili delle anomalie dell'ultimo avviso inviato (per non ripetere lo stesso avviso ad ogni controllo)
+ultimo_report_inviato = None  # (giornata, testo) dell'ultimo AUTO UPDATE: se non cambia nulla non lo si ripete
 ultima_giornata_riepilogo_inviata = None  # per non rimandare due volte il riepilogo della stessa giornata
 
 # ==========================================
@@ -286,6 +289,57 @@ MODELLI_GEMINI = ("gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash",
 # l'admin aspetta davanti a "L'IA sta analizzando le foto...".
 TIMEOUT_GEMINI_MS = 60000
 
+# Risoluzione a cui vengono ridotte le foto delle schedine prima di mandarle
+# all'IA. Oltre questa soglia non si guadagna in accuratezza di lettura, ma si
+# paga molta memoria (vedi il commento in analizza_schedine_multiple).
+DIMENSIONE_MAX_FOTO = (1000, 1000)
+
+
+def memoria_picco_mb():
+    """Massima memoria mai occupata dal processo da quando e' partito, in MB.
+
+    E' il numero che conta per capire perche' Render ha ucciso il bot: e' il
+    picco a sfondare il limite, non la media. Ma NON scende mai, quindi da solo
+    non dice come stiamo adesso — per quello c'e' memoria_mb().
+
+    Usa `resource`, che e' nella libreria standard: nessuna dipendenza in piu'
+    da installare su Render. ru_maxrss e' in byte su macOS e in kilobyte su
+    Linux (dove gira il bot), da cui la distinzione.
+    """
+    try:
+        grezzo = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return grezzo / (1024 * 1024) if sys.platform == "darwin" else grezzo / 1024
+    except Exception:
+        return 0.0
+
+
+def memoria_mb():
+    """Memoria occupata dal processo IN QUESTO MOMENTO (RSS), in MB.
+
+    Serve a smettere di indovinare: il 01/09/2026 Render ha ucciso il bot per
+    superamento del limite di memoria e la diagnosi si e' basata su una
+    coincidenza di orari, non su un numero.
+
+    Su Linux (dove gira il bot) il valore attuale si legge da /proc/self/status.
+    Altrove — cioe' in locale su macOS durante i test — quel file non esiste e
+    si ripiega sul picco, che e' comunque meglio di niente: l'importante e' che
+    la funzione non sollevi mai, perche' viene chiamata dentro i log e da
+    /diagnostica.
+    """
+    try:
+        with open("/proc/self/status") as f:
+            for riga in f:
+                if riga.startswith("VmRSS:"):
+                    return int(riga.split()[1]) / 1024  # il valore e' in kB
+    except Exception:
+        pass
+    return memoria_picco_mb()
+
+
+# Ultimo modello che ha risposto e quanto ci ha messo: serve a dire all'admin
+# "l'IA ha faticato" nel riepilogo, invece di lasciarlo solo nei log di Render.
+ultima_lettura_ia = {"modello": None, "secondi": 0.0, "di_riserva": False}
+
 
 class GeminiSovraccarico(Exception):
     """Tutti i modelli della catena sono congestionati: e' un problema di Google,
@@ -314,11 +368,14 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
       subito, perche' riprovare non lo risolve e farebbe solo aspettare.
     """
     ultimo_errore = None
+    inizio = time.time()
     for modello in modelli:
         for tentativo in range(1, tentativi_per_modello + 1):
             try:
                 risposta = chiamata(modello)
-                if modello != modelli[0]:
+                di_riserva = modello != modelli[0]
+                ultima_lettura_ia.update(modello=modello, secondi=time.time() - inizio, di_riserva=di_riserva)
+                if di_riserva:
                     logging.warning(f"Gemini: risposta ottenuta dal modello di riserva '{modello}'")
                 return risposta
             except Exception as e:
@@ -347,11 +404,20 @@ def analizza_schedine_multiple(lista_percorsi_foto):
 
     immagini_ottimizzate = []
     for percorso in lista_percorsi_foto:
-        img = Image.open(percorso)
-        if img.mode != 'RGB': img = img.convert('RGB')
-        img.thumbnail((1000, 1000))
+        with Image.open(percorso) as originale:
+            # draft() dice al decoder JPEG di produrre GIA' l'immagine ridotta,
+            # invece di decodificarla a piena risoluzione per poi rimpicciolirla.
+            # Misurato il 04/09/2026: una foto 4032x3024 (inviata come "file"
+            # invece che come "foto" compressa da Telegram) costa 46,7 MB di
+            # picco senza draft() e ~0 MB con draft(). Con tre foto sono oltre
+            # 140 MB su un piano Render da 512 — molto piu' di tutti i dati
+            # della stagione messi insieme, che pesano 1,6 MB (Sessione 16).
+            originale.draft('RGB', DIMENSIONE_MAX_FOTO)
+            img = originale.convert('RGB')
+        img.thumbnail(DIMENSIONE_MAX_FOTO)
         immagini_ottimizzate.append(img)
-        
+
+
     prompt = """
     Sei un assistente esperto nell'analisi di schedine di scommesse sportive. Analizza queste immagini con estrema attenzione (potrebbero essere più schermate della stessa bolletta).
 
@@ -372,6 +438,7 @@ def analizza_schedine_multiple(lista_percorsi_foto):
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
        - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
+    logging.info(f"Analisi schedina: {len(immagini_ottimizzate)} foto pronte, memoria {memoria_mb():.0f} MB (picco {memoria_picco_mb():.0f})")
     response = chiama_gemini_con_fallback(lambda modello: client.models.generate_content(
         model=modello,
         contents=[prompt] + immagini_ottimizzate,
@@ -731,6 +798,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     if not matches_api: return "Nessuna partita trovata per questa giornata."
 
     righe_giocate = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Giocate!A:I").execute(num_retries=3).get('values', [])
+    logging.info(f"Calcolo G.{giornata}: lette {len(righe_giocate)} righe da Giocate, memoria {memoria_mb():.0f} MB (picco {memoria_picco_mb():.0f})")
     classifica, aggiornamenti_testo, richieste_stile = {}, [], []
     da_verificare_dettaglio = []
     colore_verde, colore_rosso, colore_grigio = {"red":0.85,"green":0.95,"blue":0.85}, {"red":0.95,"green":0.85,"blue":0.85}, {"red":0.90,"green":0.90,"blue":0.90}
@@ -885,6 +953,124 @@ def applica_risultato_manuale(giornata, casa_nome, ospite_nome, gol_casa, gol_os
 # ==========================================
 # GESTIONE TELEGRAM E MENU CON PULSANTE KEY
 # ==========================================
+# Soglia della prova di /diagnostica. NON e' il minimo consentito dall'API (10s):
+# con 10s la diagnostica bocciava TUTTI i modelli mentre in realta' tre su
+# quattro rispondevano in 2,6s / 8,7s / 15,6s. Una diagnostica che grida al
+# lupo e' peggio di nessuna diagnostica, quindi la soglia sta sopra la peggiore
+# latenza osservata per una risposta valida (Sessione 16).
+TIMEOUT_PROVA_MODELLO_MS = 30000
+
+
+def _prova_un_modello(modello):
+    """Interroga un modello con una richiesta minima. Restituisce (nome, secondi, problema)."""
+    client = get_gemini_client()
+    if not client:
+        return (modello, 0.0, "nessuna chiave configurata")
+    inizio = time.time()
+    try:
+        client.models.generate_content(
+            model=modello, contents=["Rispondi solo: OK"],
+            config=types.GenerateContentConfig(
+                http_options=types.HttpOptions(timeout=TIMEOUT_PROVA_MODELLO_MS)),
+        )
+        return (modello, time.time() - inizio, None)
+    except Exception as e:
+        testo = str(e)
+        if "503" in testo or "UNAVAILABLE" in testo.upper():
+            motivo = "sovraccarico"
+        elif "404" in testo or "NOT_FOUND" in testo.upper():
+            motivo = "non piu' disponibile"
+        elif "DEADLINE" in testo.upper() or "timed out" in testo.lower():
+            motivo = f"oltre {TIMEOUT_PROVA_MODELLO_MS // 1000}s"
+        else:
+            motivo = testo[:40]
+        return (modello, time.time() - inizio, motivo)
+
+
+async def _prova_modelli_gemini():
+    """Prova tutti i modelli IN PARALLELO.
+
+    In sequenza il comando avrebbe richiesto fino a due minuti (4 modelli per
+    30s di timeout); in parallelo il caso peggiore resta 30s.
+    """
+    return await asyncio.gather(*(asyncio.to_thread(_prova_un_modello, m) for m in MODELLI_GEMINI))
+
+
+async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Controllo completo di tutti i pezzi da cui dipende il bot, in un colpo solo.
+
+    Nasce dalle Sessioni 14-15: per scoprire che un modello Gemini metteva 96
+    secondi a rispondere e' servito scrivere script sul computer dell'admin con
+    la chiave API. Questo comando da' la stessa risposta da Telegram in pochi
+    secondi, ed e' la prima mossa da fare quando qualcosa non va.
+    """
+    if update.effective_user.id != ADMIN_ID: return
+    messaggio = await update.message.reply_text("🔍 Controllo in corso... (i modelli IA richiedono qualche secondo)")
+
+    righe = [f"🩺 *DIAGNOSTICA* — {datetime.now(pytz.timezone('Europe/Rome')).strftime('%d/%m %H:%M')}\n"]
+
+    # --- Memoria ---
+    # Il piano gratuito di Render da' 512 MB: superarli significa processo ucciso.
+    # Il picco conta quanto l'attuale, perche' e' il picco che fa scattare il kill.
+    usata, picco = memoria_mb(), memoria_picco_mb()
+    percentuale = picco / 512 * 100
+    icona = "✅" if percentuale < 60 else ("⚠️" if percentuale < 85 else "🔴")
+    righe.append(f"{icona} *Memoria*: {usata:.0f} MB ora, picco {picco:.0f} MB su 512 ({percentuale:.0f}%)")
+
+    # --- Keep-alive ---
+    if last_ping_time is None:
+        righe.append("⚠️ *Keep-alive*: nessun ping ricevuto dall'avvio")
+    else:
+        da_quanto = (datetime.now() - last_ping_time).total_seconds()
+        icona = "✅" if da_quanto < 600 else "🔴"
+        righe.append(f"{icona} *Keep-alive*: ultimo ping {int(da_quanto/60)} min fa (Render spegne a 15)")
+
+    # --- Google Sheets ---
+    inizio = time.time()
+    try:
+        service = await asyncio.to_thread(connetti_sheets)
+        valori = await asyncio.to_thread(
+            lambda: service.spreadsheets().values().get(
+                spreadsheetId=SPREADSHEET_ID, range="Giocate!A:A"
+            ).execute(num_retries=3).get('values', [])
+        )
+        righe.append(f"✅ *Google Sheets*: {len(valori)} righe in Giocate, risposta in {time.time()-inizio:.1f}s")
+    except Exception as e:
+        righe.append(f"🔴 *Google Sheets*: {escape_markdown(str(e)[:60])}")
+
+    # --- Football-Data ---
+    inizio = time.time()
+    giornata = await asyncio.to_thread(ottieni_giornata_corrente)
+    if giornata is None:
+        righe.append("🔴 *Football-Data*: non raggiungibile")
+    else:
+        righe.append(f"✅ *Football-Data*: giornata corrente {giornata}, risposta in {time.time()-inizio:.1f}s")
+
+    # --- Gemini ---
+    righe.append("\n*Modelli IA* (in ordine di utilizzo):")
+    esiti = await _prova_modelli_gemini()
+    for modello, durata, problema in esiti:
+        if problema is None:
+            # Sotto i 10s e' pronto; tra 10 e 30 funziona ma si sente l'attesa.
+            icona = "✅" if durata < 10 else "⚠️"
+            righe.append(f"{icona} `{modello}` — {durata:.1f}s")
+        else:
+            righe.append(f"🔴 `{modello}` — {escape_markdown(problema)}")
+
+    funzionanti = [e for e in esiti if e[2] is None]
+    if not funzionanti:
+        # "Fallirebbe" sarebbe troppo netto: il caricamento vero concede 60s,
+        # il doppio della soglia usata qui, quindi potrebbe ancora farcela.
+        righe.append("\n🔴 _Nessun modello ha risposto entro "
+                     f"{TIMEOUT_PROVA_MODELLO_MS // 1000}s: il caricamento di una schedina "
+                     "sarebbe molto lento o fallirebbe. Riprova tra qualche minuto._")
+    elif len(funzionanti) < len(esiti):
+        righe.append(f"\n✅ _{len(funzionanti)} modelli su {len(esiti)} disponibili: "
+                     "il caricamento schedine funziona._")
+
+    await messaggio.edit_text("\n".join(righe), parse_mode="Markdown")
+
+
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Riepilogo rapido: giornata corrente e chi non ha ancora caricato la schedina."""
     if update.effective_user.id != ADMIN_ID: return
@@ -1156,6 +1342,16 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for a in avvisi:
                 msg_riepilogo += f"{a}\n"
 
+        # Se l'IA ha faticato l'admin deve saperlo qui, non nei log di Render:
+        # e' il primo segnale che i modelli stanno peggiorando, e spiega anche
+        # perche' la lettura ha richiesto piu' tempo del solito (Sessione 16).
+        if ultima_lettura_ia["di_riserva"]:
+            msg_riepilogo += (f"\n🐢 _Letta dal modello di riserva "
+                              f"{escape_markdown(ultima_lettura_ia['modello'])} "
+                              f"in {ultima_lettura_ia['secondi']:.0f}s — i modelli principali erano occupati._\n")
+        elif ultima_lettura_ia["secondi"] > 30:
+            msg_riepilogo += f"\n🐢 _Lettura lenta ({ultima_lettura_ia['secondi']:.0f}s): i server IA sono carichi._\n"
+
         kb = [
             [InlineKeyboardButton("✅ Conferma e Salva su Sheets", callback_data="salva_ia_si")],
             [InlineKeyboardButton("❌ Annulla (Lettura Errata)", callback_data="salva_ia_no")]
@@ -1361,12 +1557,29 @@ async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
         del context.user_data['foto_ricevute']
 
 async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
+    """Ricalcola la giornata corrente e avvisa l'admin SOLO se e' cambiato qualcosa.
+
+    Il ricalcolo viene fatto comunque (e' quello che aggiorna Sheets): a essere
+    condizionato e' l'invio del messaggio. Prima arrivava ogni sera comunque,
+    anche a giornata conclusa e immutata da giorni: un messaggio che si ripete
+    identico smette di essere letto, e quando poi cambia davvero qualcosa non lo
+    noti piu'. Stessa logica gia' usata da task_controlla_anomalie_partite
+    (Sessione 16).
+    """
+    global ultimo_report_inviato
     giornata = await asyncio.to_thread(ottieni_giornata_corrente)
     if giornata is None:
         # Meglio saltare il giro che ricalcolare la giornata sbagliata.
         logging.warning("task_aggiornamento_automatico: giornata corrente sconosciuta, giro saltato")
         return
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
+
+    impronta = (giornata, report)
+    if impronta == ultimo_report_inviato:
+        logging.info(f"Auto update G.{giornata}: nessuna novita' rispetto all'ultimo invio, non lo ripeto")
+        return
+    ultimo_report_inviato = impronta
+
     await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
 
 async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
@@ -1766,6 +1979,7 @@ async def post_init(application: Application):
     await application.bot.set_my_commands([
         ("start", "Apri il menu principale"),
         ("status", "Giornata corrente e schedine mancanti"),
+        ("diagnostica", "Controlla memoria, Sheets, API e modelli IA"),
         ("backup", "Esporta subito un backup dei dati"),
         ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
         ("archiviastagione", "Chiudi la stagione e azzera i fogli"),
@@ -1794,8 +2008,10 @@ def main():
     # Job giornaliero: alle 10:00 controlla se ci sono partite oggi e schedula promemoria 30min prima
     app.job_queue.run_daily(task_schedula_promemoria, time=dt_time(hour=10, minute=0, tzinfo=tz))
 
-    # Job ricorrente ogni 2 ore: controlla anomalie nei dati Football-Data della giornata corrente
-    app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=7200, first=600)
+    # Controllo anomalie ogni 4 ore (era 2): e' un avviso preventivo, non serve
+    # al minuto, ed era il piu' frequente dei lavori che rileggono tutto Giocate
+    # — 12 volte al giorno contro le 2 del calcolo risultati (Sessione 16).
+    app.job_queue.run_repeating(task_controlla_anomalie_partite, interval=14400, first=600)
 
     # Auto-ping ogni 5 minuti. Non e' eccesso di zelo: Render spegne dopo 15 minuti
     # senza traffico, quindi a 10 minuti di intervallo UN SOLO ping perso creerebbe
@@ -1863,6 +2079,7 @@ def main():
 
     app.add_handler(CommandHandler("setkey", set_api_key_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("diagnostica", diagnostica_command))
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
     app.add_handler(ConversationHandler(

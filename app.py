@@ -58,16 +58,6 @@ except KeyError:
 OBIETTIVO_CASSA = 3200.0
 EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 
-# Correzione temporanea: risultati reali di partite che Football-Data.org mostra ancora
-# come "non giocate" (incidente del 30/08/2026 su Giornata 2, vedi PROJECT_LOG.md).
-# Da rimuovere quando l'API torna a riportare questi dati correttamente.
-RISULTATI_MANUALI = {
-    "US Sassuolo Calcio - Torino FC": "2 - 1",
-    "AC Monza - Udinese Calcio": "2 - 3",
-    "ACF Fiorentina - Frosinone Calcio": "0 - 3",
-    "Juventus FC - Parma Calcio 1913": "2 - 0",
-}
-
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
@@ -552,11 +542,6 @@ with tab_live:
                 risultato_info = risultati_live.get(partita_normalizzata, {})
                 risultato_match = risultato_info.get("score", "")
                 data_match = risultato_info.get("data", "")
-
-                # Football-Data non riporta ancora il risultato reale per questa partita
-                # (vedi RISULTATI_MANUALI sopra): usa il valore noto invece di "Da giocare".
-                if risultato_match in ("", "Da giocare") and partita_normalizzata in RISULTATI_MANUALI:
-                    risultato_match = RISULTATI_MANUALI[partita_normalizzata]
 
                 if "VINTA" in esito:
                     badge_color, badge_icon = "green", ":material/check_circle:"
