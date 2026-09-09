@@ -964,7 +964,14 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
             service.spreadsheets().values().append(spreadsheetId=SPREADSHEET_ID, range="Cassa!A:D", valueInputOption="USER_ENTERED", body={"values": nuove}).execute(num_retries=3)
             report += "💰 *Vincite registrate in Cassa!*\n"
     del righe_giocate, righe_class
+    # Il log prima/dopo serve QUI piu' che nell'analisi schedina: questa
+    # funzione gira piu' volte al giorno (job schedulati + comando manuale),
+    # mentre una schedina si carica una volta a giornata. Cercando "dopo il
+    # rilascio" nei log di Render il 09/09/2026 non c'era nemmeno una riga,
+    # proprio perche' l'unico punto strumentato era quello sbagliato.
+    prima = memoria_mb()
     libera_memoria_al_sistema_operativo()
+    logging.info(f"Calcolo G.{giornata} completato: memoria {prima:.0f} MB -> {memoria_mb():.0f} MB dopo il rilascio")
     return report
 
 def applica_risultato_manuale(giornata, casa_nome, ospite_nome, gol_casa, gol_ospite):

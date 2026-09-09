@@ -106,6 +106,24 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 09/09/2026 — Sessione 18 (La correzione sulla memoria ha funzionato: i numeri di Render)
+
+**La verifica in sospeso dalla Sessione 17.** La correzione (`libera_memoria_al_sistema_operativo()`, pubblicata il 04/09) era stata dichiarata "non verificabile in locale": `malloc_trim` esiste solo su glibc/Linux, e la prova poteva arrivare solo dalla produzione. È arrivata, grazie al server MCP di Render appena disponibile — metriche e log letti direttamente, senza doverli far copiare all'utente.
+
+**Prima della correzione** (27/08 → 03/09): **8 mail** "exceeded its memory limit" in 8 giorni. Le metriche mostrano il profilo tipico del problema: la memoria **saliva in modo monotono** fino a 490–533 MB, il processo veniva ucciso, ripartiva, e ricominciava a salire. Non scendeva **mai** se non per un riavvio.
+
+**Dopo la correzione** (04/09 17:00 → 09/09 12:00):
+- **Zero mail di allarme in 5 giorni** (prima ne arrivava circa una al giorno).
+- **Zero riavvii**: la stessa istanza (`9jtnq`) è viva ininterrottamente da 5 giorni. Prima nessuna istanza superava le ~24 ore.
+- La memoria ora **oscilla e scende da sola**: 320 MB alle 15:30 dell'08/09, 222 MB alle 18:30 — un centinaio di MB restituiti al sistema operativo senza alcun riavvio. È esattamente ciò che `malloc_trim` doveva fare.
+- Il picco si è **stabilizzato a 409–414 MB** invece di continuare a salire verso il limite.
+
+**Sfumatura sulla causa, ora che ci sono i dati.** Cinque delle otto mail sono arrivate a orari che coincidono al secondo con i job schedulati (21:00 UTC = 23:00 CEST, 18:30 UTC = 20:30 CEST). In Sessione 15 questa coincidenza era stata ipotizzata e poi archiviata come "mai supportata da un numero"; i numeri ora ci sono, ma il quadro completo è più preciso di entrambe le ipotesi precedenti: **la causa di fondo era la crescita continua** (memoria non restituita all'OS dalle arene dei thread), **il job schedulato era solo la goccia** che di volta in volta faceva traboccare un vaso già pieno. Ecco perché intervenire sulla crescita ha risolto, mentre nè ottimizzare le foto nè spostare l'orario del job avrebbero funzionato.
+
+**Buco nella strumentazione, trovato cercando la prova.** La riga di log `... -> ... MB dopo il rilascio` non compariva **mai** nei log di produzione: era stata messa solo in `analizza_schedine_multiple` (una schedina si carica una volta a giornata), non in `esegui_calcolo_risultati` (che gira più volte al giorno). Corretto: ora il punto più frequente è quello strumentato, e la prossima verifica non richiederà l'accesso alle metriche.
+
+**Nuovo strumento nel repo: `scripts/dry_run_non_regressione.py`.** Il dry-run contro i dati di produzione veniva riscritto a mano in una cartella temporanea a ogni sessione, e ogni volta andava perso (in questa sessione lo scratchpad era di nuovo vuoto). Ora è uno script del progetto: legge i dati veri, ricalcola le giornate scelte, intercetta **ogni** scrittura senza eseguirla e confronta cella per cella. Esce con codice 1 se trova differenze, quindi è usabile anche in un controllo automatico. Verificato: 960 celle su 3 giornate, 0 differenze.
+
 ### 04/09/2026 — Sessione 17 (489 MB su 512: non erano le foto)
 
 **Sintomo**: `/diagnostica` (appena introdotto in Sessione 16) ha misurato **489 MB su 512** subito dopo il caricamento di una schedina — 95% del limite, un solo picco dal disastro.
