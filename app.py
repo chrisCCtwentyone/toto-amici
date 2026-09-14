@@ -7,6 +7,15 @@ from datetime import datetime
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from api_utils import richiedi_con_retry
+from statistiche import (
+    leggi_orario_utc,
+    momento_fine_schedina,
+    numero_giornata,
+    schedine_chiuse_ultima_giornata,
+    schedine_perse_per_un_soffio,
+    scelta_del_gruppo,
+    scomponi_durata,
+)
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
@@ -94,8 +103,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.7.1"
+VERSIONE_APP = "2.8.0"
 NOVITA = [
+    ("2.8.0", "14/09/2026", "Nuove statistiche: il timer che conta da quanto tempo nessuno vince una schedina, e \"Per un soffio\" con le schedine perse per un solo evento. Nel confronto giocate: righe ben visibili tra le partite e una nuova colonna con la scelta più giocata dal gruppo."),
     ("2.7.1", "04/09/2026", "Sito più comodo da telefono: classifica, podio e montepremi occupano meno spazio, si scorre molto meno per vedere tutto."),
     ("2.7.0", "31/08/2026", "Tabellone della Coppa svelato (gli accoppiamenti restano segreti fino al sorteggio), frecce di tendenza in classifica e gestione delle partite rinviate."),
     ("2.6.0", "30/08/2026", "Calcolo punti più rigoroso: un pronostico che il sistema non riconosce non viene più considerato vinto, ma segnalato per un controllo."),
@@ -203,7 +213,9 @@ def scarica_risultati_api(giornata):
                     
                 risultati_mappati[nome_ufficiale] = {
                     "score": score_str,
-                    "data": data_formattata
+                    "data": data_formattata,
+                    # Grezzo, per i calcoli: "data" e' solo testo da mostrare e non ha l'anno
+                    "utc": utc_date_str
                 }
         else:
             api_error = True
@@ -719,6 +731,20 @@ with tab_confronto:
                 )
                 riga_totali_raw = pd.Series({col: "" for col in pivot.columns}, name="💰 Vincita potenziale")
 
+                # --- SCELTA DEL GRUPPO: ultima colonna, dopo tutti i giocatori ---
+                # Aggiunta DOPO la riga dei totali, che e' costruita sulle colonne
+                # dei giocatori: prima, in fondo a questa colonna comparirebbe "0,00 €".
+                COLONNA_GRUPPO = "Scelta del gruppo"
+                pivot[COLONNA_GRUPPO] = [
+                    scelta_del_gruppo(
+                        df_giornata[df_giornata['Partita_Pulita'] == partita]
+                        .groupby('Giocatore')['Pronostico'].apply(list).to_dict()
+                    )
+                    for partita in pivot.index
+                ]
+                riga_totali_display[COLONNA_GRUPPO] = ""
+                riga_totali_raw[COLONNA_GRUPPO] = ""
+
                 # Tabella HTML colorata per esiti vinti/persi
                 def _colora_cella(val):
                     val_str = str(val)
@@ -744,10 +770,20 @@ with tab_confronto:
 
                 styled = _applica_stili(pivot_con_totali, pivot_pulito_con_totali)
 
+                # ATTENZIONE ai commenti dentro lo style: st.html passa da DOMPurify,
+                # che elimina l'INTERO blocco style se il suo testo contiene qualcosa
+                # che somiglia a un tag (parentesi angolare seguita da lettera o
+                # barra). Un commento che citava i tag delle celle ha fatto sparire
+                # tutte queste regole, colonna fissa compresa (Sessione 19).
                 st.html(f"""
 <style>
 .confronto-scroll {{ overflow-x: auto; width: 100%; }}
 .confronto-scroll table {{ border-collapse: collapse; }}
+/* Le celle della colonna partite e le intestazioni sono celle th: lo Styler
+   disegna il bordo solo sulle celle td, quindi qui lo aggiungiamo a mano. */
+.confronto-scroll th {{ border: 1px solid rgba(128, 128, 128, 0.3); }}
+/* Ultima colonna, Scelta del gruppo: in risalto rispetto a quelle dei giocatori. */
+.confronto-scroll tbody td:last-child {{ font-weight: 600; background-color: rgba(34, 197, 94, 0.10); white-space: nowrap; }}
 .confronto-scroll th:first-child, .confronto-scroll td:first-child {{
     position: sticky; left: 0; z-index: 2;
 }}
@@ -774,6 +810,124 @@ with tab_stats:
     st.caption("Analisi basata sulle partite già giocate (escluse le gare ancora in corso o non ancora disputate).")
 
     if not df_giocate.empty:
+        # --- TEMPO PASSATO DALL'ULTIMA SCHEDINA VINTA ---
+        # I fogli non registrano l'ora della vittoria: chi ha chiuso e in quale
+        # giornata lo dice Cassa (il verdetto gia' verificato dal bot), il momento
+        # si stima dalla fine dell'ultima partita di quella schedina. Il conteggio
+        # scorre nel browser: st.html non esegue JavaScript, st.iframe si'.
+        # Altezza fissa, uguale da desktop e da telefono, passata anche a st.iframe:
+        # height="content" non ha effetto (l'iframe resta ai 150px di default del
+        # browser) e ridimensionarlo via JavaScript non basta, perche' il
+        # contenitore di Streamlit resta all'altezza data in Python. Misurato.
+        ALTEZZA_TIMER_PX = 76
+
+        def _html_timer(inizio_utc):
+            valori = scomponi_durata((datetime.now(pytz.UTC) - inizio_utc).total_seconds())
+            unita = [("settimana", "settimane"), ("giorno", "giorni"), ("ora", "ore"), ("minuto", "minuti"), ("secondo", "secondi")]
+            blocchi = "".join(
+                f'<div class="blocco"><div class="numero" data-k="{i}">{v if i < 2 else f"{v:02d}"}</div>'
+                f'<div class="unita" data-u="{i}">{unita[i][0] if v == 1 else unita[i][1]}</div></div>'
+                for i, v in enumerate(valori)
+            )
+            return """
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+html, body { margin: 0; background: transparent; overflow: hidden; }
+body { font-family: 'Inter', system-ui, -apple-system, sans-serif; color: #0f172a; }
+@media (prefers-color-scheme: dark) { body { color: #f1f5f9; } }
+.timer {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px;
+    box-sizing: border-box; height: __ALTEZZA__px; padding: 1px;
+}
+.blocco {
+    display: flex; flex-direction: column; justify-content: center;
+    text-align: center; padding: 0 2px; border-radius: 8px; box-sizing: border-box;
+    border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+    background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.numero { font-size: 2rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.unita { font-size: 0.75rem; opacity: 0.65; margin-top: 4px; }
+@media (max-width: 420px) {
+    .timer { gap: 5px; }
+    .blocco { padding: 0; }
+    .numero { font-size: 1.35rem; }
+    .unita { font-size: 0.62rem; }
+}
+</style>
+<div class="timer">__BLOCCHI__</div>
+<script>
+const INIZIO_MS = __INIZIO_MS__;
+const UNITA = __UNITA__;
+// L'iframe non eredita il tema: prende il colore del testo dalla dashboard, e
+// lo rilegge a ogni secondo perche' il tema puo' cambiare a pagina aperta (es.
+// passaggio automatico chiaro/scuro del telefono): letto una volta sola, i
+// numeri restavano chiari su fondo chiaro (visto nel browser).
+function seguiTema() {
+    try {
+        const app = window.parent.document.querySelector('.stApp');
+        if (app) document.body.style.color = getComputedStyle(app).color;
+    } catch (e) {}
+}
+function aggiorna() {
+    seguiTema();
+    let s = Math.max(0, Math.floor((Date.now() - INIZIO_MS) / 1000));
+    const v = [Math.floor(s / 604800)]; s %= 604800;
+    v.push(Math.floor(s / 86400)); s %= 86400;
+    v.push(Math.floor(s / 3600)); s %= 3600;
+    v.push(Math.floor(s / 60), s % 60);
+    v.forEach((n, i) => {
+        document.querySelector(`[data-k="${i}"]`).textContent = i < 2 ? n : String(n).padStart(2, '0');
+        document.querySelector(`[data-u="${i}"]`).textContent = UNITA[i][n === 1 ? 0 : 1];
+    });
+}
+seguiTema();
+setInterval(aggiorna, 1000);
+</script>
+""".replace("__BLOCCHI__", blocchi) \
+             .replace("__ALTEZZA__", str(ALTEZZA_TIMER_PX)) \
+             .replace("__INIZIO_MS__", str(int(inizio_utc.timestamp() * 1000))) \
+             .replace("__UNITA__", str([list(u) for u in unita]).replace("'", '"'))
+
+        with st.container(border=True):
+            st.markdown("**:material/timer: Tempo passato dall'ultima schedina vinta**")
+            ultima_chiusura = None
+            if not df_cassa.empty and {'Giornata', 'Descrizione'} <= set(df_cassa.columns):
+                ultima_chiusura = schedine_chiuse_ultima_giornata(zip(df_cassa['Giornata'], df_cassa['Descrizione']))
+
+            if ultima_chiusura is None:
+                st.caption("Nessuna schedina vinta finora: il timer partirà dalla prima.")
+            else:
+                n_giornata_vinta, vincitori = ultima_chiusura
+                partite_uff_v, risultati_uff_v, _ = scarica_risultati_api(str(n_giornata_vinta))
+                orari_inizio = {nome: leggi_orario_utc(r.get("utc")) for nome, r in risultati_uff_v.items()}
+                momenti = []
+                for vincitore in vincitori:
+                    righe_vincitore = df_giocate[
+                        (df_giocate['Giornata'].apply(numero_giornata) == n_giornata_vinta)
+                        & (df_giocate['Giocatore'].str.strip().str.lower() == vincitore.lower())
+                    ]
+                    partite_vincitore = [
+                        normalizza_partita_completa(str(p), partite_uff_v)
+                        for p in righe_vincitore['Partita'] if str(p).strip()
+                    ]
+                    momenti.append(momento_fine_schedina(partite_vincitore, orari_inizio))
+
+                if not momenti or None in momenti:
+                    # Meglio nessun timer che uno partito dal momento sbagliato
+                    st.caption(
+                        f"Ultima vinta: {', '.join(v.upper() for v in vincitori)} · Giornata {n_giornata_vinta}. "
+                        "Il conteggio non è disponibile al momento (orari delle partite non raggiungibili): riprova con Aggiorna."
+                    )
+                else:
+                    inizio_timer = max(momenti)
+                    st.iframe(_html_timer(inizio_timer), height=ALTEZZA_TIMER_PX)
+                    fine_ita = inizio_timer.astimezone(pytz.timezone("Europe/Rome"))
+                    st.caption(
+                        f"Ultima vinta: **{', '.join(v.upper() for v in vincitori)}** · Giornata {n_giornata_vinta}, "
+                        f"chiusa il {fine_ita:%d/%m} verso le {fine_ita:%H:%M} (fine dell'ultima partita). "
+                        "Si azzera alla prossima schedina vinta."
+                    )
+
         df_stats = df_giocate[df_giocate['Giocatore'].str.strip() != ""].copy()
 
         def parse_quota(q):
@@ -954,6 +1108,30 @@ with tab_stats:
                     )
                 else:
                     st.markdown("**:material/skull: La squadra maledetta:** —")
+
+        # --- PER UN SOFFIO: schedine perse per un solo evento ---
+        st.write("")
+        with st.container(border=True):
+            st.markdown("**:material/heart_broken: Per un soffio**")
+            soffi = schedine_perse_per_un_soffio(df_stats.to_dict("records"))
+            if not soffi:
+                st.caption("Nessuna schedina persa per un solo evento, finora.")
+            else:
+                st.caption(
+                    "Schedine con tutto giusto tranne un evento. "
+                    "Contano solo quelle con tutte le partite già giocate."
+                )
+                df_soffi = pd.DataFrame([
+                    {
+                        "Giocatore": soffio["giocatore"].upper(),
+                        "Giornata": soffio["giornata"],
+                        "Evento sbagliato": soffio["partita"],
+                        "Pronostico": soffio["pronostico"],
+                        "Quota": soffio["quota"],
+                    }
+                    for soffio in soffi
+                ]).set_index("Giocatore")
+                st.table(df_soffi)
 
         # --- TABELLA COMPLETA WIN RATE ---
         st.write("")
