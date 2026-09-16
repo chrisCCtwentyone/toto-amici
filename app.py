@@ -4,6 +4,7 @@ import requests
 import os
 import pytz
 from datetime import datetime
+from html import escape as escape_html
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from api_utils import richiedi_con_retry
@@ -18,6 +19,7 @@ from statistiche import (
     schedine_perse_per_un_soffio,
     scelta_del_gruppo,
     scomponi_durata,
+    tabellone_ottavi,
     ultima_giornata_con_punti,
 )
 
@@ -107,8 +109,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.9.1"
+VERSIONE_APP = "2.10.0"
 NOVITA = [
+    ("2.10.0", "16/09/2026", "La Coppa ha i nomi: il tabellone mostra gli accoppiamenti di oggi, 1° contro 16°, 2° contro 15° e così via. È provvisorio e cambia con la classifica fino all'inizio della Coppa."),
     ("2.9.1", "16/09/2026", "Nella tabella completa delle statistiche compare anche Pulizzer, in fondo tra i ritirati, con i numeri delle giornate che ha giocato."),
     ("2.9.0", "16/09/2026", "Siracusa entra nel torneo al posto di Pulizzer e riparte dai suoi punti. Pulizzer resta in fondo alla classifica come ritirato, con i punti fatti finora."),
     ("2.8.0", "14/09/2026", "Nuove statistiche: il timer che conta da quanto tempo nessuno vince una schedina, e \"Per un soffio\" con le schedine perse per un solo evento. Nel confronto giocate: righe ben visibili tra le partite e una nuova colonna con la scelta più giocata dal gruppo."),
@@ -1203,64 +1206,77 @@ setInterval(aggiorna, 1000);
 # ==========================================
 with tab_coppa:
     st.subheader(":material/emoji_events: Coppa Toto-Amici")
-    st.caption("Il tabellone è pronto. Gli accoppiamenti si sveleranno al momento del sorteggio.")
+    st.caption("Tabellone provvisorio: gli accoppiamenti di oggi, se il campionato finisse adesso.")
 
-    # I nomi degli sfidanti restano volutamente illeggibili (sfocati) finché il
-    # sorteggio non viene effettuato: la struttura del torneo è già decisa e
-    # visibile, il mistero è solo su CHI incontra chi.
-    st.html("""
+    # Tabellone dalla classifica attuale (1° contro 16°, 2° contro 15°...):
+    # stesso elenco e stesso ordine della scheda Classifica, spareggi compresi e
+    # ritirati esclusi. Cambia a ogni giornata, finche' la Coppa non parte.
+    partecipanti_coppa = [] if df_classifica.empty else list(df_classifica['Giocatore'])
+    ottavi = tabellone_ottavi(partecipanti_coppa)
+
+    def _sfida_html(sopra, sotto):
+        """Una sfida del tabellone. sopra/sotto: (posizione, nome) per gli
+        ottavi, oppure un testo come "Vincente ottavo 1" per i turni dopo."""
+        def _riga(voce):
+            if isinstance(voce, tuple):
+                pos, nome = voce
+                return (f'<div class="coppa-nome"><span class="coppa-pos">{pos}°</span>'
+                        f'{escape_html(str(nome).upper())}</div>')
+            return f'<div class="coppa-nome coppa-attesa">{escape_html(voce)}</div>'
+        return (f'<div class="coppa-sfida">{_riga(sopra)}'
+                f'<div class="coppa-vs">vs</div>{_riga(sotto)}</div>')
+
+    if ottavi:
+        sfide_ottavi = [_sfida_html(a, b) for a, b in ottavi]
+    else:
+        sfide_ottavi = [_sfida_html("Da definire", "Da definire")] * 8
+    sfide_quarti = [_sfida_html(f"Vincente ottavo {2 * i + 1}", f"Vincente ottavo {2 * i + 2}") for i in range(4)]
+    sfide_semi = [_sfida_html(f"Vincente quarto {2 * i + 1}", f"Vincente quarto {2 * i + 2}") for i in range(2)]
+    sfida_finale = _sfida_html("Vincente semifinale 1", "Vincente semifinale 2")
+
+    st.html(f"""
     <style>
-    .coppa-griglia { display:flex; gap:1.5rem; overflow-x:auto; padding:0.5rem 0 1rem 0; }
-    .coppa-turno { min-width:190px; flex:1; }
-    .coppa-turno h4 {
+    .coppa-griglia {{ display:flex; gap:1.5rem; overflow-x:auto; padding:0.5rem 0 1rem 0; }}
+    .coppa-turno {{ min-width:190px; flex:1; display:flex; flex-direction:column; }}
+    .coppa-turno h4 {{
         font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;
         opacity:0.65; margin:0 0 0.75rem 0; text-align:center; font-weight:700;
-    }
-    .coppa-sfida {
+    }}
+    .coppa-sfide {{ display:flex; flex-direction:column; justify-content:space-around; flex:1; }}
+    .coppa-sfida {{
         border:1px solid rgba(128,128,128,0.3); border-radius:8px;
         padding:0.55rem 0.7rem; margin-bottom:0.6rem;
         background:rgba(128,128,128,0.05);
-    }
-    .coppa-nome {
-        filter:blur(5px); user-select:none; font-weight:600; font-size:0.9rem;
-        letter-spacing:0.02em; opacity:0.75; display:block; text-align:center;
-    }
-    .coppa-vs {
+    }}
+    .coppa-nome {{
+        font-weight:600; font-size:0.9rem; letter-spacing:0.02em;
+        display:block; text-align:center;
+    }}
+    .coppa-pos {{ font-size:0.7rem; font-weight:500; opacity:0.55; margin-right:0.35rem; }}
+    .coppa-attesa {{ font-weight:400; font-size:0.8rem; opacity:0.55; font-style:italic; }}
+    .coppa-vs {{
         font-size:0.7rem; opacity:0.5; text-align:center; margin:0.25rem 0;
         font-weight:700; display:block; width:100%;
-    }
-    .coppa-trofeo {
+    }}
+    .coppa-trofeo {{
         display:flex; align-items:center; justify-content:center;
         min-height:70px; font-size:2.2rem;
-    }
+    }}
     </style>
     <div class="coppa-griglia">
-      <div class="coppa-turno"><h4>Ottavi</h4>
-        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
-      </div>
-      <div class="coppa-turno"><h4>Quarti</h4>
-        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">██████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">█████████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">█████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
-      </div>
-      <div class="coppa-turno"><h4>Semifinali</h4>
-        <div class="coppa-sfida"><div class="coppa-nome">████████</div><div class="coppa-vs">vs</div><div class="coppa-nome">███████</div></div>
-        <div class="coppa-sfida"><div class="coppa-nome">██████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
-      </div>
-      <div class="coppa-turno"><h4>Finale</h4>
-        <div class="coppa-sfida"><div class="coppa-nome">███████</div><div class="coppa-vs">vs</div><div class="coppa-nome">████████</div></div>
-        <div class="coppa-trofeo">🏆</div>
-      </div>
+      <div class="coppa-turno"><h4>Ottavi</h4><div class="coppa-sfide">{"".join(sfide_ottavi)}</div></div>
+      <div class="coppa-turno"><h4>Quarti</h4><div class="coppa-sfide">{"".join(sfide_quarti)}</div></div>
+      <div class="coppa-turno"><h4>Semifinali</h4><div class="coppa-sfide">{"".join(sfide_semi)}</div></div>
+      <div class="coppa-turno"><h4>Finale</h4><div class="coppa-sfide">{sfida_finale}<div class="coppa-trofeo">🏆</div></div></div>
     </div>
     """)
+
+    if not ottavi:
+        st.warning(
+            f"Il tabellone è pensato per 16 partecipanti, in classifica ora ce ne sono {len(partecipanti_coppa)}: "
+            "gli accoppiamenti compariranno quando i conti tornano.",
+            icon=":material/warning:",
+        )
 
     col_c1, col_c2 = st.columns(2)
     with col_c1:
@@ -1274,14 +1290,16 @@ with tab_coppa:
             """)
     with col_c2:
         with st.container(border=True):
-            st.markdown("#### :material/casino: Il sorteggio")
+            st.markdown("#### :material/account_tree: Gli accoppiamenti")
             st.markdown("""
-- Gli accoppiamenti verranno **estratti a fine campionato** — per questo i nomi qui sopra sono ancora oscurati.
+- Negli ottavi il **1° in classifica sfida il 16°**, il 2° il 15°, e così via.
+- Il tabellone è **provvisorio**: segue la classifica e cambia a ogni giornata, finché la Coppa non parte.
+- I primi due possono incontrarsi **solo in finale**.
 - In caso di **parità di punti** in una sfida, passa il turno chi è più in alto nella classifica generale.
 - Il regolamento definitivo verrà confermato dal creatore del torneo prima dell'inizio.
             """)
 
-    st.info("Il tabellone è già pronto: manca solo sapere **chi incontra chi**. 👀", icon=":material/visibility_off:")
+    st.info("Accoppiamenti aggiornati alla classifica di oggi: dai un'occhiata a chi ti toccherebbe. 👀", icon=":material/visibility:")
 
 # ==========================================
 # TAB 6: REGOLAMENTO

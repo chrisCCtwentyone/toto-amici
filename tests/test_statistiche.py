@@ -273,3 +273,53 @@ def test_ritirato_senza_sostituto_noto_non_ha_righe():
     righe = [{"Giornata": "Giornata 1", "Giocatore": "SIRACUSA"}]
     assert righe_del_ritirato(righe, "SCONOSCIUTO (RITIRATO)", 4) == []
     assert righe_del_ritirato(righe, "PULIZZER (RITIRATO)", None) == []
+
+
+# --- tabellone_ottavi (Coppa) ---
+
+from statistiche import tabellone_ottavi
+
+CLASSIFICA_16 = [f"G{i}" for i in range(1, 17)]
+
+
+def test_tabellone_accoppiamenti_1_contro_16():
+    ottavi = tabellone_ottavi(CLASSIFICA_16)
+    coppie = [(a[0], b[0]) for a, b in ottavi]
+    assert coppie == [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
+    # Ogni sfida somma a 17: il migliore contro il peggiore, e cosi' via.
+    assert all(a + b == 17 for a, b in coppie)
+    # Il nome corrisponde alla posizione.
+    assert all(nome == f"G{pos}" for sfida in ottavi for pos, nome in sfida)
+
+
+def test_tabellone_ogni_giocatore_una_volta():
+    nomi = [nome for sfida in tabellone_ottavi(CLASSIFICA_16) for _, nome in sfida]
+    assert sorted(nomi) == sorted(CLASSIFICA_16)
+
+
+def test_tabellone_primi_due_solo_in_finale():
+    # Prima meta' del tabellone = sfide 0-3, seconda = 4-7.
+    ottavi = tabellone_ottavi(CLASSIFICA_16)
+    meta = lambda pos: next(i for i, sfida in enumerate(ottavi) if pos in (sfida[0][0], sfida[1][0])) // 4
+    assert meta(1) != meta(2)
+    # 1 e 4 si possono incontrare in semifinale, non prima: stessa meta', quarti diversi.
+    quarto = lambda pos: next(i for i, sfida in enumerate(ottavi) if pos in (sfida[0][0], sfida[1][0])) // 2
+    assert meta(1) == meta(4) and quarto(1) != quarto(4)
+    assert quarto(1) == quarto(8)
+
+
+def test_tabellone_caso_reale_16_settembre():
+    # Classifica vera al 16/09/2026, ritirato escluso, spareggi gia' applicati.
+    classifica = ["PAOLO", "VILLARI", "FAZIO", "SIRACUSA", "GIOVANNI", "MIRKO", "VINCENZO", "DARIO",
+                  "MARIO", "SILVIO", "DAVIDE", "GAETANO", "GIACOMO", "CECILIA", "MICHELE", "NICO"]
+    ottavi = tabellone_ottavi(classifica)
+    assert ottavi[0] == ((1, "PAOLO"), (16, "NICO"))
+    assert ottavi[-1] == ((2, "VILLARI"), (15, "MICHELE"))
+
+
+def test_tabellone_non_si_indovina_con_partecipanti_sbagliati():
+    assert tabellone_ottavi(CLASSIFICA_16[:15]) is None
+    assert tabellone_ottavi(CLASSIFICA_16 + ["G17"]) is None
+    assert tabellone_ottavi([]) is None
+    # Righe vuote non contano come partecipanti.
+    assert tabellone_ottavi(CLASSIFICA_16[:15] + ["  "]) is None

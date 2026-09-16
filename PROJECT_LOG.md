@@ -106,6 +106,16 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 16/09/2026 — Sessione 21 (Coppa: tabellone con i nomi, dalla classifica attuale)
+
+**Il tabellone della Coppa non nascondeva nomi veri.** I "nomi sfocati" erano barre di caratteri pieni scritte a mano nel codice, e gli accoppiamenti non esistevano da nessuna parte (criterio ancora "da decidere" nel TODO). Togliere la sfocatura non bastava: serviva una regola. Scelta dell'utente, fra tre proposte: **tabellone provvisorio dalla classifica attuale**, 1° contro 16°, 2° contro 15° e così via, aggiornato a ogni giornata finché la Coppa non parte. Scartati "solo i 16 partecipanti, accoppiamenti da sorteggiare" e "coppie vicine (1°-2°, 3°-4°)".
+- **Schema classico dei tornei a 16** (`ORDINE_TABELLONE_16` in `statistiche.py`): 1-16, 8-9, 5-12, 4-13 nella prima metà, 6-11, 3-14, 7-10, 2-15 nella seconda. I primi due si incontrano solo in finale, 1° e 4° al massimo in semifinale.
+- **Stesso elenco della scheda Classifica** (`df_classifica`, già ordinata con lo spareggio sui pronostici vinti e senza ritirati): la posizione accanto al nome nel tabellone coincide con quella che i giocatori vedono in classifica. PULIZZER (ritirato) è fuori, SIRACUSA dentro.
+- `tabellone_ottavi()` restituisce None se i partecipanti non sono esattamente 16: il tabellone è fatto per 16 e non si indovina chi escludere o ripescare. In quel caso la scheda mostra "Da definire" e un avviso.
+- Quarti, semifinali e finale mostrano "Vincente ottavo 1", "Vincente quarto 1"... Nomi passati da `html.escape`. Il riquadro "Il sorteggio" è diventato "Gli accoppiamenti", con la regola spiegata ai giocatori.
+- 5 test nuovi in `tests/test_statistiche.py`, fra cui la classifica vera del 16/09 (PAOLO–NICO, VILLARI–MICHELE).
+- Tocca `statistiche.py`: dopo il push serve **"Reboot app"** su Streamlit Cloud (vedi Sessione 20).
+
 ### 16/09/2026 — Sessione 20 (Cambio giocatore: Pulizzer sostituito da Siracusa)
 
 **Siracusa prende il posto di Pulizzer, storico compreso.** Il bot e la dashboard identificano un giocatore solo dal nome (in maiuscolo nella colonna `Giocatore` di Giocate e nella colonna A di Classifica), quindi è bastato rinominare le celle perché punti e schedine passassero a Siracusa, senza toccare altro.
@@ -535,6 +545,7 @@ Sessione nata da una richiesta di idee/migliorie, trasformata in revisione del c
 - [x] ~~**STRESS TEST REVISIONE CLAUDE**~~ — svolto in Sessione 8: revisione completa che ha portato alla luce due bug latenti gravi (esiti "vinti per default", vincite a quattro cifre in Cassa) e alla prima suite di test automatici.
 - [x] ~~**Impostare `GEMINI_API_KEY` come variabile d'ambiente su Render**~~ — fatto dall'utente (confermato in Sessione 16).
 - [ ] **Coppa a eliminazione diretta** (nuova, priorità alta in vista del finale di campionato): ottavi, quarti, semifinale, finale tra i migliori giocatori. Il tab "Coppa" in `app.py` mostra per ora solo un placeholder "In arrivo prossimamente...". **Da decidere prima di poter implementare:** criterio di qualificazione/seeding (es. classifica generale?), come si estraggono gli accoppiamenti, formato delle singole sfide (una schedina di sfida diretta? somma punti su più giornate?), quando parte rispetto alla fine del campionato.
+  - *Aggiornamento Sessione 21*: il criterio degli accoppiamenti è deciso (tabellone dalla classifica, 1° contro 16°, provvisorio fino all'inizio della Coppa). Restano da confermare: quando si congela il tabellone e come si gestiscono i turni (chi passa, pareggi oltre allo spareggio sulla classifica generale).
 
 ### 🟡 Priorità Media — Prossime sessioni
 - [x] ~~**Crescita memoria con l'accumularsi delle giornate**~~ — **ipotesi smentita dalla misura** in Sessione 16: una stagione intera di Giocate occupa 1,6 MB, mentre una singola foto di schedina ne costava 46,7 in fase di decodifica. Risolto alla radice con `draft()` (~0 MB) invece che con il rischioso refactor delle letture. Restano strumentazione nei log e `/diagnostica` per vedere i numeri veri al prossimo episodio.

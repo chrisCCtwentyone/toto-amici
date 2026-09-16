@@ -217,3 +217,26 @@ def scelta_del_gruppo(pronostici_per_giocatore):
         return "Tutti diversi"
     migliori = sorted(p for p, n in conteggi.items() if n == massimo)
     return f"{' / '.join(migliori)} · {massimo} su {giocatori}"
+
+
+# Posizioni in classifica nell'ordine del tabellone degli ottavi (schema classico
+# dei tornei a 16): 1 e 2 stanno in meta' opposte e si possono incontrare solo in
+# finale, 1 e 4 al massimo in semifinale, 1 e 8 al massimo nei quarti.
+ORDINE_TABELLONE_16 = [1, 16, 8, 9, 5, 12, 4, 13, 6, 11, 3, 14, 7, 10, 2, 15]
+
+
+def tabellone_ottavi(giocatori_in_classifica):
+    """Ottavi della Coppa dalla classifica attuale: 1° contro 16°, 2° contro 15°...
+
+    giocatori_in_classifica: nomi gia' in ordine di classifica, senza ritirati
+    (lo stesso elenco della scheda Classifica, spareggi compresi).
+    Restituisce 8 sfide nell'ordine del tabellone, ciascuna come
+    ((posizione, nome), (posizione, nome)); le sfide 1-2 vanno nel primo quarto,
+    3-4 nel secondo e cosi' via. None se i partecipanti non sono esattamente 16:
+    il tabellone e' fatto per 16 e non si indovina chi escludere o ripescare.
+    """
+    nomi = [str(g).strip() for g in giocatori_in_classifica if str(g).strip()]
+    if len(nomi) != 16:
+        return None
+    posti = [(pos, nomi[pos - 1]) for pos in ORDINE_TABELLONE_16]
+    return [(posti[i], posti[i + 1]) for i in range(0, 16, 2)]
