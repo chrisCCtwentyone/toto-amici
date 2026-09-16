@@ -224,3 +224,23 @@ def test_scelta_del_gruppo_casi_limite():
     assert scelta_del_gruppo({}) == "—"
     assert scelta_del_gruppo({"A": [""], "B": []}) == "—"
     assert scelta_del_gruppo({"A": ["1"]}) == "1 · 1 su 1"
+
+
+# ---------------------------------------------------------------------------
+# Giocatori ritirati (Sessione 20)
+# ---------------------------------------------------------------------------
+import pytest
+
+from statistiche import e_ritirato, nome_senza_ritiro
+
+
+@pytest.mark.parametrize("nome", ["PULIZZER (RITIRATO)", " pulizzer (ritirato) ", "Pulizzer (Ritirato)"])
+def test_riconosce_il_ritirato(nome):
+    assert e_ritirato(nome)
+    assert nome_senza_ritiro(nome).upper() == "PULIZZER"
+
+
+@pytest.mark.parametrize("nome", ["PULIZZER", "SIRACUSA", "", "RITIRATO MARIO"])
+def test_un_attivo_non_e_ritirato(nome):
+    assert not e_ritirato(nome)
+    assert nome_senza_ritiro(nome) == nome.strip()

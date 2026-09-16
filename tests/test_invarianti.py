@@ -201,5 +201,58 @@ class TestInvariantiScritture:
             )
 
 
+class _ValuesConClassifica(FakeValues):
+    """Come FakeValues, ma con una Classifica vera e la riscrittura catturata."""
+
+    def __init__(self, righe, classifica):
+        super().__init__(righe)
+        self._classifica = classifica
+        self.classifica_scritta = None
+
+    def get(self, spreadsheetId, range):
+        if "Classifica" not in range:
+            return super().get(spreadsheetId, range)
+        dati = [list(r) for r in self._classifica]
+
+        class _R:
+            def execute(self_inner, **kwargs):
+                return {"values": dati}
+        return _R()
+
+    def update(self, spreadsheetId, range, valueInputOption, body):
+        if range.startswith("Classifica"):
+            self.classifica_scritta = body["values"]
+        return _Esec()
+
+
+class TestInvariantiRitirati:
+    """INVARIANTE (Sessione 20): la riga di un giocatore ritirato è congelata.
+    Nessun ricalcolo può cambiarne i punti, neanche se il suo nome senza
+    suffisso coincide con un giocatore attivo (è il caso reale: Siracusa ha
+    ereditato le schedine di Pulizzer, e un domani potrebbe tornare lo stesso nome)."""
+
+    @pytest.mark.parametrize("giornata", [1, 2, 20])
+    def test_ricalcolo_non_tocca_la_riga_del_ritirato(self, giornata, monkeypatch):
+        righe = _stagione_completa()
+        classifica = [
+            ["Giocatore", "Punti Totali", "Giornata 1", "Giornata 2"],
+            ["MARIO", "25", "15", "10"],
+            ["MARIO (RITIRATO)", "90", "60", "30"],
+        ]
+        service = FakeService(righe)
+        service.values_obj = _ValuesConClassifica(righe, classifica)
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+
+        casa, ospite = (SQUADRE[0], SQUADRE[1]) if giornata <= 19 else (SQUADRE[1], SQUADRE[0])
+        bt.esegui_calcolo_risultati(str(giornata), matches_api=[_match(casa, ospite, 2, 0)])
+
+        scritta = service.values_obj.classifica_scritta
+        assert scritta is not None
+        ritirato = [r for r in scritta if r and r[0] == "MARIO (RITIRATO)"]
+        assert len(ritirato) == 1
+        assert [str(x) for x in ritirato[0] if str(x) != ""] == ["MARIO (RITIRATO)", "90", "60", "30"]
+        assert len(scritta) == 3, "il ricalcolo non deve creare righe nuove per un giocatore gia' presente"
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

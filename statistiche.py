@@ -23,6 +23,26 @@ DURATA_STIMATA_PARTITA = timedelta(hours=2)
 
 _RE_GIORNATA = re.compile(r"^\s*giornata\s+(\d+)\s*$", re.IGNORECASE)
 
+# Un giocatore uscito dal torneo resta in Classifica con questo suffisso nel
+# nome ("PULIZZER (RITIRATO)"): i punti restano congelati, perche' il bot
+# aggiorna solo le righe il cui nome coincide con un giocatore in Giocate.
+# Il ritiro sta nel nome e non in una riga vuota di separazione: il bot
+# riscrive l'intera Classifica e una riga vuota lo manderebbe in errore.
+# La separazione visiva la fanno la dashboard e il riepilogo WhatsApp.
+SUFFISSO_RITIRATO = "(RITIRATO)"
+
+
+def e_ritirato(nome):
+    return str(nome).strip().upper().endswith(SUFFISSO_RITIRATO)
+
+
+def nome_senza_ritiro(nome):
+    """"PULIZZER (RITIRATO)" -> "PULIZZER". Gli altri nomi restano invariati."""
+    nome = str(nome).strip()
+    if e_ritirato(nome):
+        return nome[: -len(SUFFISSO_RITIRATO)].strip()
+    return nome
+
 
 def numero_giornata(etichetta):
     """"Giornata 12" -> 12. Qualsiasi altra forma -> None.

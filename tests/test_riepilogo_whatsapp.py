@@ -19,6 +19,20 @@ import bot_telegram as bt
 # ---------------------------------------------------------------------------
 class TestCostruisciRiepilogo:
 
+    def test_ritirato_in_fondo_senza_medaglia(self):
+        classifica = [
+            ["Giocatore", "Punti Totali", "Giornata 1"],
+            ["PULIZZER (RITIRATO)", "90", "30"],
+            ["MARIO", "10", "10"],
+            ["SIRACUSA", "90", "30"],
+        ]
+        testo = bt.costruisci_riepilogo_whatsapp("1", classifica, [])
+        assert "🥇 Siracusa" in testo
+        assert "🥈 Mario" in testo
+        assert "🚪 Pulizzer (ritirato) - 90 pt" in testo
+        assert testo.index("Mario") < testo.index("Pulizzer")
+        assert "RITIRATO" not in testo
+
     def test_ordina_per_punti_totali_decrescenti(self):
         classifica = [
             ["Giocatore", "Punti Totali", "Giornata 1"],

@@ -8,8 +8,10 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from api_utils import richiedi_con_retry
 from statistiche import (
+    e_ritirato,
     leggi_orario_utc,
     momento_fine_schedina,
+    nome_senza_ritiro,
     numero_giornata,
     schedine_chiuse_ultima_giornata,
     schedine_perse_per_un_soffio,
@@ -103,8 +105,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.8.0"
+VERSIONE_APP = "2.9.0"
 NOVITA = [
+    ("2.9.0", "16/09/2026", "Siracusa entra nel torneo al posto di Pulizzer e riparte dai suoi punti. Pulizzer resta in fondo alla classifica come ritirato, con i punti fatti finora."),
     ("2.8.0", "14/09/2026", "Nuove statistiche: il timer che conta da quanto tempo nessuno vince una schedina, e \"Per un soffio\" con le schedine perse per un solo evento. Nel confronto giocate: righe ben visibili tra le partite e una nuova colonna con la scelta più giocata dal gruppo."),
     ("2.7.1", "04/09/2026", "Sito più comodo da telefono: classifica, podio e montepremi occupano meno spazio, si scorre molto meno per vedere tutto."),
     ("2.7.0", "31/08/2026", "Tabellone della Coppa svelato (gli accoppiamenti restano segreti fino al sorteggio), frecce di tendenza in classifica e gestione delle partite rinviate."),
@@ -333,6 +336,12 @@ with tab_classifica:
             by=['Punti Totali', '_vittorie'], ascending=[False, False]
         ).reset_index(drop=True)
 
+        # I ritirati (vedi SUFFISSO_RITIRATO in statistiche.py) restano visibili
+        # in fondo alla classifica, ma fuori da podio, posizioni e tendenze.
+        maschera_ritirati = df_classifica['Giocatore'].map(e_ritirato)
+        df_ritirati = df_classifica[maschera_ritirati].reset_index(drop=True)
+        df_classifica = df_classifica[~maschera_ritirati].reset_index(drop=True)
+
         colonne_giornate = [c for c in df_classifica.columns if 'giornata' in str(c).lower()]
 
         # --- PODIO: top 3 ---
@@ -421,12 +430,27 @@ with tab_classifica:
             else:
                 posizioni.append(f"{i+1}°")
         df_display.insert(0, "Pos.", posizioni)
+        if not df_ritirati.empty:
+            separatore = {c: "" for c in df_display.columns}
+            separatore["Pos."] = "—"
+            righe_ritirati = [{
+                **{c: "" for c in df_display.columns},
+                "Pos.": "Ritirato",
+                "Giocatore": nome_senza_ritiro(row['Giocatore']),
+                "Punti Totali": f"{row['Punti Totali']} pt",
+            } for _, row in df_ritirati.iterrows()]
+            df_display = pd.concat(
+                [df_display, pd.DataFrame([separatore] + righe_ritirati)], ignore_index=True
+            )
         df_display = df_display.set_index("Pos.")
         st.table(df_display)
 
         # --- STORICO GIORNATE ---
         with st.expander(":material/history: Storico punteggi per giornata"):
-            df_classifica_pulita = df_classifica.drop(columns=['_vittorie'], errors='ignore').replace("", pd.NA).dropna(axis=1, how='all').fillna("")
+            df_ritirati_storico = df_ritirati.assign(
+                Giocatore=df_ritirati['Giocatore'].map(lambda g: f"{nome_senza_ritiro(g)} (ritirato)")
+            )
+            df_classifica_pulita = pd.concat([df_classifica, df_ritirati_storico], ignore_index=True).drop(columns=['_vittorie'], errors='ignore').replace("", pd.NA).dropna(axis=1, how='all').fillna("")
             if not df_classifica_pulita.empty and 'Giocatore' in df_classifica_pulita.columns:
                 df_classifica_pulita = df_classifica_pulita.set_index('Giocatore')
             st.table(df_classifica_pulita)

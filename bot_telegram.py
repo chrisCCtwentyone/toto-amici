@@ -11,6 +11,7 @@ import resource
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
+from statistiche import e_ritirato, nome_senza_ritiro
 from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
@@ -1915,11 +1916,15 @@ def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rin
     idx_g = header.index(col_g)
 
     giocatori = []
+    ritirati = []
     for riga in righe_classifica[1:]:
         if not riga or not str(riga[0]).strip():
             continue
         nome = str(riga[0]).strip()
         punti_tot = int(estrai_numero(riga[1])) if len(riga) > 1 else 0
+        if e_ritirato(nome):
+            ritirati.append((nome_senza_ritiro(nome), punti_tot))
+            continue
         punti_giornata = int(estrai_numero(riga[idx_g])) if len(riga) > idx_g else 0
         giocatori.append((nome, punti_tot, punti_giornata))
     if not giocatori:
@@ -1932,6 +1937,10 @@ def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rin
         pos = medaglie[i] if i < len(medaglie) else f"{i + 1}°"
         variazione = f" (+{pg})" if pg > 0 else ""
         righe_testo.append(f"{pos} {nome.capitalize()} - {tot} pt{variazione}")
+
+    if ritirati:
+        righe_testo.append("———")
+        righe_testo += [f"🚪 {nome.capitalize()} (ritirato) - {tot} pt" for nome, tot in ritirati]
 
     testo = f"📊 *Giornata {giornata} — Riepilogo finale*\n\n" + "\n".join(righe_testo)
     if n_rinviate:

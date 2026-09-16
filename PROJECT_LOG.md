@@ -112,7 +112,14 @@ Toto_Amici_Progetto/
 - `bot_telegram.py`: `GIOCATORI` ora contiene `siracusa` al posto di `pulizzer` (ordine alfabetico: cambia di un posto la tastiera di scelta giocatore).
 - Google Sheets: `findReplace` con `matchEntireCell` su tutti i fogli → 41 celle (40 in Giocate, 1 in Classifica), nessuna in Cassa. Verificato con un confronto cella per cella contro un backup preso subito prima: cambiate solo quelle 41 celle. Classifica di Siracusa: 90 punti, invariati.
 - Dry-run su G.1–3: 960 celle, 0 differenze.
-- La dashboard legge i nomi dal foglio: nessuna modifica a `app.py`. Il file locale `giocate_completate.txt` (fuori da git, non usato da nessuno script) cita ancora il vecchio nome: è un residuo del vecchio flusso WhatsApp.
+- Il file locale `giocate_completate.txt` (fuori da git, non usato da nessuno script) cita ancora il vecchio nome: è un residuo del vecchio flusso WhatsApp.
+
+**Seconda richiesta, nella stessa sessione: Pulizzer resta in classifica come ritirato** (dashboard 2.9.0). In Classifica c'è una riga in più, `PULIZZER (RITIRATO)`: una copia congelata della riga di Siracusa al momento del cambio (90 punti). Giocate resta tutto a nome SIRACUSA, perché le schedine passate sono ormai sue: le statistiche della dashboard calcolate da Giocate valgono per lui.
+- **Il ritiro sta nel nome, non in una riga vuota nel foglio.** `esegui_calcolo_risultati` riscrive l'intera Classifica e costruisce la mappa dei nomi con `r[0]`: una riga vuota (che l'API restituisce come `[]`) lo farebbe andare in errore. Con il suffisso, il nome non coincide con nessun giocatore di Giocate, quindi il bot non tocca mai quella riga. Invariante bloccato in `TestInvariantiRitirati` (`tests/test_invarianti.py`), anche nel caso in cui il nome senza suffisso coincida con un giocatore attivo.
+- `statistiche.py`: `SUFFISSO_RITIRATO`, `e_ritirato()`, `nome_senza_ritiro()`, usate da entrambe le parti.
+- `app.py`: i ritirati escono da podio, posizioni, frecce di tendenza e "Giornata da incorniciare". In Classifica completa compaiono in fondo, dopo una riga "—", con posizione "Ritirato"; nello storico per giornata come "PULIZZER (ritirato)". Verificato sulla dashboard vera.
+- Riepilogo WhatsApp: i ritirati vanno in fondo dopo una riga `———`, con 🚪 e senza medaglia.
+- Per ritirare un giocatore in futuro: rinominare le sue celle in Giocate e Classifica con il nome del sostituto, aggiornare `GIOCATORI`, e aggiungere in fondo a Classifica la copia della riga con il suffisso ` (RITIRATO)`.
 
 ### 14/09/2026 — Sessione 19 (Timer dall'ultima schedina vinta, righe del Confronto Giocate)
 
