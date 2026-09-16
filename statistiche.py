@@ -240,3 +240,118 @@ def tabellone_ottavi(giocatori_in_classifica):
         return None
     posti = [(pos, nomi[pos - 1]) for pos in ORDINE_TABELLONE_16]
     return [(posti[i], posti[i + 1]) for i in range(0, 16, 2)]
+
+
+# --- Coppa: calendario, tabellone definitivo, passaggi di turno ---
+# La Coppa si gioca sulle ultime 4 giornate di Serie A (38): ottavi alla 35ª,
+# quarti alla 36ª, semifinali alla 37ª, finale alla 38ª. Il tabellone segue la
+# classifica fino alla 34ª e da li' resta fisso.
+GIORNATE_CAMPIONATO = 38
+TURNI_COPPA = ["Ottavi", "Quarti", "Semifinali", "Finale"]
+PRIMA_GIORNATA_COPPA = GIORNATE_CAMPIONATO - len(TURNI_COPPA) + 1
+ULTIMA_GIORNATA_TABELLONE = PRIMA_GIORNATA_COPPA - 1
+
+
+def _punti_cella(valore):
+    # Come il bot quando somma la Classifica: contano solo le celle numeriche.
+    testo = str(valore).strip()
+    return int(testo) if testo.isdigit() else 0
+
+
+def classifica_per_coppa(righe_classifica, righe_giocate):
+    """Nomi in ordine di classifica per il tabellone: punti delle giornate fino
+    alla ULTIMA_GIORNATA_TABELLONE, a parita' piu' pronostici vinti nelle stesse
+    giornate, a parita' ancora l'ordine del foglio. Ritirati esclusi.
+
+    Fino alla 34ª giornata coincide con la scheda Classifica; dalla 35ª in poi
+    ignora i punti nuovi, cosi' il tabellone non cambia a Coppa iniziata.
+    righe_classifica / righe_giocate: dizionari con le colonne dei due fogli.
+    """
+    vittorie = {}
+    for r in righe_giocate:
+        n = numero_giornata(r.get("Giornata", ""))
+        if n is not None and n <= ULTIMA_GIORNATA_TABELLONE and "VINTA" in str(r.get("Esito", "")):
+            chi = str(r.get("Giocatore", ""))
+            vittorie[chi] = vittorie.get(chi, 0) + 1
+
+    voci = []
+    for r in righe_classifica:
+        nome = str(r.get("Giocatore", "")).strip()
+        if not nome or e_ritirato(nome):
+            continue
+        punti = 0
+        for colonna, valore in r.items():
+            n = numero_giornata(colonna)
+            if n is not None and n <= ULTIMA_GIORNATA_TABELLONE:
+                punti += _punti_cella(valore)
+        voci.append((nome, punti, vittorie.get(str(r.get("Giocatore", "")), 0)))
+    voci.sort(key=lambda v: (-v[1], -v[2]))
+    return [v[0] for v in voci]
+
+
+def punti_per_giornata(righe_classifica):
+    """{numero giornata: {nome: punti}} dalle colonne "Giornata N" della
+    Classifica. Una cella vuota non compare: quel giocatore non ha ancora punti
+    in quella giornata (diverso da 0 punti)."""
+    risultato = {}
+    for r in righe_classifica:
+        nome = str(r.get("Giocatore", "")).strip()
+        if not nome:
+            continue
+        for colonna, valore in r.items():
+            n = numero_giornata(colonna)
+            if n is not None and str(valore).strip() != "":
+                risultato.setdefault(n, {})[nome] = _punti_cella(valore)
+    return risultato
+
+
+def giornate_concluse(righe_giocate):
+    """Giornate con tutte le righe di Giocate gia' decise (VINTA, PERSA o
+    ANNULLATA). Basta una riga in corso, rinviata, da verificare o senza esito
+    perche' la giornata non sia conclusa: i punti potrebbero ancora cambiare,
+    quindi nessun passaggio di turno va dichiarato."""
+    stato = {}
+    for r in righe_giocate:
+        n = numero_giornata(r.get("Giornata", ""))
+        if n is None or not str(r.get("Giocatore", "")).strip():
+            continue
+        esito = str(r.get("Esito", ""))
+        decisa = any(t in esito for t in ("VINTA", "PERSA", "ANNULLATA"))
+        stato[n] = stato.get(n, True) and decisa
+    return {n for n, tutte_decise in stato.items() if tutte_decise}
+
+
+def turni_coppa(ottavi, punti_giornate, concluse):
+    """Il tabellone completo, turno per turno, a partire dagli ottavi.
+
+    ottavi: risultato di tabellone_ottavi (8 sfide di (posizione, nome)).
+    punti_giornate: risultato di punti_per_giornata.
+    concluse: insieme delle giornate concluse (giornate_concluse).
+
+    Restituisce 4 liste (ottavi, quarti, semifinali, finale) di sfide, ognuna
+    {"giornata", "giocatori": [voce, voce], "punti": [int|None, int|None],
+    "vincente": 0 | 1 | None}. Una voce e' (posizione, nome) oppure None se il
+    giocatore non e' ancora noto (sfida precedente non conclusa).
+    Passa chi fa piu' punti nella giornata del turno; a parita' chi era piu' in
+    alto nella classifica del tabellone. Il vincente si dichiara solo a giornata
+    conclusa; chi non ha punti in una giornata conclusa ne ha fatti 0.
+    """
+    partecipanti = [voce for sfida in ottavi for voce in sfida]
+    turni = []
+    for i in range(len(TURNI_COPPA)):
+        giornata = PRIMA_GIORNATA_COPPA + i
+        punti_g = punti_giornate.get(giornata, {})
+        sfide, prossimi = [], []
+        for k in range(0, len(partecipanti), 2):
+            coppia = [partecipanti[k], partecipanti[k + 1]]
+            punti = [punti_g.get(v[1]) if v else None for v in coppia]
+            vincente = None
+            if all(coppia) and giornata in concluse:
+                (pos_a, _), (pos_b, _) = coppia
+                pa, pb = (p or 0 for p in punti)
+                vincente = 0 if (pa, -pos_a) > (pb, -pos_b) else 1
+            sfide.append({"giornata": giornata, "giocatori": coppia, "punti": punti, "vincente": vincente})
+            prossimi.append(coppia[vincente] if vincente is not None else None)
+        turni.append(sfide)
+        partecipanti = prossimi
+    return turni

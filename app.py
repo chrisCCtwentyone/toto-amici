@@ -9,17 +9,24 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from api_utils import richiedi_con_retry
 from statistiche import (
+    PRIMA_GIORNATA_COPPA,
+    TURNI_COPPA,
+    ULTIMA_GIORNATA_TABELLONE,
+    classifica_per_coppa,
     e_ritirato,
+    giornate_concluse,
     leggi_orario_utc,
     momento_fine_schedina,
     nome_senza_ritiro,
     numero_giornata,
+    punti_per_giornata,
     righe_del_ritirato,
     schedine_chiuse_ultima_giornata,
     schedine_perse_per_un_soffio,
     scelta_del_gruppo,
     scomponi_durata,
     tabellone_ottavi,
+    turni_coppa,
     ultima_giornata_con_punti,
 )
 
@@ -109,8 +116,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.10.0"
+VERSIONE_APP = "2.11.0"
 NOVITA = [
+    ("2.11.0", "16/09/2026", "Coppa: ora è indicata la giornata di ogni turno (ottavi alla 35ª, finale alla 38ª). Il tabellone diventa definitivo dopo la 34ª giornata e, durante la Coppa, mostra i punti di ogni sfida e chi passa il turno."),
     ("2.10.0", "16/09/2026", "La Coppa ha i nomi: il tabellone mostra gli accoppiamenti di oggi, 1° contro 16°, 2° contro 15° e così via. È provvisorio e cambia con la classifica fino all'inizio della Coppa."),
     ("2.9.1", "16/09/2026", "Nella tabella completa delle statistiche compare anche Pulizzer, in fondo tra i ritirati, con i numeri delle giornate che ha giocato."),
     ("2.9.0", "16/09/2026", "Siracusa entra nel torneo al posto di Pulizzer e riparte dai suoi punti. Pulizzer resta in fondo alla classifica come ritirato, con i punti fatti finora."),
@@ -1206,33 +1214,77 @@ setInterval(aggiorna, 1000);
 # ==========================================
 with tab_coppa:
     st.subheader(":material/emoji_events: Coppa Toto-Amici")
-    st.caption("Tabellone provvisorio: gli accoppiamenti di oggi, se il campionato finisse adesso.")
 
-    # Tabellone dalla classifica attuale (1° contro 16°, 2° contro 15°...):
-    # stesso elenco e stesso ordine della scheda Classifica, spareggi compresi e
-    # ritirati esclusi. Cambia a ogni giornata, finche' la Coppa non parte.
-    partecipanti_coppa = [] if df_classifica.empty else list(df_classifica['Giocatore'])
+    # Il tabellone segue la classifica fino alla 34ª giornata e poi resta fisso
+    # (classifica_per_coppa conta solo quelle giornate); i turni si giocano
+    # dalla 35ª alla 38ª. Stesso ordine della scheda Classifica finche' la
+    # Coppa non parte, spareggi compresi e ritirati esclusi.
+    righe_classifica_coppa = [] if df_classifica.empty else df_classifica.to_dict("records")
+    righe_giocate_coppa = [] if df_giocate.empty else df_giocate.to_dict("records")
+    coppa_iniziata = any(
+        (numero_giornata(r.get("Giornata", "")) or 0) >= PRIMA_GIORNATA_COPPA for r in righe_giocate_coppa
+    )
+    partecipanti_coppa = classifica_per_coppa(righe_classifica_coppa, righe_giocate_coppa)
     ottavi = tabellone_ottavi(partecipanti_coppa)
-
-    def _sfida_html(sopra, sotto):
-        """Una sfida del tabellone. sopra/sotto: (posizione, nome) per gli
-        ottavi, oppure un testo come "Vincente ottavo 1" per i turni dopo."""
-        def _riga(voce):
-            if isinstance(voce, tuple):
-                pos, nome = voce
-                return (f'<div class="coppa-nome"><span class="coppa-pos">{pos}°</span>'
-                        f'{escape_html(str(nome).upper())}</div>')
-            return f'<div class="coppa-nome coppa-attesa">{escape_html(voce)}</div>'
-        return (f'<div class="coppa-sfida">{_riga(sopra)}'
-                f'<div class="coppa-vs">vs</div>{_riga(sotto)}</div>')
-
     if ottavi:
-        sfide_ottavi = [_sfida_html(a, b) for a, b in ottavi]
+        turni = turni_coppa(ottavi, punti_per_giornata(righe_classifica_coppa), giornate_concluse(righe_giocate_coppa))
     else:
-        sfide_ottavi = [_sfida_html("Da definire", "Da definire")] * 8
-    sfide_quarti = [_sfida_html(f"Vincente ottavo {2 * i + 1}", f"Vincente ottavo {2 * i + 2}") for i in range(4)]
-    sfide_semi = [_sfida_html(f"Vincente quarto {2 * i + 1}", f"Vincente quarto {2 * i + 2}") for i in range(2)]
-    sfida_finale = _sfida_html("Vincente semifinale 1", "Vincente semifinale 2")
+        turni = [
+            [{"giornata": PRIMA_GIORNATA_COPPA + i, "giocatori": [None, None], "punti": [None, None], "vincente": None}] * (8 >> i)
+            for i in range(len(TURNI_COPPA))
+        ]
+
+    if coppa_iniziata:
+        st.caption(f"Tabellone definitivo, fatto con la classifica dopo la {ULTIMA_GIORNATA_TABELLONE}ª giornata.")
+    else:
+        st.caption(
+            f"Tabellone provvisorio: gli accoppiamenti di oggi. "
+            f"Diventa definitivo con la classifica dopo la {ULTIMA_GIORNATA_TABELLONE}ª giornata."
+        )
+
+    SINGOLARE_TURNO = ["ottavo", "quarto", "semifinale"]
+
+    def _voce_html(giocatore, punti, stato, etichetta):
+        if giocatore is None:
+            return f'<div class="coppa-nome coppa-attesa">{escape_html(etichetta)}</div>'
+        pos, nome = giocatore
+        punti_html = f'<span class="coppa-punti">{punti} pt</span>' if punti is not None else ""
+        return (f'<div class="coppa-nome {stato}"><span class="coppa-pos">{pos}°</span>'
+                f'{escape_html(str(nome).upper())}{punti_html}</div>')
+
+    def _sfida_html(sfida, i_turno, k):
+        voci = []
+        for j in (0, 1):
+            if sfida["vincente"] is None:
+                stato = ""
+            else:
+                stato = "coppa-vinto" if sfida["vincente"] == j else "coppa-eliminato"
+            if i_turno == 0:
+                etichetta = "Da definire"
+            else:
+                etichetta = f"Vincente {SINGOLARE_TURNO[i_turno - 1]} {2 * k + j + 1}"
+            voci.append(_voce_html(sfida["giocatori"][j], sfida["punti"][j], stato, etichetta))
+        return f'<div class="coppa-sfida">{voci[0]}<div class="coppa-vs">vs</div>{voci[1]}</div>'
+
+    finale = turni[-1][0]
+    campione = finale["giocatori"][finale["vincente"]] if finale["vincente"] is not None else None
+    trofeo_html = '<div class="coppa-trofeo">🏆'
+    if campione:
+        trofeo_html += f'<div class="coppa-campione">{escape_html(str(campione[1]).upper())}</div>'
+    trofeo_html += '</div>'
+
+    colonne_html = ""
+    for i_turno, (nome_turno, sfide) in enumerate(zip(TURNI_COPPA, turni)):
+        corpo = "".join(_sfida_html(sfida, i_turno, k) for k, sfida in enumerate(sfide))
+        if i_turno == len(TURNI_COPPA) - 1:
+            # Finale e trofeo in un unico blocco: separati, la colonna li
+            # distribuiva in verticale e il trofeo finiva in fondo.
+            corpo = f'<div>{corpo}{trofeo_html}</div>'
+        colonne_html += (
+            f'<div class="coppa-turno"><h4>{nome_turno}</h4>'
+            f'<div class="coppa-giornata">{sfide[0]["giornata"]}ª giornata</div>'
+            f'<div class="coppa-sfide">{corpo}</div></div>'
+        )
 
     st.html(f"""
     <style>
@@ -1240,8 +1292,9 @@ with tab_coppa:
     .coppa-turno {{ min-width:190px; flex:1; display:flex; flex-direction:column; }}
     .coppa-turno h4 {{
         font-size:0.8rem; text-transform:uppercase; letter-spacing:0.08em;
-        opacity:0.65; margin:0 0 0.75rem 0; text-align:center; font-weight:700;
+        opacity:0.65; margin:0; text-align:center; font-weight:700;
     }}
+    .coppa-giornata {{ font-size:0.7rem; opacity:0.5; text-align:center; margin:0.1rem 0 0.75rem 0; }}
     .coppa-sfide {{ display:flex; flex-direction:column; justify-content:space-around; flex:1; }}
     .coppa-sfida {{
         border:1px solid rgba(128,128,128,0.3); border-radius:8px;
@@ -1250,25 +1303,24 @@ with tab_coppa:
     }}
     .coppa-nome {{
         font-weight:600; font-size:0.9rem; letter-spacing:0.02em;
-        display:block; text-align:center;
+        display:block; text-align:center; border-radius:4px; padding:0.05rem 0.2rem;
     }}
     .coppa-pos {{ font-size:0.7rem; font-weight:500; opacity:0.55; margin-right:0.35rem; }}
+    .coppa-punti {{ font-size:0.8rem; font-weight:700; margin-left:0.4rem; font-variant-numeric:tabular-nums; }}
     .coppa-attesa {{ font-weight:400; font-size:0.8rem; opacity:0.55; font-style:italic; }}
+    .coppa-vinto {{ background:rgba(34,197,94,0.18); }}
+    .coppa-eliminato {{ opacity:0.4; }}
     .coppa-vs {{
         font-size:0.7rem; opacity:0.5; text-align:center; margin:0.25rem 0;
         font-weight:700; display:block; width:100%;
     }}
     .coppa-trofeo {{
-        display:flex; align-items:center; justify-content:center;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
         min-height:70px; font-size:2.2rem;
     }}
+    .coppa-campione {{ font-size:0.95rem; font-weight:700; letter-spacing:0.04em; margin-top:0.2rem; }}
     </style>
-    <div class="coppa-griglia">
-      <div class="coppa-turno"><h4>Ottavi</h4><div class="coppa-sfide">{"".join(sfide_ottavi)}</div></div>
-      <div class="coppa-turno"><h4>Quarti</h4><div class="coppa-sfide">{"".join(sfide_quarti)}</div></div>
-      <div class="coppa-turno"><h4>Semifinali</h4><div class="coppa-sfide">{"".join(sfide_semi)}</div></div>
-      <div class="coppa-turno"><h4>Finale</h4><div class="coppa-sfide">{sfida_finale}<div class="coppa-trofeo">🏆</div></div></div>
-    </div>
+    <div class="coppa-griglia">{colonne_html}</div>
     """)
 
     if not ottavi:
@@ -1282,24 +1334,31 @@ with tab_coppa:
     with col_c1:
         with st.container(border=True):
             st.markdown("#### :material/help: Come funziona")
-            st.markdown("""
+            st.markdown(f"""
 - **Partecipano tutti e 16** i giocatori: nessuno resta fuori.
-- Si gioca sulle **ultime 4 giornate** di campionato: ottavi, quarti, semifinale e finale.
+- Si gioca sulle **ultime 4 giornate** di campionato: ottavi alla {PRIMA_GIORNATA_COPPA}ª, quarti alla {PRIMA_GIORNATA_COPPA + 1}ª, semifinali alla {PRIMA_GIORNATA_COPPA + 2}ª e finale alla {PRIMA_GIORNATA_COPPA + 3}ª.
 - Ogni turno è uno **scontro diretto su una giornata**: passa chi fa più punti in quella giornata.
 - La Coppa è **parallela al campionato**: gli stessi punti valgono per entrambi, non serve giocare una schedina in più.
             """)
     with col_c2:
         with st.container(border=True):
             st.markdown("#### :material/account_tree: Gli accoppiamenti")
-            st.markdown("""
+            st.markdown(f"""
 - Negli ottavi il **1° in classifica sfida il 16°**, il 2° il 15°, e così via.
-- Il tabellone è **provvisorio**: segue la classifica e cambia a ogni giornata, finché la Coppa non parte.
+- Il tabellone segue la classifica e cambia a ogni giornata **fino alla {ULTIMA_GIORNATA_TABELLONE}ª**: da lì in poi è definitivo.
 - I primi due possono incontrarsi **solo in finale**.
-- In caso di **parità di punti** in una sfida, passa il turno chi è più in alto nella classifica generale.
+- In caso di **parità di punti** in una sfida, passa chi era più in alto nella classifica del tabellone.
 - Il regolamento definitivo verrà confermato dal creatore del torneo prima dell'inizio.
             """)
 
-    st.info("Accoppiamenti aggiornati alla classifica di oggi: dai un'occhiata a chi ti toccherebbe. 👀", icon=":material/visibility:")
+    if coppa_iniziata:
+        st.info(
+            "Chi passa il turno compare solo quando tutte le partite della giornata sono finite: "
+            "fino ad allora vedi i punti che maturano.",
+            icon=":material/sports_score:",
+        )
+    else:
+        st.info("Accoppiamenti aggiornati alla classifica di oggi: dai un'occhiata a chi ti toccherebbe. 👀", icon=":material/visibility:")
 
 # ==========================================
 # TAB 6: REGOLAMENTO

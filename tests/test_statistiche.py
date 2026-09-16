@@ -323,3 +323,151 @@ def test_tabellone_non_si_indovina_con_partecipanti_sbagliati():
     assert tabellone_ottavi([]) is None
     # Righe vuote non contano come partecipanti.
     assert tabellone_ottavi(CLASSIFICA_16[:15] + ["  "]) is None
+
+
+# --- Coppa: tabellone fisso dalla 34ª e passaggi di turno ---
+
+from statistiche import (
+    PRIMA_GIORNATA_COPPA,
+    ULTIMA_GIORNATA_TABELLONE,
+    classifica_per_coppa,
+    giornate_concluse,
+    punti_per_giornata,
+    turni_coppa,
+)
+
+
+def test_calendario_coppa_ultime_quattro_giornate():
+    assert (ULTIMA_GIORNATA_TABELLONE, PRIMA_GIORNATA_COPPA) == (34, 35)
+
+
+def _classifica(**punti_per_nome):
+    # punti_per_nome: NOME={giornata: punti}
+    return [{"Giocatore": nome, "Punti Totali": sum(p.values()),
+             **{f"Giornata {g}": str(v) for g, v in p.items()}}
+            for nome, p in punti_per_nome.items()]
+
+
+def test_classifica_coppa_ignora_punti_dopo_la_34():
+    # Con i 40 punti della 35ª BRUNO sarebbe primo: non contano, ANNA resta davanti (15 a 12).
+    righe = _classifica(ANNA={1: 10, 34: 5}, BRUNO={1: 12, 35: 40})
+    assert classifica_per_coppa(righe, []) == ["ANNA", "BRUNO"]
+    # La 34ª invece conta: senza i suoi 5 punti ANNA (10) sarebbe dietro a BRUNO (14).
+    righe = _classifica(ANNA={1: 10, 34: 5}, BRUNO={1: 14, 36: 40})
+    assert classifica_per_coppa(righe, []) == ["ANNA", "BRUNO"]
+
+
+def test_classifica_coppa_esclude_ritirati_e_celle_non_numeriche():
+    righe = _classifica(ANNA={1: 10}, BRUNO={1: 8})
+    righe.append({"Giocatore": "PULIZZER (RITIRATO)", "Giornata 1": "90"})
+    righe.append({"Giocatore": "CARLO", "Giornata 1": "n/d"})
+    assert classifica_per_coppa(righe, []) == ["ANNA", "BRUNO", "CARLO"]
+
+
+def test_classifica_coppa_spareggio_vittorie_fino_alla_34():
+    righe = _classifica(ANNA={1: 10}, BRUNO={1: 10})
+    giocate = [
+        {"Giornata": "Giornata 1", "Giocatore": "ANNA", "Esito": "✅ VINTA"},
+        {"Giornata": "Giornata 35", "Giocatore": "BRUNO", "Esito": "✅ VINTA"},
+        {"Giornata": "Giornata 35", "Giocatore": "BRUNO", "Esito": "✅ VINTA"},
+    ]
+    # Le vittorie di BRUNO sono della 35ª: non valgono per lo spareggio.
+    assert classifica_per_coppa(righe, giocate) == ["ANNA", "BRUNO"]
+    # A parita' completa resta l'ordine del foglio.
+    assert classifica_per_coppa(_classifica(ZETA={1: 3}, ALFA={1: 3}), []) == ["ZETA", "ALFA"]
+
+
+def test_classifica_coppa_coincide_con_la_classifica_prima_della_35():
+    # Dati veri al 16/09/2026 (solo punti totali, spareggio SILVIO/DAVIDE e
+    # GIACOMO/CECILIA dai pronostici vinti): stesso ordine della scheda Classifica.
+    punti = {"GIOVANNI": 88, "MIRKO": 87, "FAZIO": 93, "GAETANO": 75, "GIACOMO": 72,
+             "VINCENZO": 86, "VILLARI": 99, "DARIO": 81, "SILVIO": 76, "PAOLO": 118,
+             "SIRACUSA": 90, "CECILIA": 72, "DAVIDE": 76, "MICHELE": 69, "MARIO": 79, "NICO": 66}
+    righe = [{"Giocatore": n, "Giornata 1": str(p)} for n, p in punti.items()]
+    righe.append({"Giocatore": "PULIZZER (RITIRATO)", "Giornata 1": "90"})
+    giocate = ([{"Giornata": "Giornata 1", "Giocatore": "SILVIO", "Esito": "✅ VINTA"}]
+               + [{"Giornata": "Giornata 1", "Giocatore": "GIACOMO", "Esito": "✅ VINTA"}])
+    assert classifica_per_coppa(righe, giocate) == [
+        "PAOLO", "VILLARI", "FAZIO", "SIRACUSA", "GIOVANNI", "MIRKO", "VINCENZO", "DARIO",
+        "MARIO", "SILVIO", "DAVIDE", "GAETANO", "GIACOMO", "CECILIA", "MICHELE", "NICO"]
+
+
+def test_punti_per_giornata_cella_vuota_non_e_zero():
+    righe = [{"Giocatore": "ANNA", "Punti Totali": 7, "Giornata 35": "7", "Giornata 36": ""},
+             {"Giocatore": "BRUNO", "Giornata 35": "0"}]
+    assert punti_per_giornata(righe) == {35: {"ANNA": 7, "BRUNO": 0}}
+
+
+def test_giornate_concluse():
+    giocate = [
+        {"Giornata": "Giornata 35", "Giocatore": "ANNA", "Esito": "✅ VINTA"},
+        {"Giornata": "Giornata 35", "Giocatore": "BRUNO", "Esito": "ANNULLATA ECCESSO"},
+        {"Giornata": "Giornata 35", "Giocatore": "BRUNO", "Esito": "❌ PERSA"},
+        {"Giornata": "Giornata 36", "Giocatore": "ANNA", "Esito": "✅ VINTA"},
+        {"Giornata": "Giornata 36", "Giocatore": "BRUNO", "Esito": "⏳ IN CORSO"},
+    ]
+    assert giornate_concluse(giocate) == {35}
+    for aperto in ("⚠️ DA VERIFICARE", "⏸️ RINVIATA", ""):
+        assert giornate_concluse([{"Giornata": "Giornata 37", "Giocatore": "ANNA", "Esito": aperto}]) == set()
+    # Giornata 3 e Giornata 35 restano distinte (niente sottostringhe).
+    assert giornate_concluse([
+        {"Giornata": "Giornata 3", "Giocatore": "ANNA", "Esito": "✅ VINTA"},
+        {"Giornata": "Giornata 35", "Giocatore": "ANNA", "Esito": "⏳ IN CORSO"},
+    ]) == {3}
+
+
+NOMI_16 = [f"G{i}" for i in range(1, 17)]
+
+
+def _turni(punti_giornate, concluse):
+    return turni_coppa(tabellone_ottavi(NOMI_16), punti_giornate, concluse)
+
+
+def test_turni_prima_della_coppa_solo_ottavi_noti():
+    turni = _turni({}, set())
+    assert [len(t) for t in turni] == [8, 4, 2, 1]
+    assert [t[0]["giornata"] for t in turni] == [35, 36, 37, 38]
+    assert all(s["vincente"] is None for t in turni for s in t)
+    assert all(s["giocatori"] == [None, None] for t in turni[1:] for s in t)
+
+
+def test_ottavi_in_corso_mostrano_punti_senza_vincente():
+    turni = _turni({35: {"G1": 4, "G16": 9}}, set())
+    primo = turni[0][0]
+    assert primo["punti"] == [4, 9] and primo["vincente"] is None
+    assert turni[1][0]["giocatori"] == [None, None]
+
+
+def test_passa_chi_fa_piu_punti_e_a_parita_il_meglio_piazzato():
+    punti = {35: {f"G{i}": 5 for i in range(1, 17)}}
+    punti[35]["G16"] = 9        # G16 batte G1
+    punti[35]["G9"] = 5         # G8 e G9 pari: passa G8
+    turni = _turni(punti, {35})
+    assert turni[0][0]["vincente"] == 1
+    assert turni[0][1]["giocatori"] == [(8, "G8"), (9, "G9")] and turni[0][1]["vincente"] == 0
+    assert turni[1][0]["giocatori"] == [(16, "G16"), (8, "G8")]
+
+
+def test_senza_punti_in_giornata_conclusa_valgono_zero():
+    turni = _turni({35: {"G16": 1}}, {35})
+    assert turni[0][0]["vincente"] == 1          # G16 (1 pt) batte G1 (nessun punto = 0)
+    assert turni[0][1]["vincente"] == 0          # G8 e G9 entrambi a 0: passa G8
+
+
+def test_coppa_completa_fino_al_campione():
+    # Vince sempre il meglio piazzato: in finale G1 contro G2, campione G1.
+    concluse = {35, 36, 37, 38}
+    turni = _turni({}, concluse)
+    finale = turni[3][0]
+    assert finale["giocatori"] == [(1, "G1"), (2, "G2")]
+    assert finale["giocatori"][finale["vincente"]] == (1, "G1")
+    # Semifinali: 1 contro 4, 3 contro 2 (schema classico).
+    assert [[v[0] for v in s["giocatori"]] for s in turni[2]] == [[1, 4], [3, 2]]
+
+
+def test_turno_successivo_non_concluso_non_dichiara_nulla():
+    turni = _turni({36: {"G1": 3, "G8": 7}}, {35})
+    quarto = turni[1][0]
+    assert quarto["giocatori"] == [(1, "G1"), (8, "G8")]
+    assert quarto["punti"] == [3, 7] and quarto["vincente"] is None
+    assert turni[2][0]["giocatori"] == [None, None]
