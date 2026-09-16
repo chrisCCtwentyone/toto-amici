@@ -44,6 +44,39 @@ def nome_senza_ritiro(nome):
     return nome
 
 
+# Chi ha preso il posto di un ritirato. Le schedine del ritirato in Giocate
+# sono state rinominate col nome del sostituto (Sessione 20), quindi le
+# statistiche del ritirato si ricavano dalle schedine del sostituto fino
+# all'ultima giornata che ha punti nella riga congelata della Classifica.
+SOSTITUTI_DEI_RITIRATI = {"PULIZZER": "SIRACUSA"}
+
+
+def ultima_giornata_con_punti(riga_classifica):
+    """Numero dell'ultima colonna "Giornata N" non vuota di una riga di
+    Classifica (dict colonna -> valore). None se non ce n'e' nessuna."""
+    numeri = [
+        numero_giornata(col) for col, valore in riga_classifica.items()
+        if numero_giornata(col) is not None and str(valore).strip() != ""
+    ]
+    return max(numeri) if numeri else None
+
+
+def righe_del_ritirato(righe_giocate, nome_ritirato, ultima_giornata):
+    """Le righe di Giocate (dict con "Giornata" e "Giocatore") che
+    appartengono al ritirato: quelle del sostituto fino a ultima_giornata.
+    Lista vuota se il ritirato non ha un sostituto noto."""
+    sostituto = SOSTITUTI_DEI_RITIRATI.get(nome_senza_ritiro(nome_ritirato).upper())
+    if not sostituto or ultima_giornata is None:
+        return []
+    righe = []
+    for r in righe_giocate:
+        n = numero_giornata(r.get("Giornata"))
+        if (str(r.get("Giocatore", "")).strip().upper() == sostituto
+                and n is not None and n <= ultima_giornata):
+            righe.append(r)
+    return righe
+
+
 def numero_giornata(etichetta):
     """"Giornata 12" -> 12. Qualsiasi altra forma -> None.
 

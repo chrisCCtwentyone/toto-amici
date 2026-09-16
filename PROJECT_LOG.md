@@ -119,7 +119,11 @@ Toto_Amici_Progetto/
 - `statistiche.py`: `SUFFISSO_RITIRATO`, `e_ritirato()`, `nome_senza_ritiro()`, usate da entrambe le parti.
 - `app.py`: i ritirati escono da podio, posizioni, frecce di tendenza e "Giornata da incorniciare". In Classifica completa compaiono in fondo, dopo una riga "—", con posizione "Ritirato"; nello storico per giornata come "PULIZZER (ritirato)". Verificato sulla dashboard vera.
 - Riepilogo WhatsApp: i ritirati vanno in fondo dopo una riga `———`, con 🚪 e senza medaglia.
-- Per ritirare un giocatore in futuro: rinominare le sue celle in Giocate e Classifica con il nome del sostituto, aggiornare `GIOCATORI`, e aggiungere in fondo a Classifica la copia della riga con il suffisso ` (RITIRATO)`.
+- Per ritirare un giocatore in futuro: rinominare le sue celle in Giocate e Classifica con il nome del sostituto, aggiornare `GIOCATORI`, aggiungere in fondo a Classifica la copia della riga con il suffisso ` (RITIRATO)` e registrare la coppia in `SOSTITUTI_DEI_RITIRATI` (`statistiche.py`).
+
+**ImportError sul sito dopo il deploy della 2.9.0.** Il codice su GitHub era corretto: Streamlit Cloud aveva rieseguito il nuovo `app.py` tenendo in memoria il vecchio `statistiche.py`, che non aveva ancora le funzioni importate. Risolto con "Reboot app". Regola aggiunta a `CLAUDE.md`.
+
+**Pulizzer anche nella tabella completa delle Statistiche** (dashboard 2.9.1). Le sue schedine in Giocate sono ormai a nome Siracusa, quindi la riga "PULIZZER (ritirato)" si calcola sulle schedine di Siracusa fino all'ultima giornata con punti nella riga congelata della Classifica (oggi la 4). Da quella dopo in poi le statistiche sono solo di Siracusa. Nuove funzioni pure `ultima_giornata_con_punti()` e `righe_del_ritirato()` (confronto per numero di giornata, mai per sottostringa), con test. Il ritirato resta fuori dai premi "I protagonisti". Verificato sulla dashboard vera.
 
 ### 14/09/2026 — Sessione 19 (Timer dall'ultima schedina vinta, righe del Confronto Giocate)
 

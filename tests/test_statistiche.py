@@ -244,3 +244,32 @@ def test_riconosce_il_ritirato(nome):
 def test_un_attivo_non_e_ritirato(nome):
     assert not e_ritirato(nome)
     assert nome_senza_ritiro(nome) == nome.strip()
+
+
+from statistiche import righe_del_ritirato, ultima_giornata_con_punti
+
+
+def test_ultima_giornata_con_punti_ignora_le_colonne_vuote():
+    riga = {"Giocatore": "PULIZZER (RITIRATO)", "Punti Totali": "90",
+            "Giornata 1": "16", "Giornata 4": "14", "Giornata 5": "", "Giornata 12": " "}
+    assert ultima_giornata_con_punti(riga) == 4
+    assert ultima_giornata_con_punti({"Giocatore": "X", "Giornata 1": ""}) is None
+
+
+def test_il_ritirato_prende_solo_le_giornate_prima_del_ritiro():
+    righe = [
+        {"Giornata": "Giornata 1", "Giocatore": "SIRACUSA"},
+        {"Giornata": "Giornata 4", "Giocatore": "SIRACUSA"},
+        {"Giornata": "Giornata 5", "Giocatore": "SIRACUSA"},   # gia' di Siracusa
+        {"Giornata": "Giornata 12", "Giocatore": "SIRACUSA"},  # 12 > 4: mai per sottostringa
+        {"Giornata": "Giornata 1", "Giocatore": "MARIO"},
+        {"Giornata": "Giornata", "Giocatore": "SIRACUSA"},     # intestazione ripetuta
+    ]
+    scelte = righe_del_ritirato(righe, "PULIZZER (RITIRATO)", 4)
+    assert [r["Giornata"] for r in scelte] == ["Giornata 1", "Giornata 4"]
+
+
+def test_ritirato_senza_sostituto_noto_non_ha_righe():
+    righe = [{"Giornata": "Giornata 1", "Giocatore": "SIRACUSA"}]
+    assert righe_del_ritirato(righe, "SCONOSCIUTO (RITIRATO)", 4) == []
+    assert righe_del_ritirato(righe, "PULIZZER (RITIRATO)", None) == []

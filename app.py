@@ -13,10 +13,12 @@ from statistiche import (
     momento_fine_schedina,
     nome_senza_ritiro,
     numero_giornata,
+    righe_del_ritirato,
     schedine_chiuse_ultima_giornata,
     schedine_perse_per_un_soffio,
     scelta_del_gruppo,
     scomponi_durata,
+    ultima_giornata_con_punti,
 )
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -105,8 +107,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.9.0"
+VERSIONE_APP = "2.9.1"
 NOVITA = [
+    ("2.9.1", "16/09/2026", "Nella tabella completa delle statistiche compare anche Pulizzer, in fondo tra i ritirati, con i numeri delle giornate che ha giocato."),
     ("2.9.0", "16/09/2026", "Siracusa entra nel torneo al posto di Pulizzer e riparte dai suoi punti. Pulizzer resta in fondo alla classifica come ritirato, con i punti fatti finora."),
     ("2.8.0", "14/09/2026", "Nuove statistiche: il timer che conta da quanto tempo nessuno vince una schedina, e \"Per un soffio\" con le schedine perse per un solo evento. Nel confronto giocate: righe ben visibili tra le partite e una nuova colonna con la scelta più giocata dal gruppo."),
     ("2.7.1", "04/09/2026", "Sito più comodo da telefono: classifica, podio e montepremi occupano meno spazio, si scorre molto meno per vedere tutto."),
@@ -281,6 +284,7 @@ def normalizza_partita_completa(partita_sheet, partite_ufficiali):
 # cache e' calda, Streamlit lo salta da solo senza sfarfallio.
 with st.skeleton(height=420):
     df_classifica, df_cassa, df_giocate = carica_tutti_i_dati()
+    df_ritirati = pd.DataFrame()
 _data_load_time = datetime.now(pytz.timezone("Europe/Rome")).strftime("%H:%M")
 
 # ==========================================
@@ -968,20 +972,38 @@ setInterval(aggiorna, 1000);
             df_stats['Esito'].str.contains("VINTA|PERSA", na=False, regex=True)
         ]
 
-        stats_giocatori = []
-        for player in df_stats['Giocatore'].unique():
-            df_p_valutate = df_valutate[df_valutate['Giocatore'] == player]
+        def statistiche_giocatore(nome, df_p_valutate):
             tot = len(df_p_valutate)
             vinte = len(df_p_valutate[df_p_valutate['Esito'].str.contains("VINTA", na=False)])
             # Quota media solo sulle partite valutate
             quota_media = df_p_valutate['Quota Num'].mean() if tot > 0 else 0.0
-            stats_giocatori.append({
-                'Giocatore': player,
+            return {
+                'Giocatore': nome,
                 'Win_Rate': (vinte / tot * 100) if tot > 0 else 0,
                 'Quota_Media': quota_media,
                 'Vinte': vinte,
                 'Totali': tot
-            })
+            }
+
+        stats_giocatori = [
+            statistiche_giocatore(player, df_valutate[df_valutate['Giocatore'] == player])
+            for player in df_stats['Giocatore'].unique()
+        ]
+
+        # Ritirati: statistiche congelate, calcolate sulle schedine passate al
+        # sostituto fino all'ultima giornata giocata dal ritirato. Solo per la
+        # tabella completa, fuori dai premi "I protagonisti".
+        stats_ritirati = []
+        for _, riga_rit in df_ritirati.iterrows():
+            righe = righe_del_ritirato(
+                df_valutate.reset_index().to_dict('records'),
+                riga_rit['Giocatore'], ultima_giornata_con_punti(riga_rit.to_dict())
+            )
+            indici = [r['index'] for r in righe]
+            if indici:
+                stats_ritirati.append(statistiche_giocatore(
+                    f"{nome_senza_ritiro(riga_rit['Giocatore'])} (ritirato)", df_valutate.loc[indici]
+                ))
 
         # Filtra giocatori con almeno 1 partita valutata
         stats_giocatori = [s for s in stats_giocatori if s['Totali'] > 0]
@@ -1162,9 +1184,15 @@ setInterval(aggiorna, 1000);
         with st.expander(":material/table_chart: Tabella completa statistiche giocatori"):
             if stats_giocatori:
                 df_pg_full = pd.DataFrame(stats_giocatori).sort_values('Win_Rate', ascending=False)
+                if stats_ritirati:
+                    separatore = {'Giocatore': '—', 'Win_Rate': None, 'Quota_Media': None, 'Vinte': '', 'Totali': ''}
+                    df_pg_full = pd.concat(
+                        [df_pg_full, pd.DataFrame([separatore] + stats_ritirati)], ignore_index=True
+                    )
                 df_pg_full = df_pg_full.rename(columns={'Win_Rate': 'Win Rate %', 'Quota_Media': 'Quota Media'})
-                df_pg_full['Win Rate %'] = df_pg_full['Win Rate %'].apply(lambda x: f"{x:.1f}%")
-                df_pg_full['Quota Media'] = df_pg_full['Quota Media'].apply(lambda x: f"{x:.2f}")
+                df_pg_full['Win Rate %'] = df_pg_full['Win Rate %'].apply(lambda x: "" if pd.isna(x) else f"{x:.1f}%")
+                df_pg_full['Quota Media'] = df_pg_full['Quota Media'].apply(lambda x: "" if pd.isna(x) else f"{x:.2f}")
+                df_pg_full[['Vinte', 'Totali']] = df_pg_full[['Vinte', 'Totali']].astype(str)
                 df_pg_full = df_pg_full.set_index("Giocatore")
                 st.table(df_pg_full)
     else:
