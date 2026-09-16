@@ -42,7 +42,7 @@ GIOCATORI = [
     "cecilia", "dario", "davide", "fazio", 
     "gaetano", "giacomo", "giovanni", "mario", 
     "michele", "mirko", "nico", "paolo", 
-    "pulizzer", "silvio", "villari", "vincenzo"
+    "silvio", "siracusa", "villari", "vincenzo"
 ]
 
 LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}

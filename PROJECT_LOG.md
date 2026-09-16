@@ -106,6 +106,14 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 16/09/2026 — Sessione 20 (Cambio giocatore: Pulizzer sostituito da Siracusa)
+
+**Siracusa prende il posto di Pulizzer, storico compreso.** Il bot e la dashboard identificano un giocatore solo dal nome (in maiuscolo nella colonna `Giocatore` di Giocate e nella colonna A di Classifica), quindi è bastato rinominare le celle perché punti e schedine passassero a Siracusa, senza toccare altro.
+- `bot_telegram.py`: `GIOCATORI` ora contiene `siracusa` al posto di `pulizzer` (ordine alfabetico: cambia di un posto la tastiera di scelta giocatore).
+- Google Sheets: `findReplace` con `matchEntireCell` su tutti i fogli → 41 celle (40 in Giocate, 1 in Classifica), nessuna in Cassa. Verificato con un confronto cella per cella contro un backup preso subito prima: cambiate solo quelle 41 celle. Classifica di Siracusa: 90 punti, invariati.
+- Dry-run su G.1–3: 960 celle, 0 differenze.
+- La dashboard legge i nomi dal foglio: nessuna modifica a `app.py`. Il file locale `giocate_completate.txt` (fuori da git, non usato da nessuno script) cita ancora il vecchio nome: è un residuo del vecchio flusso WhatsApp.
+
 ### 14/09/2026 — Sessione 19 (Timer dall'ultima schedina vinta, righe del Confronto Giocate)
 
 **Confronto Giocate: righe invisibili nella colonna partite.** Il bordo delle celle lo disegna lo Styler di Pandas, che però tocca solo le celle dati (`td`). La colonna con i nomi delle partite è l'**indice** della pivot, e Pandas la rende come celle `th`: nessuno stile la raggiungeva. Aggiunta una regola CSS `.confronto-scroll th` con lo stesso bordo delle celle (vale anche per l'intestazione con i nomi dei giocatori).
