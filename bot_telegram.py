@@ -54,6 +54,35 @@ LIMITI_SCHEDINA = {"Combo": 1, "Fisse": 4, "Doppie Chance": 2, "Variabili": 3}
  ATTESA_RISULTATO_MANUALE, CONFERMA_RISULTATO_MANUALE, CONFERMA_ARCHIVIA_STAGIONE) = range(13)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# httpx registra OGNI chiamata a Telegram: con il polling sono circa 8.600 righe
+# al giorno, tutte uguali, dentro cui va poi cercato l'errore vero. Restano i
+# suoi WARNING e ERROR, che sono gli unici utili.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Foto delle schedine scaricate da Telegram, cancellate a fine caricamento.
+CARTELLA_FOTO = "temp_telegram"
+
+
+def pulisci_foto_residue(cartella=CARTELLA_FOTO):
+    """Cancella le foto rimaste da un caricamento interrotto e ne restituisce il numero.
+
+    Le foto si cancellano a fine flusso (conferma o annullamento): se l'admin ne
+    manda qualcuna e poi abbandona, restano li'. Il disco di Render e' effimero,
+    quindi un riavvio le porterebbe via comunque: questa e' la stessa pulizia
+    fatta in modo esplicito, utile anche in locale.
+    """
+    if not os.path.isdir(cartella):
+        return 0
+    cancellate = 0
+    for nome in os.listdir(cartella):
+        percorso = os.path.join(cartella, nome)
+        if os.path.isfile(percorso):
+            try:
+                os.remove(percorso)
+                cancellate += 1
+            except OSError:
+                logging.warning("Non sono riuscito a cancellare la foto residua %s", percorso)
+    return cancellate
 
 if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
     logging.warning("⚠️ ATTENZIONE: Variabili d'ambiente mancanti. Il bot potrebbe non funzionare correttamente!")
@@ -124,11 +153,6 @@ def leggi_chiave_api():
     try:
         with open('chiave_api.txt', 'r') as f: return f.read().strip()
     except: return ""
-
-def chiave_api_da_env():
-    """True se la chiave in uso arriva dalla variabile d'ambiente (quindi /setkey
-    non ha effetto pratico finche' quella variabile resta impostata)."""
-    return bool(os.environ.get("GEMINI_API_KEY", "").strip())
 
 def get_gemini_client():
     chiave = leggi_chiave_api()
@@ -1300,9 +1324,9 @@ async def gestisci_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ricevi_foto_multipla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     photo_file = await update.message.photo[-1].get_file()
-    if not os.path.exists("temp_telegram"): os.makedirs("temp_telegram")
+    if not os.path.exists(CARTELLA_FOTO): os.makedirs(CARTELLA_FOTO)
     
-    percorso_foto = f"temp_telegram/schedina_{len(context.user_data.get('foto_ricevute', [])) + 1}.jpg"
+    percorso_foto = f"{CARTELLA_FOTO}/schedina_{len(context.user_data.get('foto_ricevute', [])) + 1}.jpg"
     await photo_file.download_to_drive(percorso_foto)
     
     if 'foto_ricevute' not in context.user_data: context.user_data['foto_ricevute'] = []
@@ -2082,6 +2106,10 @@ def main():
     if not TOKEN:
         logging.error("ERRORE: Variabile TELEGRAM_TOKEN non trovata. Impossibile avviare il bot.")
         return
+
+    residue = pulisci_foto_residue()
+    if residue:
+        logging.info("Pulite %d foto rimaste da un caricamento interrotto", residue)
 
     # AVVIO DEL FINTO SITO WEB IN BACKGROUND PER RENDER
     threading.Thread(target=run_web_server, daemon=True).start()

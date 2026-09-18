@@ -8,28 +8,37 @@ from html import escape as escape_html
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from api_utils import richiedi_con_retry
-from statistiche import (
-    PRIMA_GIORNATA_COPPA,
-    TURNI_COPPA,
-    ULTIMA_GIORNATA_TABELLONE,
-    classifica_per_coppa,
-    e_ritirato,
-    giornate_concluse,
-    leggi_orario_utc,
-    momento_fine_schedina,
-    nome_senza_ritiro,
-    numero_giornata,
-    ordina_partite_per_orario,
-    punti_per_giornata,
-    righe_del_ritirato,
-    schedine_chiuse_ultima_giornata,
-    schedine_perse_per_un_soffio,
-    scelta_del_gruppo,
-    scomponi_durata,
-    tabellone_ottavi,
-    turni_coppa,
-    ultima_giornata_con_punti,
-)
+# Import protetto: Streamlit Cloud, dopo un aggiornamento, puo' rieseguire il
+# nuovo app.py tenendo in memoria la vecchia copia di questo modulo. Le funzioni
+# nuove non esistono ancora e il sito mostrerebbe un ImportError ai giocatori
+# (successo il 16/09 e il 18/09/2026). La modalita' manutenzione qui sotto non
+# puo' intercettarlo: l'errore avviene prima che il codice arrivi a leggerla.
+try:
+    from statistiche import (
+        PRIMA_GIORNATA_COPPA,
+        TURNI_COPPA,
+        ULTIMA_GIORNATA_TABELLONE,
+        classifica_per_coppa,
+        e_ritirato,
+        giornate_concluse,
+        leggi_orario_utc,
+        momento_fine_schedina,
+        nome_senza_ritiro,
+        numero_giornata,
+        ordina_partite_per_orario,
+        punti_per_giornata,
+        righe_del_ritirato,
+        schedine_chiuse_ultima_giornata,
+        schedine_perse_per_un_soffio,
+        scelta_del_gruppo,
+        scomponi_durata,
+        tabellone_ottavi,
+        turni_coppa,
+        ultima_giornata_con_punti,
+    )
+    ERRORE_IMPORT = None
+except ImportError as errore:
+    ERRORE_IMPORT = str(errore)
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(
@@ -82,6 +91,25 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a {display: none !important;}
 </style>
 """)
 
+# --- AGGIORNAMENTO IN CORSO ---
+# Vedi il commento sull'import protetto in cima al file.
+if ERRORE_IMPORT:
+    print(f"ImportError da statistiche.py: {ERRORE_IMPORT}. Serve un Reboot app su Streamlit Cloud.")
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    col_vuota1, col_centro, col_vuota2 = st.columns([1, 2, 1])
+    with col_centro:
+        with st.container(border=True):
+            st.markdown(
+                "<div style='text-align:center; padding: 2rem 1rem;'>"
+                "<div style='font-size: 3rem;'>🔄</div>"
+                "<h2>Aggiornamento in corso</h2>"
+                "<p>Stiamo pubblicando una nuova versione del sito.<br>"
+                "Riprova fra un minuto — i dati sono tutti al sicuro.</p>"
+                "</div>",
+                unsafe_allow_html=True
+            )
+    st.stop()
+
 # --- MODALITÀ MANUTENZIONE ---
 # Attiva a mano quando ci sono anomalie sui dati da controllare prima di mostrarli agli utenti.
 # Per riattivare il sito: rimettere MANUTENZIONE = False.
@@ -117,8 +145,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.11.1"
+VERSIONE_APP = "2.11.2"
 NOVITA = [
+    ("2.11.2", "18/09/2026", "Se il sito è in aggiornamento ora compare un messaggio chiaro al posto della schermata di errore."),
     ("2.11.1", "18/09/2026", "Nel confronto giocate le partite sono in ordine di orario: la prima della giornata è la prima riga della tabella."),
     ("2.11.0", "16/09/2026", "Coppa: ora è indicata la giornata di ogni turno (ottavi alla 35ª, finale alla 38ª). Il tabellone diventa definitivo dopo la 34ª giornata e, durante la Coppa, mostra i punti di ogni sfida e chi passa il turno."),
     ("2.10.0", "16/09/2026", "La Coppa ha i nomi: il tabellone mostra gli accoppiamenti di oggi, 1° contro 16°, 2° contro 15° e così via. È provvisorio e cambia con la classifica fino all'inizio della Coppa."),

@@ -3,6 +3,13 @@
 # L'utente può switchare dal menu ⋮ → Settings → Theme
 # =====================================================
 
+# I giocatori non devono vedere schermate rosse con traceback: se il sito va in
+# errore compare solo un messaggio generico, il dettaglio resta nei log di
+# Streamlit Cloud. In locale, per lavorare, si riattiva con:
+#   python3 -m streamlit run app.py --client.showErrorDetails=full
+[client]
+showErrorDetails = "none"
+
 # Opzioni globali (valide per entrambi i temi)
 [theme]
 baseRadius   = "8px"

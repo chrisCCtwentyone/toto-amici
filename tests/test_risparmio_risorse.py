@@ -202,3 +202,27 @@ class TestLiberaMemoriaAlSistemaOperativo:
         sorgente = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot_telegram.py")).read()
         blocco = sorgente[sorgente.index("def esegui_calcolo_risultati"):sorgente.index("def applica_risultato_manuale")]
         assert "libera_memoria_al_sistema_operativo()" in blocco
+
+
+# =========================================================
+# pulisci_foto_residue — foto lasciate da un caricamento interrotto
+# =========================================================
+class TestPuliziaFotoResidue:
+    """Le foto si cancellano a fine caricamento; se l'admin abbandona a meta'
+    restano sul disco. La pulizia all'avvio le toglie di mezzo."""
+
+    def test_cancella_le_foto_rimaste(self, tmp_path):
+        for i in range(3):
+            (tmp_path / f"schedina_{i}.jpg").write_bytes(b"finta foto")
+        assert bt.pulisci_foto_residue(str(tmp_path)) == 3
+        assert list(tmp_path.iterdir()) == []
+
+    def test_cartella_vuota_o_inesistente(self, tmp_path):
+        assert bt.pulisci_foto_residue(str(tmp_path)) == 0
+        assert bt.pulisci_foto_residue(str(tmp_path / "mai_creata")) == 0
+
+    def test_non_tocca_le_sottocartelle(self, tmp_path):
+        (tmp_path / "sottocartella").mkdir()
+        (tmp_path / "schedina_1.jpg").write_bytes(b"finta foto")
+        assert bt.pulisci_foto_residue(str(tmp_path)) == 1
+        assert (tmp_path / "sottocartella").is_dir()
