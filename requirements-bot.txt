@@ -1,0 +1,16 @@
+# Dipendenze del SOLO bot Telegram (Render).
+# Il sito Streamlit usa requirements.txt, che contiene anche streamlit e pandas:
+# il bot non li importa mai, ma con il file unico se li installava lo stesso
+# (streamlit 35 MB, pandas 72, pyarrow 127, numpy 60, altair 10 — circa 300 MB
+# di pacchetti mai caricati). Misurato in Sessione 22.
+#
+# Su Render, comando di build:
+#   pip install -r requirements-bot.txt
+python-telegram-bot[job-queue]
+google-genai
+google-api-python-client
+google-auth
+pillow
+requests
+pytz
+Flask

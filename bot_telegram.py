@@ -854,6 +854,25 @@ def calcola_punteggio_partita(pronostico, quota):
     punti = 6 if "+" in pronostico else (4 if pronostico in ["1","X","2"] else (1 if pronostico in ["1X","X2","12"] else 2))
     return punti * 2 if quota >= 3.50 else punti
 
+_id_foglio_giocate_cache = None
+
+
+def id_foglio_giocate(service):
+    """Identificativo interno del foglio Giocate, letto una volta per processo.
+
+    Serve solo a colorare le celle. Non cambia mai per un foglio dato, mentre
+    prima veniva richiesto a Google a ogni calcolo risultati (5-6 volte al
+    giorno) insieme all'anagrafica completa del file.
+    """
+    global _id_foglio_giocate_cache
+    if _id_foglio_giocate_cache is None:
+        fogli = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3).get('sheets', [])
+        _id_foglio_giocate_cache = next(
+            f['properties']['sheetId'] for f in fogli if f['properties']['title'].lower() == 'giocate'
+        )
+    return _id_foglio_giocate_cache
+
+
 def esegui_calcolo_risultati(giornata, matches_api=None):
     """Se matches_api non e' fornita, la scarica da Football-Data come sempre.
     Un chiamante puo' passarla gia' pronta (es. applica_risultato_manuale) per
@@ -873,7 +892,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     da_verificare_dettaglio = []
     colore_verde, colore_rosso, colore_grigio = {"red":0.85,"green":0.95,"blue":0.85}, {"red":0.95,"green":0.85,"blue":0.85}, {"red":0.90,"green":0.90,"blue":0.90}
     colore_giallo = {"red":1.0,"green":0.95,"blue":0.70}
-    sheet_id_giocate = next(s['properties']['sheetId'] for s in service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3).get('sheets', []) if s['properties']['title'].lower() == 'giocate')
+    sheet_id_giocate = id_foglio_giocate(service)
 
     for idx, riga in enumerate(righe_giocate):
         if len(riga) < 6 or not riga_e_della_giornata(riga[0], giornata): continue
@@ -2211,7 +2230,10 @@ def main():
     ))
     app.add_handler(conv_handler)
     logging.info("🤖 Super-Bot Telegram avviato: in ascolto su Telegram e pronto ai ping di keep-alive.")
-    app.run_polling()
+    # timeout=30: il polling lungo tiene aperta la richiesta fino a 30s invece
+    # dei 10 di default. Le risposte restano immediate (Telegram risponde appena
+    # arriva un messaggio), ma le richieste passano da ~8.600 a ~2.900 al giorno.
+    app.run_polling(timeout=30)
 
 if __name__ == '__main__':
     main()

@@ -226,3 +226,36 @@ class TestPuliziaFotoResidue:
         (tmp_path / "schedina_1.jpg").write_bytes(b"finta foto")
         assert bt.pulisci_foto_residue(str(tmp_path)) == 1
         assert (tmp_path / "sottocartella").is_dir()
+
+
+# =========================================================
+# id_foglio_giocate — anagrafica del foglio letta una volta per processo
+# =========================================================
+class TestIdFoglioGiocate:
+    """Serve solo a colorare le celle e non cambia mai: prima veniva richiesta
+    a Google a ogni calcolo risultati (5-6 volte al giorno)."""
+
+    class _ServizioFinto:
+        def __init__(self):
+            self.chiamate = 0
+
+        def spreadsheets(self):
+            return self
+
+        def get(self, **kwargs):
+            self.chiamate += 1
+            return self
+
+        def execute(self, **kwargs):
+            return {"sheets": [
+                {"properties": {"sheetId": 111, "title": "Classifica"}},
+                {"properties": {"sheetId": 222, "title": "Giocate"}},
+            ]}
+
+    def test_una_sola_chiamata_anche_se_richiesto_piu_volte(self, monkeypatch):
+        monkeypatch.setattr(bt, "_id_foglio_giocate_cache", None)
+        servizio = self._ServizioFinto()
+        assert bt.id_foglio_giocate(servizio) == 222
+        assert bt.id_foglio_giocate(servizio) == 222
+        assert bt.id_foglio_giocate(servizio) == 222
+        assert servizio.chiamate == 1

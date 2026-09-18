@@ -145,8 +145,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.11.2"
+VERSIONE_APP = "2.11.3"
 NOVITA = [
+    ("2.11.3", "18/09/2026", "Il sito chiede meno spesso i dati delle giornate già finite, che tanto non cambiano più: meno attese e meno rischio di rallentamenti."),
     ("2.11.2", "18/09/2026", "Se il sito è in aggiornamento ora compare un messaggio chiaro al posto della schermata di errore."),
     ("2.11.1", "18/09/2026", "Nel confronto giocate le partite sono in ordine di orario: la prima della giornata è la prima riga della tabella."),
     ("2.11.0", "16/09/2026", "Coppa: ora è indicata la giornata di ogni turno (ottavi alla 35ª, finale alla 38ª). Il tabellone diventa definitivo dopo la 34ª giornata e, durante la Coppa, mostra i punti di ogni sfida e chi passa il turno."),
@@ -270,6 +271,21 @@ def scarica_risultati_api(giornata):
     except Exception:
         api_error = True
     return partite_ufficiali, risultati_mappati, api_error
+
+@st.cache_data(ttl=86400)
+def orari_partite_giornata(giornata):
+    """Nomi ufficiali e orari di inizio di una giornata GIA' CONCLUSA, cache 24h.
+
+    Serve al timer dall'ultima schedina vinta, che guarda una giornata del
+    passato: orari e nomi non cambiano piu', mentre scarica_risultati_api ha
+    una cache di 3 minuti perche' deve seguire i risultati in diretta. Misurato:
+    senza questa funzione ogni caricamento a freddo faceva una terza chiamata a
+    Football-Data solo per il timer.
+    """
+    partite_ufficiali, risultati, errore = scarica_risultati_api(giornata)
+    orari = {nome: dati.get("utc") for nome, dati in risultati.items()}
+    return partite_ufficiali, orari, errore
+
 
 @st.cache_data(ttl=86400)
 def scarica_squadre_serie_a():
@@ -977,8 +993,8 @@ setInterval(aggiorna, 1000);
                 st.caption("Nessuna schedina vinta finora: il timer partirà dalla prima.")
             else:
                 n_giornata_vinta, vincitori = ultima_chiusura
-                partite_uff_v, risultati_uff_v, _ = scarica_risultati_api(str(n_giornata_vinta))
-                orari_inizio = {nome: leggi_orario_utc(r.get("utc")) for nome, r in risultati_uff_v.items()}
+                partite_uff_v, orari_uff_v, _ = orari_partite_giornata(str(n_giornata_vinta))
+                orari_inizio = {nome: leggi_orario_utc(utc) for nome, utc in orari_uff_v.items()}
                 momenti = []
                 for vincitore in vincitori:
                     righe_vincitore = df_giocate[
