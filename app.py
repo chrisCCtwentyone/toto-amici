@@ -19,6 +19,7 @@ from statistiche import (
     momento_fine_schedina,
     nome_senza_ritiro,
     numero_giornata,
+    ordina_partite_per_orario,
     punti_per_giornata,
     righe_del_ritirato,
     schedine_chiuse_ultima_giornata,
@@ -116,8 +117,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.11.0"
+VERSIONE_APP = "2.11.1"
 NOVITA = [
+    ("2.11.1", "18/09/2026", "Nel confronto giocate le partite sono in ordine di orario: la prima della giornata è la prima riga della tabella."),
     ("2.11.0", "16/09/2026", "Coppa: ora è indicata la giornata di ogni turno (ottavi alla 35ª, finale alla 38ª). Il tabellone diventa definitivo dopo la 34ª giornata e, durante la Coppa, mostra i punti di ogni sfida e chi passa il turno."),
     ("2.10.0", "16/09/2026", "La Coppa ha i nomi: il tabellone mostra gli accoppiamenti di oggi, 1° contro 16°, 2° contro 15° e così via. È provvisorio e cambia con la classifica fino all'inizio della Coppa."),
     ("2.9.1", "16/09/2026", "Nella tabella completa delle statistiche compare anche Pulizzer, in fondo tra i ritirati, con i numeri delle giornate che ha giocato."),
@@ -748,6 +750,15 @@ with tab_confronto:
 
                 # Rimuovi il nome dell'indice per evitare "Partita_Pulita" nella UI
                 pivot.index.name = None
+
+                # Partite in ordine di calcio d'inizio, non alfabetico: la pivot
+                # ordina per nome, e la prima partita della giornata poteva
+                # finire in fondo. Gli orari arrivano dalla stessa chiamata API
+                # gia' fatta qui sopra; una partita senza orario resta in fondo.
+                orari_partite = {
+                    nome: leggi_orario_utc(dati.get("utc")) for nome, dati in risultati_comp.items()
+                }
+                pivot = pivot.reindex(ordina_partite_per_orario(list(pivot.index), orari_partite))
 
                 # --- RIGA TOTALI: vincita potenziale per giocatore ---
                 vincita_map = {}

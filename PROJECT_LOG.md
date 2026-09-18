@@ -106,6 +106,13 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 18/09/2026 — Sessione 22 (Confronto Giocate in ordine cronologico)
+
+**Le partite erano in ordine alfabetico.** `pivot_table` ordina l'indice per nome, quindi la prima partita della giornata poteva finire in fondo alla tabella. Ora le righe seguono il calcio d'inizio, preso dagli orari della stessa chiamata API gia' fatta in quella scheda (nessuna richiesta in piu'). `ordina_partite_per_orario()` in `statistiche.py`, 4 test.
+- **Le partite senza orario non si perdono**: un nome che l'API non riconosce, o l'API non raggiungibile, mandano la riga in fondo in ordine alfabetico invece di farla sparire.
+- Verificato sui dati veri della Giornata 5: l'ordine della dashboard coincide con quello dell'API (Monza-Sassuolo venerdi' 20:45 → Milan-Lecce domenica 20:45).
+- **Trovato un errore nei dati**: in Giocate, Giornata 5, c'e' una riga `Prosinone - Como 1907` (refuso per Frosinone). Il matching del bot usa i primi 5 caratteri del nome, quindi quella riga non verra' mai agganciata e resta IN CORSO per sempre, bloccando la chiusura della schedina. Nel Confronto compare in fondo tra le non riconosciute. Da correggere sul foglio.
+
 ### 16/09/2026 — Sessione 21 (Coppa: tabellone con i nomi, dalla classifica attuale)
 
 **Il tabellone della Coppa non nascondeva nomi veri.** I "nomi sfocati" erano barre di caratteri pieni scritte a mano nel codice, e gli accoppiamenti non esistevano da nessuna parte (criterio ancora "da decidere" nel TODO). Togliere la sfocatura non bastava: serviva una regola. Scelta dell'utente, fra tre proposte: **tabellone provvisorio dalla classifica attuale**, 1° contro 16°, 2° contro 15° e così via, aggiornato a ogni giornata finché la Coppa non parte. Scartati "solo i 16 partecipanti, accoppiamenti da sorteggiare" e "coppie vicine (1°-2°, 3°-4°)".

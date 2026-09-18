@@ -355,3 +355,22 @@ def turni_coppa(ottavi, punti_giornate, concluse):
         turni.append(sfide)
         partecipanti = prossimi
     return turni
+
+
+def ordina_partite_per_orario(partite, orari_inizio):
+    """Partite in ordine di calcio d'inizio, per il Confronto Giocate.
+
+    partite: nomi delle partite da ordinare (l'indice della tabella).
+    orari_inizio: dict nome partita -> datetime di inizio (aware) o None.
+
+    Chi ha un orario viene prima, dal piu' presto al piu' tardi; a parita' di
+    orario l'ordine e' alfabetico. Le partite senza orario (nome non
+    riconosciuto dall'API, o API non raggiungibile) non vengono buttate via:
+    finiscono in fondo in ordine alfabetico, cosi' restano sempre visibili.
+    """
+    conosciute, sconosciute = [], []
+    for partita in partite:
+        (conosciute if orari_inizio.get(partita) else sconosciute).append(partita)
+    conosciute.sort(key=lambda p: (orari_inizio[p], str(p)))
+    sconosciute.sort(key=str)
+    return conosciute + sconosciute

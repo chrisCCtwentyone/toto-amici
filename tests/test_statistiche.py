@@ -471,3 +471,38 @@ def test_turno_successivo_non_concluso_non_dichiara_nulla():
     assert quarto["giocatori"] == [(1, "G1"), (8, "G8")]
     assert quarto["punti"] == [3, 7] and quarto["vincente"] is None
     assert turni[2][0]["giocatori"] == [None, None]
+
+
+# --- ordina_partite_per_orario (Confronto Giocate) ---
+
+from statistiche import ordina_partite_per_orario
+
+
+def test_ordine_cronologico_non_alfabetico():
+    orari = {
+        "Juventus - Inter": _utc(2026, 9, 19, 16, 0),    # venerdi', prima partita
+        "Atalanta - Como": _utc(2026, 9, 20, 12, 30),
+        "Roma - Lazio": _utc(2026, 9, 21, 18, 45),       # lunedi', ultima
+    }
+    assert ordina_partite_per_orario(sorted(orari), orari) == [
+        "Juventus - Inter", "Atalanta - Como", "Roma - Lazio"]
+
+
+def test_stesso_orario_ordine_alfabetico():
+    orari = {"Milan - Napoli": _utc(2026, 9, 20, 15), "Cagliari - Parma": _utc(2026, 9, 20, 15)}
+    assert ordina_partite_per_orario(["Milan - Napoli", "Cagliari - Parma"], orari) == [
+        "Cagliari - Parma", "Milan - Napoli"]
+
+
+def test_partite_senza_orario_in_fondo_mai_perse():
+    orari = {"Roma - Lazio": _utc(2026, 9, 21, 18, 45), "Squadra X - Squadra Y": None}
+    partite = ["Zeta - Alfa", "Squadra X - Squadra Y", "Roma - Lazio"]
+    assert ordina_partite_per_orario(partite, orari) == [
+        "Roma - Lazio", "Squadra X - Squadra Y", "Zeta - Alfa"]
+
+
+def test_nessun_orario_disponibile_resta_alfabetico():
+    # API non raggiungibile: nessun orario, la tabella non deve sparire.
+    partite = ["Roma - Lazio", "Atalanta - Como"]
+    assert ordina_partite_per_orario(partite, {}) == ["Atalanta - Como", "Roma - Lazio"]
+    assert ordina_partite_per_orario([], {}) == []
