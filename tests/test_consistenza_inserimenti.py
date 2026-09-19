@@ -11,11 +11,10 @@ I percorsi coperti, cioe' tutti quelli dove un input umano arriva ai dati:
 2. risultato inserito a mano
 3. accessi da parte di chi non e' l'admin
 
-⚠️ Il test test_doppio_caricamento_gonfia_i_punti documenta un RISCHIO REALE,
-non un comportamento desiderato: caricare due volte la stessa schedina non
-da' nessun errore e quasi raddoppia i punti. Se un giorno si aggiunge una
-guardia contro i doppioni, quel test va aggiornato (e diventa la prova che la
-guardia funziona).
+Il doppio caricamento era il buco piu' serio: accodava le righe senza un
+errore e la giornata veniva contata due volte (50 punti diventavano 90,
+misurato). Ora e' bloccato prima di qualunque scrittura, e qui sotto ci sono
+sia la prova del blocco sia la misura che spiega perche' serve.
 """
 import asyncio
 import json
@@ -157,24 +156,42 @@ def righe_schedina_vincente(giocatore, giornata="Giornata 5", n=10, vincita="100
 class TestDoppioCaricamentoSchedina:
     """Cosa succede se la stessa schedina viene caricata due volte."""
 
-    def test_il_secondo_caricamento_aggiunge_righe_invece_di_sostituirle(self, monkeypatch):
+    def test_il_secondo_caricamento_viene_bloccato_senza_scrivere_nulla(self, monkeypatch):
         service = FakeService()
         monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
 
         assert bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json()) is True
-        dopo_il_primo = len(service.values_obj.righe_aggiunte)
-        assert bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json()) is True
+        dopo_il_primo = list(service.values_obj.righe_aggiunte)
 
-        righe = service.values_obj.righe_aggiunte
-        assert len(righe) == dopo_il_primo * 2, "il secondo caricamento non sostituisce: accoda"
-        assert all(r[0] == "Giornata 5" and r[1] == "MARIO" for r in righe)
+        with pytest.raises(bt.SchedinaGiaPresente) as errore:
+            bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json())
 
-    def test_doppio_caricamento_gonfia_i_punti(self, monkeypatch):
-        """⚠️ RISCHIO DOCUMENTATO, non comportamento desiderato.
+        assert service.values_obj.righe_aggiunte == dopo_il_primo, "il secondo tentativo non deve scrivere niente"
+        assert errore.value.giocatore == "MARIO"
+        assert len(errore.value.righe) == len(dopo_il_primo)
 
-        Nessun errore, nessun avviso: la giornata viene semplicemente contata
-        due volte. Misurato: 50 punti diventano 90 (20 eventi da 4 punti + 10
-        di bonus chiusura, invece di 10 eventi + bonus).
+    def test_lo_stesso_giocatore_puo_caricare_un_altra_giornata(self, monkeypatch):
+        service = FakeService()
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+
+        bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json())
+        assert bt.scrivi_su_sheets_con_regole("mario", "6", schedina_json()) is True
+
+    def test_un_altro_giocatore_puo_caricare_la_stessa_giornata(self, monkeypatch):
+        service = FakeService()
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+
+        bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json())
+        assert bt.scrivi_su_sheets_con_regole("luca", "5", schedina_json()) is True
+
+    def test_righe_duplicate_nel_foglio_gonfiano_i_punti(self, monkeypatch):
+        """Perche' il blocco qui sopra esiste, e perche' le righe vanno
+        cancellate a mano con attenzione.
+
+        Se le righe doppie finiscono comunque nel foglio (copia-incolla a mano,
+        o una schedina caricata prima che il blocco esistesse), il calcolo le
+        conta tutte: 50 punti diventano 90 (20 eventi da 4 punti + 10 di bonus).
+        Il bot non ha modo di accorgersene.
         """
         def punti_di_mario(righe):
             service = FakeService(list(INTESTAZIONE) + righe)
@@ -248,13 +265,11 @@ class TestScritturaSchedina:
         _, righe = self._scrivi(monkeypatch, "mario", "5", schedina_json())
         assert {r[1] for r in righe} == {"MARIO"}
 
-    def test_spazi_attorno_al_nome_restano_nel_foglio(self, monkeypatch):
-        """⚠️ RISCHIO DOCUMENTATO: il nome viene messo in maiuscolo ma non
-        ripulito dagli spazi, e ' MARIO ' non coincide con 'MARIO' in Classifica.
-        Oggi non succede (i nomi arrivano da bottoni fissi), ma se un domani si
-        potesse digitare il nome, questo test dice cosa aspettarsi."""
+    def test_spazi_attorno_al_nome_vengono_ripuliti(self, monkeypatch):
+        """Il nome e' la chiave che lega Giocate e Classifica: ' MARIO ' non
+        coincide con 'MARIO' e il giocatore sparirebbe dalle statistiche."""
         _, righe = self._scrivi(monkeypatch, " mario ", "5", schedina_json())
-        assert righe[0][1] == " MARIO "
+        assert righe[0][1] == "MARIO"
 
     def test_vincita_non_numerica_diventa_zero_invece_di_far_fallire_il_salvataggio(self, monkeypatch):
         _, righe = self._scrivi(monkeypatch, "mario", "5", schedina_json(vincita="non leggibile"))
@@ -379,3 +394,73 @@ class TestAccessoAllaCaricaFoto:
         assert scaricate == [], "nessun file deve finire sul disco per un non-admin"
         assert ctx.user_data == {}
         assert upd.message.risposte == []
+
+
+# ---------------------------------------------------------------------------
+# 5. righe_schedina_esistente — il controllo che blocca i doppioni
+# ---------------------------------------------------------------------------
+class TestRigheSchedinaEsistente:
+
+    FOGLIO = [
+        ["Giornata", "Giocatore"],
+        ["Giornata 1", "MARIO"],
+        ["Giornata 12", "MARIO"],
+        ["Giornata 12", "LUCA"],
+        ["Giornata 5", "mario "],
+    ]
+
+    def test_trova_solo_la_giornata_giusta(self):
+        # Se confrontasse per sottostringa, la Giornata 1 troverebbe anche la 12.
+        assert bt.righe_schedina_esistente(self.FOGLIO, "MARIO", "1") == [2]
+        assert bt.righe_schedina_esistente(self.FOGLIO, "MARIO", "12") == [3]
+
+    def test_non_confonde_i_giocatori(self):
+        assert bt.righe_schedina_esistente(self.FOGLIO, "LUCA", "12") == [4]
+        assert bt.righe_schedina_esistente(self.FOGLIO, "LUCA", "1") == []
+
+    def test_ignora_maiuscole_e_spazi(self):
+        assert bt.righe_schedina_esistente(self.FOGLIO, " mario ", "5") == [5]
+        assert bt.righe_schedina_esistente(self.FOGLIO, "MaRiO", "5") == [5]
+
+    def test_foglio_vuoto_o_righe_incomplete(self):
+        assert bt.righe_schedina_esistente([], "MARIO", "5") == []
+        assert bt.righe_schedina_esistente([["Giornata 5"]], "MARIO", "5") == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Il messaggio che riceve chi ha caricato la schedina doppia
+# ---------------------------------------------------------------------------
+class _QueryFinta:
+    def __init__(self, dati="salva_ia_si"):
+        self.data = dati
+        self.testi = []
+
+    async def answer(self):
+        pass
+
+    async def edit_message_text(self, testo, **kwargs):
+        self.testi.append(testo)
+
+
+class _UpdateCallbackFinto:
+    def __init__(self, dati="salva_ia_si"):
+        self.callback_query = _QueryFinta(dati)
+
+
+class TestMessaggioSchedinaGiaPresente:
+
+    def test_l_admin_capisce_cosa_e_successo_e_cosa_fare(self, monkeypatch):
+        service = FakeService()
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+        bt.scrivi_su_sheets_con_regole("mario", "5", schedina_json())
+        righe_prima = list(service.values_obj.righe_giocate)
+
+        upd = _UpdateCallbackFinto()
+        ctx = _ContextFinto({"giocatore": "mario", "giornata": "5", "risultato_json": schedina_json()})
+        asyncio.run(bt.esegui_salvataggio_ia(upd, ctx))
+
+        ultimo = upd.callback_query.testi[-1]
+        assert "gia" in ultimo.lower() and "Giornata 5" in ultimo
+        assert "Non ho salvato" in ultimo
+        assert "MARIO" in ultimo
+        assert service.values_obj.righe_giocate == righe_prima, "nessuna riga in piu' nel foglio"

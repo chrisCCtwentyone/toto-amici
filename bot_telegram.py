@@ -748,9 +748,55 @@ def normalizza_pronostico(pronostico_raw):
 
     return p
 
+class SchedinaGiaPresente(Exception):
+    """Quel giocatore ha gia' righe in Giocate per quella giornata.
+
+    Senza questo controllo il secondo caricamento si limitava ad accodare le
+    righe: nessun errore, nessun avviso, e la giornata veniva contata due volte.
+    Misurato su dati finti: una schedina da 50 punti ne faceva 90 (Sessione 23).
+    """
+
+    def __init__(self, giocatore, giornata, righe):
+        self.giocatore = giocatore
+        self.giornata = giornata
+        self.righe = righe
+        super().__init__(
+            f"{giocatore} ha gia' {len(righe)} righe per la Giornata {giornata} "
+            f"(righe {righe[0]}-{righe[-1]} del foglio)"
+        )
+
+
+def righe_schedina_esistente(righe_giocate, giocatore, giornata):
+    """Numeri di riga del foglio (1 = intestazione) gia' occupati da quel
+    giocatore in quella giornata.
+
+    Il confronto sulla giornata passa da riga_e_della_giornata: mai per
+    sottostringa, altrimenti la Giornata 1 troverebbe anche la 12 (Sessione 13).
+    """
+    nome = str(giocatore).strip().upper()
+    return [
+        numero for numero, riga in enumerate(righe_giocate, start=1)
+        if len(riga) > 1
+        and riga_e_della_giornata(riga[0], giornata)
+        and str(riga[1]).strip().upper() == nome
+    ]
+
+
 def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
     sheets_service = connetti_sheets()
     dati = json.loads(json_data)
+
+    # Controllo PRIMA di scrivere qualunque cosa: una schedina gia' caricata non
+    # va sovrascritta di nascosto ne' raddoppiata. Si legge solo A:B, le due
+    # colonne che servono (giornata e giocatore).
+    esistenti = righe_schedina_esistente(
+        sheets_service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
+        ).execute(num_retries=3).get('values', []),
+        nome_giocatore, giornata_num,
+    )
+    if esistenti:
+        raise SchedinaGiaPresente(str(nome_giocatore).strip().upper(), giornata_num, esistenti)
     
     vincita_raw = str(dati.get("vincita_potenziale", "0")).replace(',', '.')
     try:
@@ -771,7 +817,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
                 
             quota_raw = str(evento.get("quota", "")).replace('.', ',')
             
-            riga = [f"Giornata {giornata_num}", nome_giocatore.upper(), evento.get("partita", ""), categoria, pronostico, quota_raw]
+            riga = [f"Giornata {giornata_num}", nome_giocatore.strip().upper(), evento.get("partita", ""), categoria, pronostico, quota_raw]
             
             if prima_riga:
                 riga.extend(["", vincita])
@@ -1708,6 +1754,17 @@ async def esegui_salvataggio_ia(update: Update, context: ContextTypes.DEFAULT_TY
         successo = await asyncio.to_thread(scrivi_su_sheets_con_regole, gio, giorn, risultato_json)
         msg = f"✅ Schedina salvata definitivamente nel Database!" if successo else "⚠️ Errore durante la scrittura su Sheets."
         await query.edit_message_text(msg)
+    except SchedinaGiaPresente as gia:
+        # Niente e' stato scritto: meglio fermarsi e far decidere a un umano che
+        # accodare una seconda copia (i punti verrebbero contati due volte).
+        await query.edit_message_text(
+            f"⚠️ *Schedina gia' presente*\n\n"
+            f"{escape_markdown(gia.giocatore)} ha gia' *{len(gia.righe)} righe* per la "
+            f"*Giornata {escape_markdown(str(gia.giornata))}* (righe {gia.righe[0]}-{gia.righe[-1]} del foglio Giocate).\n\n"
+            f"*Non ho salvato niente.* Se questa e' la versione giusta, cancella prima "
+            f"quelle righe dal foglio e ricarica la foto.",
+            parse_mode="Markdown"
+        )
     except Exception as e:
         await query.edit_message_text(f"❌ Errore durante la scrittura: {e}")
         

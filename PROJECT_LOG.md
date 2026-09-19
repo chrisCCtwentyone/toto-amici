@@ -140,6 +140,17 @@ Stessa logica per il backup: il file viene **riaperto per ogni destinatario** (T
 
 **Da fare lato utente (pannello Render):** aggiungere la variabile `ADMIN_IDS` con l'ID Telegram del secondo admin. Senza quella variabile il comportamento è identico a prima, con un solo admin. Il secondo admin deve scrivere almeno una volta al bot perché Telegram gli associ la lista comandi ridotta (il bot lo gestisce da solo: se non ci riesce scrive un warning e parte lo stesso).
 
+### 19/09/2026 — Sessione 23 (Consistenza degli inserimenti: doppia schedina bloccata)
+
+**Domanda dell'utente**: «se carico una schedina per un giocatore che ce l'ha gia', cosa succede? si sovrascrive? si blocca tutto?». Risposta misurata, non dedotta: **si accodava in silenzio**.
+- **Il buco**: `scrivi_su_sheets_con_regole` faceva un `append` puro, senza nessun controllo. Il secondo caricamento aggiungeva un secondo blocco di righe, senza errori ne' avvisi. Effetto misurato eseguendo il vero `esegui_calcolo_risultati` su un foglio finto: una schedina da **50 punti ne faceva 90** (20 eventi contati invece di 10, piu' il bonus chiusura). Nel Confronto Giocate il giocatore comparirebbe con i pronostici doppi nella stessa cella.
+- **Cosa regge invece**: la Cassa non paga due volte (la guardia sulla descrizione gia' presente funziona), gli eventi oltre il limite restano marcati `(ANNULLATA ECCESSO)` e valgono 0, una lettura IA vuota non scrive nulla, un JSON malformato solleva prima di scrivere, il risultato manuale accetta solo `cifre-trattino-cifre` (nessuna formula puo' finire in una cella), e chi non e' admin non ottiene niente.
+- **Correzione**: nuove `righe_schedina_esistente()` (confronto per numero di giornata, mai per sottostringa) e `SchedinaGiaPresente`, controllate **prima di qualunque scrittura** leggendo solo `Giocate!A:B`. Il gestore mostra un messaggio che dice quante righe esistono, dove stanno nel foglio, che **non e' stato salvato niente** e cosa fare.
+- **Perche' NON la sostituzione automatica**, valutata e scartata con l'utente: cancellare righe significa `deleteDimension` per indice di riga, in ordine decrescente, sulla stessa area del bug che riscrisse 13 giornate (Sessione 13). L'asimmetria decide: il doppio caricamento e' **frequente e invisibile**, la cancellazione e' **rara e irreversibile**. Il blocco toglie il 100% del danno con rischio zero; la cancellazione a mano sul foglio resta all'admin, che vede cosa sta togliendo e ha la cronologia di Google alle spalle.
+- Corretto anche un dettaglio: il nome del giocatore ora passa da `strip().upper()`. Prima gli spazi restavano (`' mario '` -> `' MARIO '`) e quel nome non avrebbe coinciso con la Classifica.
+- **33 test** in `tests/test_consistenza_inserimenti.py` (totale progetto **461**), dry-run sui dati veri: 960 celle, 0 differenze.
+- Nota di coordinamento: i test sono stati scritti mentre un'altra sessione implementava il multi-admin. La fixture `admin` patcha sia `ADMIN_ID` sia `ADMIN_IDS`, quindi regge entrambe le forme del controllo d'accesso.
+
 ### 18/09/2026 — Sessione 22 (Confronto cronologico, sito a prova di errore, bot alleggerito)
 
 **Le partite erano in ordine alfabetico.** `pivot_table` ordina l'indice per nome, quindi la prima partita della giornata poteva finire in fondo alla tabella. Ora le righe seguono il calcio d'inizio, preso dagli orari della stessa chiamata API gia' fatta in quella scheda (nessuna richiesta in piu'). `ordina_partite_per_orario()` in `statistiche.py`, 4 test.
