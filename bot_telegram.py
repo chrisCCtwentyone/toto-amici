@@ -22,13 +22,16 @@ from google.genai import types
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, ConversationHandler
 
 # ==========================================
 # VARIABILI D'AMBIENTE (SICUREZZA CLOUD)
 # ==========================================
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# ADMIN_ID resta l'OWNER: l'unico che puo' cambiare la chiave API e archiviare
+# la stagione (le due operazioni che non sono "gestione quotidiana"). Gli altri
+# admin si aggiungono con ADMIN_IDS, e hanno tutto il resto. Vedi e_admin/e_owner.
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
 SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
 FOOTBALL_DATA_KEY = os.environ.get("FOOTBALL_DATA_KEY")
@@ -38,6 +41,147 @@ SERVICE_ACCOUNT_FILE = 'credenziali.json'
 # stesso spreadsheet con il suffisso dell'annata (es. "Giocate 2026-27"),
 # create da /archiviastagione. Vedi PROJECT_LOG.md, Sessione 13.
 FOGLI_STAGIONE = ("Giocate", "Classifica", "Cassa")
+
+
+def leggi_admin_ids(owner_id, grezzo):
+    """Lista degli ID autorizzati: l'owner piu' quelli elencati in ADMIN_IDS.
+
+    L'owner e' sempre il primo, e la lista non ha duplicati: l'ordine conta,
+    perche' e' l'ordine in cui partono le notifiche broadcast.
+
+    Un valore non numerico viene ignorato con un warning invece di far
+    esplodere l'avvio: una virgola di troppo incollata nel pannello Render
+    non deve impedire al bot di partire — resterebbe giu' fino al prossimo
+    intervento manuale, che e' molto peggio di un admin in meno per un giro.
+    """
+    ids = []
+    if owner_id:
+        ids.append(owner_id)
+    for pezzo in re.split(r"[,;\s]+", str(grezzo or "")):
+        if not pezzo:
+            continue
+        try:
+            valore = int(pezzo)
+        except ValueError:
+            logging.warning("ADMIN_IDS: ignoro il valore non numerico %r", pezzo)
+            continue
+        if valore and valore not in ids:
+            ids.append(valore)
+    return ids
+
+
+OWNER_ID = ADMIN_ID
+ADMIN_IDS = leggi_admin_ids(OWNER_ID, os.environ.get("ADMIN_IDS", ""))
+
+
+def e_admin(user_id):
+    """True se l'utente puo' usare il bot. Con ADMIN_ID non configurato la
+    lista e' vuota e qui non passa nessuno: meglio un bot muto che un bot
+    aperto a chiunque."""
+    return user_id in ADMIN_IDS
+
+
+def e_owner(user_id):
+    """True solo per ADMIN_ID. Serve alle due operazioni riservate:
+    /setkey (tocca una credenziale) e /archiviastagione (svuota i fogli)."""
+    return bool(OWNER_ID) and user_id == OWNER_ID
+
+
+def nome_attore(update):
+    """Nome leggibile di chi ha lanciato l'azione, per la riga di tracciabilita'
+    mandata agli altri admin. Con piu' di una persona al comando, «e' stato
+    ricalcolato» non basta piu': serve sapere da chi."""
+    utente = getattr(update, "effective_user", None)
+    if utente is None:
+        return "Admin"
+    nome = (getattr(utente, "full_name", None) or getattr(utente, "first_name", None) or "").strip()
+    return nome or f"Admin {utente.id}"
+
+
+def destinatari_notifica(destinatari=None, escludi=None):
+    """Chi deve ricevere un messaggio. None = tutti gli admin.
+
+    `escludi` serve alle righe di tracciabilita': chi ha appena fatto
+    l'operazione ha gia' l'esito completo nella sua chat, ricevere anche
+    l'avviso «X ha fatto Y» sarebbe solo rumore.
+    """
+    lista = list(ADMIN_IDS) if destinatari is None else (
+        [destinatari] if isinstance(destinatari, int) else list(destinatari)
+    )
+    if escludi is not None:
+        lista = [i for i in lista if i != escludi]
+    return lista
+
+
+async def avvisa_admin(context, testo, destinatari=None, escludi=None, parse_mode="Markdown", **kwargs):
+    """Manda un messaggio agli admin e restituisce quanti l'hanno ricevuto.
+
+    Due garanzie, entrambe nate da incidenti gia' visti:
+
+    1. Un invio fallito non ferma gli altri. Basta che UN admin abbia bloccato
+       il bot (Telegram risponde 403) perche' un `send_message` in cima al giro
+       faccia saltare la notifica anche a chi l'avrebbe ricevuta: l'avviso di
+       anomalia che nessuno legge e' peggio di nessun avviso.
+    2. Se Telegram rifiuta la formattazione, il testo parte lo stesso senza
+       parse_mode. Il Markdown legacy si rompe su un underscore dispari — i
+       pronostici normalizzati ne sono pieni per costruzione (`OVER_2.5`) — e
+       un errore di formattazione non deve far buttare via il contenuto
+       (Sessione 15).
+    """
+    # parse_mode=None non viene passato affatto, invece che passato a None:
+    # e' la stessa cosa per Telegram, ma lascia la chiamata identica a un
+    # send_message normale.
+    extra = dict(kwargs)
+    if parse_mode:
+        extra["parse_mode"] = parse_mode
+
+    inviati = 0
+    for chat_id in destinatari_notifica(destinatari, escludi):
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=testo, **extra)
+            inviati += 1
+            continue
+        except Exception as e:
+            errore = e
+        if parse_mode:
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=testo, **kwargs)
+                inviati += 1
+                logging.warning("Notifica a %s inviata senza formattazione: %s", chat_id, errore)
+                continue
+            except Exception as e:
+                errore = e
+        logging.error("Notifica all'admin %s non riuscita: %s", chat_id, errore)
+    return inviati
+
+
+async def traccia_azione(update, context, testo):
+    """Avvisa gli ALTRI admin di un'azione che tocca punteggi, Cassa o dati.
+
+    Non e' un registro a prova di contestazione: e' la convenzione minima che
+    serve a due persone per non pestarsi i piedi — vedere passare «Silvio ha
+    inserito Inter-Roma 2-1» evita di rifare la stessa correzione due volte, o
+    di cercare per mezz'ora chi ha cambiato un punteggio. Resta nella chat, dove
+    gli admin guardano gia'; niente colonne nuove su Sheets, che vorrebbe dire
+    toccare la scrittura per indice di riga (il bug delle 13 giornate).
+    """
+    try:
+        logging.info("AZIONE ADMIN — %s (id %s): %s",
+                     nome_attore(update), getattr(getattr(update, "effective_user", None), "id", "?"), testo)
+        attore_id = getattr(getattr(update, "effective_user", None), "id", None)
+        if len(destinatari_notifica(escludi=attore_id)) == 0:
+            return 0
+        return await avvisa_admin(
+            context,
+            f"👤 *{escape_markdown(nome_attore(update))}* {testo}",
+            escludi=attore_id,
+        )
+    except Exception as e:
+        # Non solleva mai: viene chiamata subito dopo operazioni che hanno GIA'
+        # scritto su Sheets, e un problema nell'avvisare gli altri non deve far
+        # credere a chi ha agito che il lavoro sia fallito.
+        logging.error("Tracciabilita' non riuscita (l'operazione era andata a buon fine): %s", e)
+        return 0
 
 GIOCATORI = [
     "cecilia", "dario", "davide", "fazio", 
@@ -117,17 +261,25 @@ def home():
     if last_ping_time is not None:
         delta = (now - last_ping_time).total_seconds()
         if delta > 900:  # > 15 minuti: oltre questa soglia Render spegne il servizio
-            try:
-                requests.post(
-                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                    json={
-                        "chat_id": ADMIN_ID,
-                        "text": f"⚠️ **ALLARME KEEP-ALIVE**\nSono passati {int(delta/60)} minuti dall'ultimo ping (Render spegne il servizio dopo 15).\nControlla che il job su cron-job.org sia attivo e riuscito.",
-                        "parse_mode": "Markdown"
-                    }
-                )
-            except Exception as e:
-                logging.error(f"Errore invio alert Telegram: {e}")
+            # Girano nel thread di Flask, senza il `context` di python-telegram-bot:
+            # qui l'invio e' una POST diretta. Un fallimento su un admin non deve
+            # impedire l'allarme agli altri, quindi il try sta DENTRO il ciclo.
+            testo_allarme = (
+                f"⚠️ **ALLARME KEEP-ALIVE**\nSono passati {int(delta/60)} minuti dall'ultimo ping "
+                f"(Render spegne il servizio dopo 15).\nControlla che il job su cron-job.org sia attivo e riuscito."
+            )
+            for admin_id in ADMIN_IDS:
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                        json={
+                            "chat_id": admin_id,
+                            "text": testo_allarme,
+                            "parse_mode": "Markdown"
+                        }
+                    )
+                except Exception as e:
+                    logging.error(f"Errore invio alert Telegram a {admin_id}: {e}")
     last_ping_time = now
     return "✅ Il Bot Toto-Amici è online e sta funzionando perfettamente 24/7!"
 
@@ -1102,7 +1254,7 @@ async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     la chiave API. Questo comando da' la stessa risposta da Telegram in pochi
     secondi, ed e' la prima mossa da fare quando qualcosa non va.
     """
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     messaggio = await update.message.reply_text("🔍 Controllo in corso... (i modelli IA richiedono qualche secondo)")
 
     righe = [f"🩺 *DIAGNOSTICA* — {datetime.now(pytz.timezone('Europe/Rome')).strftime('%d/%m %H:%M')}\n"]
@@ -1114,6 +1266,12 @@ async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     percentuale = picco / 512 * 100
     icona = "✅" if percentuale < 60 else ("⚠️" if percentuale < 85 else "🔴")
     righe.append(f"{icona} *Memoria*: {usata:.0f} MB ora, picco {picco:.0f} MB su 512 ({percentuale:.0f}%)")
+
+    # --- Accessi ---
+    if len(ADMIN_IDS) == 1:
+        righe.append("✅ *Admin*: 1 (solo l'amministratore principale)")
+    else:
+        righe.append(f"✅ *Admin*: {len(ADMIN_IDS)} autorizzati ({len(ADMIN_IDS) - 1} oltre al principale)")
 
     # --- Keep-alive ---
     if last_ping_time is None:
@@ -1171,7 +1329,7 @@ async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Riepilogo rapido: giornata corrente e chi non ha ancora caricato la schedina."""
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
         if giornata is None:
@@ -1203,9 +1361,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Esporta subito Giocate/Classifica/Cassa e le manda come documento —
     stessa logica del backup automatico del lunedì, richiamabile a mano."""
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     await update.message.reply_text("⏳ Preparo il backup...")
-    await task_backup_periodico(context)
+    await task_backup_periodico(context, destinatari=update.effective_user.id)
 
 async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Avvia l'archiviazione della stagione. Operazione che SVUOTA i fogli di
@@ -1219,7 +1377,12 @@ async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAUL
     questo messaggio: non e' un tentativo di sicurezza crittografica (chi
     arriva fin qui e' gia' un admin autorizzato), e' un freno contro il tap
     a vuoto — costringe a fermarsi e leggere, non solo a toccare uno schermo."""
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_owner(update.effective_user.id):
+        if e_admin(update.effective_user.id):
+            await update.message.reply_text(
+                "🔒 Questo comando è riservato all'amministratore principale."
+            )
+        return
 
     etichetta = await asyncio.to_thread(stagione_corrente)
     if not etichetta:
@@ -1230,7 +1393,7 @@ async def archivia_stagione_command(update: Update, context: ContextTypes.DEFAUL
     context.user_data['stagione_da_archiviare'] = etichetta
     context.user_data['codice_conferma_archiviazione'] = codice
     await update.message.reply_text("💾 Prima di tutto ti mando un backup di sicurezza...")
-    await task_backup_periodico(context)
+    await task_backup_periodico(context, destinatari=update.effective_user.id)
 
     kb = [[InlineKeyboardButton("❌ Annulla", callback_data="archivia_no")]]
     await update.message.reply_text(
@@ -1266,11 +1429,21 @@ async def verifica_codice_archiviazione(update: Update, context: ContextTypes.DE
 
     etichetta = context.user_data.get('stagione_da_archiviare')
     await update.message.reply_text(f"⏳ Codice corretto. Archivio la stagione {etichetta}...")
+    archiviata = False
     try:
         esito = await asyncio.to_thread(archivia_stagione, etichetta)
-        await context.bot.send_message(chat_id=ADMIN_ID, text=esito, parse_mode="Markdown")
+        archiviata = True
+        await avvisa_admin(context, esito, destinatari=update.effective_user.id)
     except Exception as e:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Archiviazione fallita: {e}")
+        await avvisa_admin(context, f"❌ Archiviazione fallita: {e}",
+                           destinatari=update.effective_user.id, parse_mode=None)
+    if archiviata:
+        # Fuori dal try: l'archiviazione svuota i fogli di lavoro, ed e' l'unica
+        # operazione dopo la quale un altro admin, trovando la Classifica vuota,
+        # penserebbe a un guasto. Ma un problema nell'avvisarlo non deve far
+        # dichiarare fallita un'archiviazione riuscita.
+        await traccia_azione(update, context,
+                             f"ha archiviato la stagione {escape_markdown(str(etichetta))} e azzerato i fogli di lavoro.")
     context.user_data.pop('stagione_da_archiviare', None)
     context.user_data.pop('codice_conferma_archiviazione', None)
     return ConversationHandler.END
@@ -1283,7 +1456,12 @@ AVVISO_CHIAVE_SALVATA = (
 )
 
 async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_owner(update.effective_user.id):
+        if e_admin(update.effective_user.id):
+            await update.message.reply_text(
+                "🔒 Questo comando è riservato all'amministratore principale."
+            )
+        return
     args = context.args
     if not args:
         await update.message.reply_text("⚠️ Uso corretto: `/setkey <tua_chiave_api>`", parse_mode="Markdown")
@@ -1296,7 +1474,7 @@ async def set_api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"❌ Errore: {e}\n\nSe il filesystem è in sola lettura, aggiorna la variabile d'ambiente `GEMINI_API_KEY` su Render.", parse_mode="Markdown")
 
 async def gestisci_testo_chiave(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_owner(update.effective_user.id): return ConversationHandler.END
     nuova_chiave = update.message.text.strip()
     try:
         with open('chiave_api.txt', 'w') as f: f.write(nuova_chiave)
@@ -1306,13 +1484,17 @@ async def gestisci_testo_chiave(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     kb = [
         [InlineKeyboardButton("📥 Carica Schedina", callback_data="menu_carica")],
         [InlineKeyboardButton("⚽ Aggiorna Risultati & Punteggi", callback_data="menu_aggiorna")],
         [InlineKeyboardButton("✍️ Inserisci Risultato Manuale", callback_data="menu_manuale")],
-        [InlineKeyboardButton("⚙️ Cambia Chiave API", callback_data="menu_cambia_key")]
     ]
+    # La chiave API e' una credenziale: il bottone lo vede solo l'owner. Meglio
+    # non mostrarlo affatto che mostrarlo e poi rifiutare — un bottone che non
+    # funziona sembra un guasto.
+    if e_owner(update.effective_user.id):
+        kb.append([InlineKeyboardButton("⚙️ Cambia Chiave API", callback_data="menu_cambia_key")])
     await update.message.reply_text("👋 *Menu Principale Toto-Amici*\nCosa vuoi fare?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
     return MENU
 
@@ -1330,6 +1512,9 @@ async def gestisci_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("📅 Quale **Giornata** vuoi aggiornare e calcolare?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
         return SCELTA_GIORNATA_UPDATE
     elif query.data == "menu_cambia_key":
+        if not e_owner(update.effective_user.id):
+            await query.edit_message_text("🔒 La chiave API la cambia solo l'amministratore principale.")
+            return ConversationHandler.END
         kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
         await query.edit_message_text("🔑 **Cambio Chiave API**\nIncolla qui sotto la tua nuova chiave API di Google AI Studio (Gemini) come un normale messaggio di testo:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
         return ATTESA_NUOVA_KEY
@@ -1341,7 +1526,7 @@ async def gestisci_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SCELTA_GIORNATA_MANUALE
 
 async def ricevi_foto_multipla(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     photo_file = await update.message.photo[-1].get_file()
     if not os.path.exists(CARTELLA_FOTO): os.makedirs(CARTELLA_FOTO)
     
@@ -1534,7 +1719,8 @@ async def scegli_giornata_update(update: Update, context: ContextTypes.DEFAULT_T
     giornata = query.data.split('_')[1]
     await query.edit_message_text(f"⏳ Aggiornamento manuale Giornata {giornata}...")
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
-    await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
+    await avvisa_admin(context, report, destinatari=update.effective_user.id)
+    await traccia_azione(update, context, f"ha ricalcolato i punteggi della Giornata {escape_markdown(str(giornata))}.")
     return ConversationHandler.END
 
 async def scegli_giornata_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1554,7 +1740,7 @@ async def scegli_giornata_manuale(update: Update, context: ContextTypes.DEFAULT_
     if not matches:
         kb = [[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
         await context.bot.send_message(
-            chat_id=ADMIN_ID,
+            chat_id=update.effective_chat.id,
             text="⚠️ Non riesco a recuperare l'elenco partite per questa giornata (l'API non risponde). Riprova più tardi.",
             reply_markup=InlineKeyboardMarkup(kb)
         )
@@ -1568,7 +1754,7 @@ async def scegli_giornata_manuale(update: Update, context: ContextTypes.DEFAULT_
         kb.append([InlineKeyboardButton(f"{casa} - {ospite}", callback_data=f"manualep_{i}")])
     kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
     await context.bot.send_message(
-        chat_id=ADMIN_ID,
+        chat_id=update.effective_chat.id,
         text=f"✍️ Giornata {giornata} — quale partita vuoi inserire?",
         reply_markup=InlineKeyboardMarkup(kb)
     )
@@ -1596,7 +1782,7 @@ async def scegli_partita_manuale(update: Update, context: ContextTypes.DEFAULT_T
     return ATTESA_RISULTATO_MANUALE
 
 async def ricevi_risultato_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     casa = context.user_data.get('manuale_casa', '')
     ospite = context.user_data.get('manuale_ospite', '')
     testo = update.message.text.strip()
@@ -1651,11 +1837,23 @@ async def esegui_conferma_risultato_manuale(update: Update, context: ContextType
     gol_ospite = context.user_data.get('manuale_gol_ospite')
 
     await query.edit_message_text("⏳ Applico il risultato e ricalcolo i punteggi...")
+    applicato = False
     try:
         report = await asyncio.to_thread(applica_risultato_manuale, giornata, casa_full, ospite_full, gol_casa, gol_ospite)
-        await context.bot.send_message(chat_id=ADMIN_ID, text=report, parse_mode="Markdown")
+        applicato = True
+        await avvisa_admin(context, report, destinatari=update.effective_user.id)
     except Exception as e:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=f"❌ Errore durante l'applicazione del risultato: {e}")
+        await avvisa_admin(context, f"❌ Errore durante l'applicazione del risultato: {e}",
+                           destinatari=update.effective_user.id, parse_mode=None)
+    if applicato:
+        # Fuori dal try: una correzione a mano tocca punteggi e Cassa, e l'altro
+        # admin deve saperlo — ma il risultato e' gia' scritto su Sheets, quindi
+        # un errore qui non puo' essere riportato come "risultato non applicato".
+        await traccia_azione(
+            update, context,
+            f"ha inserito a mano {escape_markdown(f'{casa_full} {gol_casa}-{gol_ospite} {ospite_full}')} "
+            f"(Giornata {escape_markdown(str(giornata))})."
+        )
 
     context.user_data.clear()
     return ConversationHandler.END
@@ -1706,7 +1904,7 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
         return
     ultimo_report_inviato = impronta
 
-    await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}", parse_mode="Markdown")
+    await avvisa_admin(context, f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}")
 
 async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
     """Controlla chi non ha ancora caricato la schedina per la giornata corrente.
@@ -1734,13 +1932,9 @@ async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
             msg += f"⚠️ Mancano **{len(mancanti)} schedine** a meno di 30 minuti dalla prima partita!\n\n"
             msg += "\n".join([f"❌ {nome}" for nome in mancanti])
             msg += "\n\nSollecitali subito!"
-            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+            await avvisa_admin(context, msg)
         else:
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"✅ **Giornata {giornata}**: tutte le schedine sono state caricate!",
-                parse_mode="Markdown"
-            )
+            await avvisa_admin(context, f"✅ **Giornata {giornata}**: tutte le schedine sono state caricate!")
     except Exception as e:
         logging.error(f"Errore controlla_schedine_mancanti: {e}")
 
@@ -1864,11 +2058,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
 
         if not chiavi_attuali:
             # le anomalie precedenti si sono risolte da sole
-            await context.bot.send_message(
-                chat_id=ADMIN_ID,
-                text=f"✅ Giornata {giornata}: le anomalie segnalate in precedenza risultano risolte.",
-                parse_mode="Markdown"
-            )
+            await avvisa_admin(context, f"✅ Giornata {giornata}: le anomalie segnalate in precedenza risultano risolte.")
             ultime_anomalie_segnalate = set()
             return
 
@@ -1883,14 +2073,19 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             msg += "\n\nProbabile nome squadra insolito o ordine invertito — non verranno segnate automaticamente finché non le correggi a mano."
         msg += "\n\n_(Non ripeterò questo stesso avviso finché la situazione non cambia.)_"
 
-        await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+        await avvisa_admin(context, msg)
         ultime_anomalie_segnalate = chiavi_attuali
     except Exception as e:
         logging.error(f"Errore task_controlla_anomalie_partite: {e}")
 
-async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
+async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE, destinatari=None):
     """Backup settimanale: esporta Giocate/Classifica/Cassa in un file JSON e
-    lo manda all'admin come documento Telegram.
+    lo manda agli admin come documento Telegram.
+
+    destinatari: None (job schedulato) = tutti gli admin; un ID = solo a lui.
+    Lo passa /backup e lo passa /archiviastagione, dove il backup e' la rete di
+    sicurezza di CHI sta archiviando: deve arrivargli subito, non riempire la
+    chat degli altri di file che non hanno chiesto.
 
     Perche' serve anche se Google Sheets ha gia' una cronologia versioni
     (File -> Cronologia delle versioni): quella protegge da modifiche errate
@@ -1923,19 +2118,31 @@ async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE):
             json.dump(backup, f, ensure_ascii=False, indent=2)
 
         n_giocate = len(backup["giocate"])
-        with open(percorso_file, "rb") as f:
-            await context.bot.send_document(
-                chat_id=ADMIN_ID,
-                document=f,
-                filename=percorso_file,
-                caption=f"💾 Backup settimanale — {data_str}\n{n_giocate} righe in Giocate."
-            )
+        inviati, ultimo_errore = 0, None
+        for chat_id in destinatari_notifica(destinatari):
+            # Il file va riaperto per ogni invio: Telegram consuma lo stream, e
+            # riusare lo stesso handle manderebbe un allegato vuoto dal secondo
+            # admin in poi. Un invio fallito non deve fermare gli altri.
+            try:
+                with open(percorso_file, "rb") as f:
+                    await context.bot.send_document(
+                        chat_id=chat_id,
+                        document=f,
+                        filename=percorso_file,
+                        caption=f"💾 Backup — {data_str}\n{n_giocate} righe in Giocate."
+                    )
+                inviati += 1
+            except Exception as e:
+                ultimo_errore = e
+                logging.error(f"Invio backup a {chat_id} non riuscito: {e}")
+        if inviati == 0 and ultimo_errore is not None:
+            # Il backup e' stato costruito ma non e' arrivato a NESSUNO: va detto.
+            # Un allegato puo' fallire (dimensione, formato) dove un testo passa,
+            # quindi vale la pena provare comunque con un messaggio.
+            await avvisa_admin(context, f"⚠️ Backup fallito: {ultimo_errore}", destinatari=destinatari)
     except Exception as e:
         logging.error(f"Errore task_backup_periodico: {e}")
-        try:
-            await context.bot.send_message(chat_id=ADMIN_ID, text=f"⚠️ Backup settimanale fallito: {e}")
-        except Exception:
-            pass
+        await avvisa_admin(context, f"⚠️ Backup fallito: {e}", destinatari=destinatari)
     finally:
         if percorso_file and os.path.exists(percorso_file):
             os.remove(percorso_file)
@@ -2003,7 +2210,7 @@ def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rin
     testo += "\n\n⚽ Prossima giornata in arrivo!"
     return testo
 
-async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_se_non_pronto=False):
+async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_se_non_pronto=False, destinatari=None):
     """Ogni mattina controlla se la giornata corrente e' completamente
     conclusa (nessuna riga ancora IN CORSO in Giocate) e, se non l'ha gia'
     fatto, manda all'admin il riepilogo pronto da incollare su WhatsApp.
@@ -2016,13 +2223,16 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
 
     notifica_se_non_pronto: se True (usato da /riepilogo), spiega all'admin
     perche' non ha mandato nulla invece di restare silenzioso.
+    destinatari: None (job schedulato) = tutti gli admin; un ID = solo a lui.
+    Le spiegazioni del "perche' non l'ho mandato" vanno sempre e solo a chi ha
+    chiesto: sono la risposta a un comando, non una notizia per tutti.
     """
     global ultima_giornata_riepilogo_inviata
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
         if giornata is None:
             if notifica_se_non_pronto:
-                await context.bot.send_message(chat_id=ADMIN_ID, text="⚠️ Non riesco a contattare Football-Data per sapere la giornata corrente. Riprova fra poco.")
+                await avvisa_admin(context, "⚠️ Non riesco a contattare Football-Data per sapere la giornata corrente. Riprova fra poco.", destinatari=destinatari, parse_mode=None)
             return
 
         service = await asyncio.to_thread(connetti_sheets)
@@ -2037,17 +2247,17 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         ]
         if not righe_giornata:
             if notifica_se_non_pronto:
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"ℹ️ Nessuna schedina ancora caricata per la Giornata {giornata}.")
+                await avvisa_admin(context, f"ℹ️ Nessuna schedina ancora caricata per la Giornata {giornata}.", destinatari=destinatari, parse_mode=None)
             return
         if any("CORSO" in str(r[6]) for r in righe_giornata):
             if notifica_se_non_pronto:
                 n_in_corso = sum(1 for r in righe_giornata if "CORSO" in str(r[6]))
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"⏳ Giornata {giornata} non ancora conclusa: {n_in_corso} eventi ancora IN CORSO.")
+                await avvisa_admin(context, f"⏳ Giornata {giornata} non ancora conclusa: {n_in_corso} eventi ancora IN CORSO.", destinatari=destinatari, parse_mode=None)
             return
 
         if str(giornata) == str(ultima_giornata_riepilogo_inviata):
             if notifica_se_non_pronto:
-                await context.bot.send_message(chat_id=ADMIN_ID, text=f"ℹ️ Il riepilogo della Giornata {giornata} è già stato mandato.")
+                await avvisa_admin(context, f"ℹ️ Il riepilogo della Giornata {giornata} è già stato mandato.", destinatari=destinatari, parse_mode=None)
             return
 
         righe_classifica = await asyncio.to_thread(
@@ -2066,7 +2276,10 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         if not testo:
             return
 
-        await context.bot.send_message(chat_id=ADMIN_ID, text=testo)  # niente parse_mode: vedi costruisci_riepilogo_whatsapp
+        # Il riepilogo va a TUTTI gli admin anche quando lo forza uno solo: e' il
+        # testo da incollare su WhatsApp, e chiunque dei due puo' essere quello che
+        # in quel momento ha il telefono in mano.
+        await avvisa_admin(context, testo, parse_mode=None)  # niente parse_mode: vedi costruisci_riepilogo_whatsapp
         ultima_giornata_riepilogo_inviata = str(giornata)
     except Exception as e:
         logging.error(f"Errore task_riepilogo_whatsapp: {e}")
@@ -2074,11 +2287,11 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
 async def riepilogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Forza subito il controllo/invio del riepilogo, senza aspettare la mattina
     (utile per testare, o per rimandarlo se serve). Ignora la deduplica."""
-    if update.effective_user.id != ADMIN_ID: return
+    if not e_admin(update.effective_user.id): return
     global ultima_giornata_riepilogo_inviata
     ultima_giornata_riepilogo_inviata = None
     await update.message.reply_text("⏳ Controllo se la giornata è conclusa...")
-    await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True)
+    await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True, destinatari=update.effective_user.id)
 
 async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     """Il bot chiama il proprio indirizzo pubblico per generare traffico in entrata.
@@ -2108,23 +2321,45 @@ async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"Auto-ping fallito: {e}")
 
+COMANDI_ADMIN = [
+    ("start", "Apri il menu principale"),
+    ("status", "Giornata corrente e schedine mancanti"),
+    ("diagnostica", "Controlla memoria, Sheets, API e modelli IA"),
+    ("backup", "Esporta subito un backup dei dati"),
+    ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
+]
+
+# Riservati all'owner: toccano una credenziale e cancellano dati.
+COMANDI_OWNER = COMANDI_ADMIN + [
+    ("archiviastagione", "Chiudi la stagione e azzera i fogli"),
+    ("setkey", "Cambia al volo la chiave API di Gemini"),
+]
+
+
 async def post_init(application: Application):
-    """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/')"""
-    await application.bot.set_my_commands([
-        ("start", "Apri il menu principale"),
-        ("status", "Giornata corrente e schedine mancanti"),
-        ("diagnostica", "Controlla memoria, Sheets, API e modelli IA"),
-        ("backup", "Esporta subito un backup dei dati"),
-        ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
-        ("archiviastagione", "Chiudi la stagione e azzera i fogli"),
-        ("setkey", "Cambia al volo la chiave API di Gemini")
-    ])
+    """Imposta i comandi rapidi ufficiali nel menu di Telegram (il tasto '/').
+
+    Lista diversa per owner e admin: proporre nel menu un comando che poi
+    risponde «riservato» e' un invito a premerlo. Il controllo vero resta
+    comunque nei singoli handler — questo e' solo cosa Telegram mostra.
+    """
+    await application.bot.set_my_commands(COMANDI_ADMIN)
+    for admin_id in ADMIN_IDS:
+        comandi = COMANDI_OWNER if e_owner(admin_id) else COMANDI_ADMIN
+        try:
+            await application.bot.set_my_commands(comandi, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception as e:
+            # Un admin che non ha mai scritto al bot non ha ancora una chat:
+            # Telegram rifiuta lo scope. Non e' un motivo per non avviare il bot.
+            logging.warning("Non ho potuto impostare i comandi per l'admin %s: %s", admin_id, e)
 
 def main():
     # Se le variabili d'ambiente non ci sono (es. testing locale), il bot si ferma qui per evitare errori.
     if not TOKEN:
         logging.error("ERRORE: Variabile TELEGRAM_TOKEN non trovata. Impossibile avviare il bot.")
         return
+
+    logging.info("Admin autorizzati: %d (owner: %s)", len(ADMIN_IDS), OWNER_ID)
 
     residue = pulisci_foto_residue()
     if residue:

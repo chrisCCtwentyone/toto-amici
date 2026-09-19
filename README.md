@@ -126,7 +126,8 @@ Nessuna credenziale è inclusa nel repository. Servono:
 | Variabile | Dove si configura | A cosa serve |
 |---|---|---|
 | `TELEGRAM_TOKEN` | Render | Token del bot |
-| `ADMIN_ID` | Render | ID Telegram dell'unico utente autorizzato |
+| `ADMIN_ID` | Render | ID Telegram dell'amministratore principale (owner) |
+| `ADMIN_IDS` | Render (opzionale) | Altri admin autorizzati, separati da virgola |
 | `SPREADSHEET_ID` | Render + Streamlit Secrets | Foglio Google usato come database |
 | `FOOTBALL_DATA_KEY` | Render + Streamlit Secrets | API dei risultati |
 | `GEMINI_API_KEY` | Render | Lettura IA delle schedine |

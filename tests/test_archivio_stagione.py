@@ -139,9 +139,17 @@ class _MessaggioFinto:
     async def reply_text(self, testo, **kw):
         self.risposte.append(testo)
 
+class _UtenteFinto:
+    def __init__(self, user_id):
+        self.id = user_id
+        self.full_name = "Admin Di Prova"
+
 class _UpdateFinto:
-    def __init__(self, testo):
+    def __init__(self, testo, user_id=None):
         self.message = _MessaggioFinto(testo)
+        # Da quando gli admin possono essere piu' di uno, l'esito
+        # dell'archiviazione torna a CHI l'ha lanciata: serve la sua identita'.
+        self.effective_user = _UtenteFinto(bt.ADMIN_ID if user_id is None else user_id)
 
 class _BotFinto:
     def __init__(self):
