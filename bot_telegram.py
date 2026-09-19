@@ -183,6 +183,95 @@ async def traccia_azione(update, context, testo):
         logging.error("Tracciabilita' non riuscita (l'operazione era andata a buon fine): %s", e)
         return 0
 
+# ==========================================
+# LAVORO IN PARALLELO FRA PIU' ADMIN
+# ==========================================
+# Il controllo anti-doppione vero sta in scrivi_su_sheets_con_regole (rilegge
+# il foglio e rifiuta una schedina gia' presente). Qui ci sono i due pezzi che
+# quel controllo da solo non puo' coprire:
+#
+#   1. la finestra fra la sua lettura e la sua scrittura (~1s), in cui due
+#      salvataggi simultanei trovano entrambi il posto libero -> lock_salvataggio_schedina;
+#   2. il caso in cui nessuno dei due ha ancora salvato perche' stanno
+#      entrambi caricando le foto -> LAVORAZIONI_IN_CORSO.
+
+_lock_salvataggio = None
+
+
+def lock_salvataggio_schedina():
+    """Serializza «rileggi il foglio, controlla, scrivi» fra tutti gli admin.
+
+    Senza, con due "Salva" premuti nello stesso secondo entrambi i controlli
+    rileggono Giocate prima che l'altro abbia scritto, entrambi trovano il
+    posto libero, e la schedina finisce nel foglio due volte — che e'
+    esattamente il caso che il controllo doveva impedire (i punti verrebbero
+    contati due volte, misurato: 50 diventano 90).
+
+    Il bot e' un processo solo su Render, quindi basta serializzare qui: un
+    lock distribuito sarebbe sproporzionato. Non protegge da una modifica
+    fatta a mano sul foglio nello stesso istante, ma quello non e' il caso
+    che stiamo coprendo.
+
+    Creato alla prima chiamata, cioe' dentro un event loop gia' avviato.
+    """
+    global _lock_salvataggio
+    if _lock_salvataggio is None:
+        _lock_salvataggio = asyncio.Lock()
+    return _lock_salvataggio
+
+
+# (giornata, giocatore) -> (admin_id, nome, momento_di_inizio)
+LAVORAZIONI_IN_CORSO = {}
+SCADENZA_LAVORAZIONE_S = 900  # 15 minuti
+
+
+def chiave_lavorazione(giornata, giocatore):
+    return (str(giornata).strip(), str(giocatore).strip().lower())
+
+
+def segna_lavorazione(giornata, giocatore, admin_id, nome, adesso=None):
+    """Registra che un admin ha iniziato a caricare questa schedina."""
+    adesso = time.time() if adesso is None else adesso
+    # Le lavorazioni scadute si buttano qui: un flusso abbandonato a meta'
+    # (app chiusa, foto mai confermate) non deve restare nel registro per
+    # sempre ne' tenere occupata una schedina.
+    for chiave, (_, _, inizio) in list(LAVORAZIONI_IN_CORSO.items()):
+        if adesso - inizio > SCADENZA_LAVORAZIONE_S:
+            del LAVORAZIONI_IN_CORSO[chiave]
+    LAVORAZIONI_IN_CORSO[chiave_lavorazione(giornata, giocatore)] = (admin_id, nome, adesso)
+
+
+def lavorazione_altrui(giornata, giocatore, admin_id, adesso=None):
+    """Chi ALTRI sta gia' caricando questa schedina: (nome, secondi) oppure None.
+
+    E' un avviso, non un lucchetto: l'altro admin potrebbe abbandonare a meta',
+    e bloccare la schedina per un lavoro che non arrivera' mai sarebbe peggio
+    del problema. Chi legge l'avviso decide.
+    """
+    adesso = time.time() if adesso is None else adesso
+    voce = LAVORAZIONI_IN_CORSO.get(chiave_lavorazione(giornata, giocatore))
+    if voce is None:
+        return None
+    chi, nome, inizio = voce
+    if chi == admin_id or adesso - inizio > SCADENZA_LAVORAZIONE_S:
+        return None
+    return nome, int(adesso - inizio)
+
+
+def libera_lavorazione(giornata, giocatore, admin_id):
+    """Toglie la lavorazione, ma solo se e' la propria: annullare il proprio
+    caricamento non deve sbloccare quello di un altro."""
+    chiave = chiave_lavorazione(giornata, giocatore)
+    voce = LAVORAZIONI_IN_CORSO.get(chiave)
+    if voce is not None and voce[0] == admin_id:
+        del LAVORAZIONI_IN_CORSO[chiave]
+
+
+def da_quanto(secondi):
+    """«da meno di un minuto» invece di «da 0 min»."""
+    return "da meno di un minuto" if secondi < 60 else f"da {secondi // 60} min"
+
+
 GIOCATORI = [
     "cecilia", "dario", "davide", "fazio", 
     "gaetano", "giacomo", "giovanni", "mario", 
@@ -1614,9 +1703,39 @@ async def scegli_giocatore(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     context.user_data['giocatore'] = query.data.split('_')[1]
     
+    # Se l'altro admin sta gia' caricando questa stessa schedina, va detto ORA:
+    # e' il momento in cui fermarsi costa zero. Al salvataggio sarebbe troppo
+    # tardi — uno dei due avrebbe gia' aspettato la lettura IA per niente.
+    altro = lavorazione_altrui(context.user_data['giornata'], context.user_data['giocatore'],
+                               update.effective_user.id)
+    avviso = ""
+    if altro:
+        nome_altro, secondi = altro
+        avviso = (f"\n\n🔸 *{escape_markdown(nome_altro)}* sta già caricando questa stessa schedina "
+                  f"({da_quanto(secondi)}). Sentitevi prima di procedere: se la salva lui, "
+                  f"il tuo salvataggio verrà rifiutato.")
+
     kb = [[InlineKeyboardButton("✅ Conferma", callback_data="conferma_si")], [InlineKeyboardButton("❌ Annulla", callback_data="conferma_no")]]
-    await query.edit_message_text(text=f"⚠️ Vuoi elaborare:\n👤 **{context.user_data['giocatore'].capitalize()}** - 📅 **Giornata {context.user_data['giornata']}** ({len(context.user_data.get('foto_ricevute', []))} foto)?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    await query.edit_message_text(text=f"⚠️ Vuoi elaborare:\n👤 **{context.user_data['giocatore'].capitalize()}** - 📅 **Giornata {context.user_data['giornata']}** ({len(context.user_data.get('foto_ricevute', []))} foto)?{avviso}", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
     return CONFERMA
+
+async def schedina_gia_nel_foglio(giocatore, giornata):
+    """Righe gia' presenti in Giocate per quel giocatore in quella giornata.
+
+    E' la stessa lettura che fa scrivi_su_sheets_con_regole prima di scrivere,
+    ma anticipata: scoprire il doppione DOPO la lettura IA significa aver
+    buttato via una chiamata a Gemini e una ventina di secondi di attesa.
+    Il controllo che conta resta quello al salvataggio — questo serve solo a
+    non far lavorare a vuoto.
+    """
+    service = await asyncio.to_thread(connetti_sheets)
+    righe = await asyncio.to_thread(
+        lambda: service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range="Giocate!A:B"
+        ).execute(num_retries=3).get('values', [])
+    )
+    return righe_schedina_esistente(righe, giocatore, giornata)
+
 
 async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
@@ -1626,6 +1745,32 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     gio, giorn, foto_lista = context.user_data['giocatore'], context.user_data['giornata'], context.user_data.get('foto_ricevute', [])
+
+    # Il doppione si scopre prima di chiamare l'IA, non dopo.
+    try:
+        esistenti = await schedina_gia_nel_foglio(gio, giorn)
+    except Exception as e:
+        # Se il foglio non risponde NON si blocca il caricamento: il controllo
+        # che conta e' quello dentro scrivi_su_sheets_con_regole, che rifiuta
+        # comunque. Qui un errore di lettura deve al massimo far perdere il
+        # vantaggio dell'anticipo, non impedire di lavorare.
+        logging.warning("Controllo anticipato doppioni non riuscito (si procede): %s", e)
+        esistenti = []
+    if esistenti:
+        await query.edit_message_text(
+            f"⚠️ *Schedina già presente*\n\n"
+            f"{escape_markdown(gio.upper())} ha già *{len(esistenti)} righe* per la "
+            f"*Giornata {escape_markdown(str(giorn))}* (righe {esistenti[0]}-{esistenti[-1]} del foglio Giocate).\n\n"
+            f"Non ho letto le foto e non ho salvato niente. Se questa è la versione giusta, "
+            f"cancella prima quelle righe dal foglio e ricarica.",
+            parse_mode="Markdown"
+        )
+        await pulisci_dati(context)
+        return ConversationHandler.END
+
+    segna_lavorazione(giorn, gio, update.effective_user.id, nome_attore(update))
+    context.user_data['lavorazione_admin_id'] = update.effective_user.id
+
     await query.edit_message_text(f"⏳ L'IA Gemini sta analizzando le foto ({len(foto_lista)}) di {gio.capitalize()}...")
     
     try:
@@ -1751,17 +1896,20 @@ async def esegui_salvataggio_ia(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.edit_message_text("⏳ Scrittura su Google Sheets in corso...")
     try:
-        successo = await asyncio.to_thread(scrivi_su_sheets_con_regole, gio, giorn, risultato_json)
+        # Il lock copre rilettura + controllo + scrittura: e' l'unico modo per
+        # cui due "Salva" simultanei non trovino entrambi il posto libero.
+        async with lock_salvataggio_schedina():
+            successo = await asyncio.to_thread(scrivi_su_sheets_con_regole, gio, giorn, risultato_json)
         msg = f"✅ Schedina salvata definitivamente nel Database!" if successo else "⚠️ Errore durante la scrittura su Sheets."
         await query.edit_message_text(msg)
     except SchedinaGiaPresente as gia:
         # Niente e' stato scritto: meglio fermarsi e far decidere a un umano che
         # accodare una seconda copia (i punti verrebbero contati due volte).
         await query.edit_message_text(
-            f"⚠️ *Schedina gia' presente*\n\n"
-            f"{escape_markdown(gia.giocatore)} ha gia' *{len(gia.righe)} righe* per la "
+            f"⚠️ *Schedina già presente*\n\n"
+            f"{escape_markdown(gia.giocatore)} ha già *{len(gia.righe)} righe* per la "
             f"*Giornata {escape_markdown(str(gia.giornata))}* (righe {gia.righe[0]}-{gia.righe[-1]} del foglio Giocate).\n\n"
-            f"*Non ho salvato niente.* Se questa e' la versione giusta, cancella prima "
+            f"*Non ho salvato niente.* Se questa è la versione giusta, cancella prima "
             f"quelle righe dal foglio e ricarica la foto.",
             parse_mode="Markdown"
         )
@@ -1931,6 +2079,11 @@ async def pulisci_dati(context: ContextTypes.DEFAULT_TYPE):
         for foto in context.user_data['foto_ricevute']:
             if os.path.exists(foto): os.remove(foto)
         del context.user_data['foto_ricevute']
+    # Caricamento finito o abbandonato: la schedina torna libera per l'altro
+    # admin subito, senza aspettare la scadenza dei 15 minuti.
+    if 'lavorazione_admin_id' in context.user_data:
+        libera_lavorazione(context.user_data.get('giornata'), context.user_data.get('giocatore'),
+                           context.user_data.pop('lavorazione_admin_id'))
     # /cancel come fallback generico deve poter interrompere anche
     # l'archiviazione a meta': altrimenti il codice resterebbe appeso in
     # user_data pronto per essere confermato per sbaglio in una sessione dopo.

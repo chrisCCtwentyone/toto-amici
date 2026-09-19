@@ -460,7 +460,7 @@ class TestMessaggioSchedinaGiaPresente:
         asyncio.run(bt.esegui_salvataggio_ia(upd, ctx))
 
         ultimo = upd.callback_query.testi[-1]
-        assert "gia" in ultimo.lower() and "Giornata 5" in ultimo
+        assert "già presente" in ultimo.lower() and "Giornata 5" in ultimo
         assert "Non ho salvato" in ultimo
         assert "MARIO" in ultimo
         assert service.values_obj.righe_giocate == righe_prima, "nessuna riga in piu' nel foglio"
