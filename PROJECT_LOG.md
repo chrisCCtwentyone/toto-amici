@@ -107,6 +107,31 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 26/09/2026 — Sessione 25 (Riepilogo non più duplicato dopo un riavvio, e i numeri veri di Render/Streamlit)
+
+**Domanda dell'utente: due settimane di pausa nazionali creano problemi di attività, stato online o spegnimento automatico?** Risposta misurata, non ipotizzata — e le due piattaforme si comportano in modo opposto.
+
+**Render (bot): nessun problema.** Lo spegnimento dopo 15 minuti dipende dal traffico **in entrata**, e a generarlo sono `task_autoping` e cron-job.org, che girano da soli. Verificato sull'account vero:
+- **un solo servizio free** (`toto-amici-bot`, Frankfurt, `not_suspended`);
+- **memoria degli ultimi 7 giorni fra ~146 e ~277 MB su 512** (54% al picco), con il dente di sega quotidiano del rilascio — i picchi più alti cadono sulle giornate con le partite;
+- **un solo riavvio in 7 giorni**, ed era il deploy della Sessione 24: nessun crash. Conferma sul campo la chiusura del problema memoria (Sessione 18).
+- **Vincolo da ricordare, non legato alla pausa**: il limite Render è **750 ore-istanza al mese per workspace**. Un servizio 24/7 ne consuma 720 a settembre e 744 a ottobre: ci sta, ma un secondo servizio free nello stesso workspace farebbe sospendere **tutto** fino al mese dopo.
+
+**Streamlit: la soglia non è più 7 giorni, è 12 ore.** Community Cloud addormenta le app dopo 12 ore senza visite (era 7 giorni, poi 72 ore): quindi il sito si addormenta **già ora, praticamente ogni notte**, e la pausa non introduce niente di nuovo. Il primo che torna vede la pagina «This app has gone to sleep» con un bottone che **può premere chiunque**, non serve l'account del proprietario; poi riparte normalmente in qualche decina di secondi. Nessun dato si perde: i dati stanno su Sheets, il sito è solo la vetrina. Restare addormentato 12 ore o tre settimane è lo stesso stato: il risveglio è identico.
+
+**Scoperta che evita una trappola: un ping HTTP NON sveglia un'app Streamlit, e fallisce in silenzio.** La soluzione ovvia — aggiungere un job su cron-job.org che chiama l'URL del sito, come già si fa per il bot — **sembra funzionare e non fa niente**: un `GET` riceve `200` da un guscio statico React senza mai raggiungere il container dell'app, perché il contatore di traffico segue le sessioni browser reali (websocket), non le richieste HTTP. Per svegliarla davvero serve un browser headless (Playwright/Selenium), tipicamente da GitHub Actions. **Scartato di proposito**: Chromium sul piano free di Render (512 MB) è esattamente il tipo di consumo che faceva uccidere il processo, e tenere sveglia 24/7 un'app che serve solo nei giorni di partita consuma risorse condivise per niente. La soluzione pratica resta aprire il sito a mano una volta prima della ripresa.
+
+**Sistemato il riepilogo WhatsApp duplicato dopo un riavvio.** `ultima_giornata_riepilogo_inviata` viveva solo in RAM: a ogni riavvio di Render si azzerava e il riepilogo di una giornata già conclusa ripartiva da capo, identico, senza che fosse cambiato niente. Il disco di Render è effimero, quindi l'unico posto stabile è lo spreadsheet.
+- Nuovo foglio **`Stato`** (due colonne, Chiave/Valore), creato **automaticamente** dal bot al primo salvataggio: non c'è niente da preparare a mano. Lo scrive solo il bot.
+- Si riscrive **per intero a ogni salvataggio, mai per indice di riga**: è minuscolo, e così non si tocca la meccanica che causò la riscrittura di 13 giornate. Un valore vuoto vale come "non impostato", quindi il foglio non si accorcia mai e non restano righe orfane.
+- **Doppia memoria**: la variabile in RAM resta come via veloce (nel caso normale non si legge nemmeno il foglio), il foglio copre il riavvio. Basta che una delle due dica "già mandato".
+- **Lo stato non è mai più importante del lavoro**: se il foglio non si legge o non si scrive, il riepilogo parte lo stesso — si perde la protezione contro il doppio invio, non il messaggio.
+- `/riepilogo` non azzera più la variabile globale da fuori: ha un parametro `forza=True` esplicito.
+- `archivia_stagione()` azzera la chiave. Senza, il riepilogo della **Giornata 5 della stagione nuova** verrebbe scambiato per già mandato: è lo stesso numero.
+- **Restano in RAM di proposito** `ultimo_report_inviato` (AUTO UPDATE) e `ultime_anomalie_segnalate`: un loro doppione dopo un riavvio è un messaggio in più, non un testo lungo da incollare su WhatsApp. Se dessero fastidio, ora c'è il meccanismo pronto.
+
+**Test: 494 totali** (erano 478). Nuovo `tests/test_stato_persistente.py` (16 test). Quello centrale simula il riavvio come avviene davvero — variabile in RAM azzerata, foglio che ricorda — ed è stato **verificato togliendo il controllo sul foglio**: senza, il riepilogo riparte e il test fallisce. Dry-run: 960 celle, 0 differenze.
+
 ### 19/09/2026 — Sessione 24 (Multi-admin: owner + admin, notifiche a tutti, tracciabilità in chat)
 
 **Domanda dell'utente subito dopo: «e se due admin scannerizzano la stessa schedina insieme?»** La risposta si è divisa in tre casi, non uno — e solo il primo era già coperto.

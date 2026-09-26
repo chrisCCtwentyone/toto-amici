@@ -981,6 +981,78 @@ def stagione_corrente():
     except Exception:
         return None
 
+# ==========================================
+# STATO PERSISTENTE FRA UN RIAVVIO E L'ALTRO
+# ==========================================
+# Le variabili di deduplica (quale riepilogo ho gia' mandato, quali anomalie ho
+# gia' segnalato) vivevano solo in RAM: a ogni riavvio di Render si azzeravano e
+# il bot rimandava cose gia' mandate. Il disco di Render e' effimero, quindi
+# l'unico posto stabile e' lo spreadsheet, dove sta gia' tutto il resto.
+#
+# Il foglio "Stato" e' due colonne (Chiave, Valore) e lo scrive solo il bot.
+# Viene riscritto per intero a ogni salvataggio, mai per indice di riga: e'
+# minuscolo, e cosi' non si tocca la meccanica che causo' il bug delle 13
+# giornate. Un valore vuoto vale come "non impostato", quindi il foglio non si
+# accorcia mai e non restano righe orfane.
+NOME_FOGLIO_STATO = "Stato"
+CHIAVE_ULTIMO_RIEPILOGO = "ultima_giornata_riepilogo"
+
+
+def leggi_stato(chiave, default=None):
+    """Valore salvato per quella chiave, o `default`.
+
+    Non solleva mai: se il foglio non c'e' o non e' leggibile restituisce il
+    default. Chi la usa deve poter continuare — una deduplica che non funziona
+    fa mandare un messaggio in piu', mentre un errore qui bloccherebbe il
+    lavoro vero.
+    """
+    try:
+        service = connetti_sheets()
+        righe = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range=f"{NOME_FOGLIO_STATO}!A:B"
+        ).execute(num_retries=3).get("values", [])
+    except Exception as e:
+        logging.warning("Foglio Stato non leggibile (%s): uso il default", e)
+        return default
+    for riga in righe:
+        if riga and str(riga[0]).strip() == chiave:
+            valore = str(riga[1]).strip() if len(riga) > 1 else ""
+            return valore or default
+    return default
+
+
+def scrivi_stato(chiave, valore):
+    """Salva (o azzera, con valore vuoto) una chiave nel foglio Stato.
+
+    Crea il foglio se non esiste: cosi' non c'e' niente da preparare a mano,
+    ne' ora ne' quando si aggiungera' un'altra chiave.
+    """
+    service = connetti_sheets()
+    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3)
+    titoli = {f["properties"]["title"] for f in meta.get("sheets", [])}
+
+    righe = []
+    if NOME_FOGLIO_STATO not in titoli:
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=SPREADSHEET_ID,
+            body={"requests": [{"addSheet": {"properties": {"title": NOME_FOGLIO_STATO}}}]}
+        ).execute(num_retries=3)
+    else:
+        righe = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID, range=f"{NOME_FOGLIO_STATO}!A:B"
+        ).execute(num_retries=3).get("values", [])
+
+    valori = {str(r[0]).strip(): (str(r[1]).strip() if len(r) > 1 else "")
+              for r in righe[1:] if r and str(r[0]).strip()}
+    valori[chiave] = str(valore)
+
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID, range=f"{NOME_FOGLIO_STATO}!A1",
+        valueInputOption="RAW",
+        body={"values": [["Chiave", "Valore"]] + [[k, v] for k, v in sorted(valori.items())]}
+    ).execute(num_retries=3)
+
+
 def archivia_stagione(etichetta):
     """Congela la stagione conclusa e prepara i fogli per quella nuova.
 
@@ -1033,6 +1105,13 @@ def archivia_stagione(etichetta):
             service.spreadsheets().values().clear(
                 spreadsheetId=SPREADSHEET_ID, range=f"{nome}!A2:Z", body={}
             ).execute(num_retries=3)
+
+    # Senza questo, il riepilogo della Giornata 5 della stagione NUOVA verrebbe
+    # scambiato per gia' mandato (e' lo stesso numero di giornata).
+    try:
+        scrivi_stato(CHIAVE_ULTIMO_RIEPILOGO, "")
+    except Exception as e:
+        logging.error("Stato del riepilogo non azzerato dopo l'archiviazione: %s", e)
 
     dettaglio = "\n".join(f"- {n}: {righe_archiviate[n]} righe → «{n} {etichetta}»" for n in FOGLI_STAGIONE)
     return f"✅ *Stagione {etichetta} archiviata.*\n\n{dettaglio}\n\nI fogli di lavoro sono ora vuoti e pronti per la nuova stagione."
@@ -2420,7 +2499,7 @@ def costruisci_riepilogo_whatsapp(giornata, righe_classifica, righe_cassa, n_rin
     testo += "\n\n⚽ Prossima giornata in arrivo!"
     return testo
 
-async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_se_non_pronto=False, destinatari=None):
+async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_se_non_pronto=False, destinatari=None, forza=False):
     """Ogni mattina controlla se la giornata corrente e' completamente
     conclusa (nessuna riga ancora IN CORSO in Giocate) e, se non l'ha gia'
     fatto, manda all'admin il riepilogo pronto da incollare su WhatsApp.
@@ -2436,6 +2515,7 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
     destinatari: None (job schedulato) = tutti gli admin; un ID = solo a lui.
     Le spiegazioni del "perche' non l'ho mandato" vanno sempre e solo a chi ha
     chiesto: sono la risposta a un comando, non una notizia per tutti.
+    forza: ignora la deduplica e rimanda comunque (usato da /riepilogo).
     """
     global ultima_giornata_riepilogo_inviata
     try:
@@ -2465,7 +2545,15 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
                 await avvisa_admin(context, f"⏳ Giornata {giornata} non ancora conclusa: {n_in_corso} eventi ancora IN CORSO.", destinatari=destinatari, parse_mode=None)
             return
 
-        if str(giornata) == str(ultima_giornata_riepilogo_inviata):
+        # Due memorie, perche' coprono guasti diversi: la globale e' immediata ma
+        # muore al riavvio di Render (ed e' cosi' che arrivava due volte lo stesso
+        # riepilogo); il foglio Stato sopravvive al riavvio ma potrebbe non essersi
+        # scritto. Basta che una delle due dica "gia' mandato".
+        gia_mandato = str(giornata) == str(ultima_giornata_riepilogo_inviata)
+        if not gia_mandato and not forza:
+            salvato = await asyncio.to_thread(leggi_stato, CHIAVE_ULTIMO_RIEPILOGO)
+            gia_mandato = salvato is not None and str(giornata) == str(salvato)
+        if gia_mandato and not forza:
             if notifica_se_non_pronto:
                 await avvisa_admin(context, f"ℹ️ Il riepilogo della Giornata {giornata} è già stato mandato.", destinatari=destinatari, parse_mode=None)
             return
@@ -2491,6 +2579,12 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
         # in quel momento ha il telefono in mano.
         await avvisa_admin(context, testo, parse_mode=None)  # niente parse_mode: vedi costruisci_riepilogo_whatsapp
         ultima_giornata_riepilogo_inviata = str(giornata)
+        try:
+            await asyncio.to_thread(scrivi_stato, CHIAVE_ULTIMO_RIEPILOGO, giornata)
+        except Exception as e:
+            # Il riepilogo e' gia' partito: qui si perde solo la protezione
+            # contro il doppio invio dopo un riavvio, non il lavoro.
+            logging.error("Non ho potuto salvare lo stato del riepilogo: %s", e)
     except Exception as e:
         logging.error(f"Errore task_riepilogo_whatsapp: {e}")
 
@@ -2498,10 +2592,9 @@ async def riepilogo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Forza subito il controllo/invio del riepilogo, senza aspettare la mattina
     (utile per testare, o per rimandarlo se serve). Ignora la deduplica."""
     if not e_admin(update.effective_user.id): return
-    global ultima_giornata_riepilogo_inviata
-    ultima_giornata_riepilogo_inviata = None
     await update.message.reply_text("⏳ Controllo se la giornata è conclusa...")
-    await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True, destinatari=update.effective_user.id)
+    await task_riepilogo_whatsapp(context, notifica_se_non_pronto=True,
+                                  destinatari=update.effective_user.id, forza=True)
 
 async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     """Il bot chiama il proprio indirizzo pubblico per generare traffico in entrata.
