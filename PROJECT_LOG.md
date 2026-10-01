@@ -10,7 +10,7 @@
 | Componente | Piattaforma | Sorgente | Note |
 |---|---|---|---|
 | Web Dashboard (`app.py`) | Streamlit Community Cloud | GitHub `main` | Pubblica, sempre online |
-| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + cron-job.org ogni 10 min. Render spegne dopo 15 min senza traffico **in entrata** |
+| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + cron-job.org ogni 10 min. Render spegne dopo 15 min senza traffico **in entrata**. **Dorme di proposito 02:00–07:30** per stare nelle 750 h/mese gratuite (Sessione 26) |
 | Database | Google Sheets | — | SPREADSHEET_ID: `1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE` |
 
 ### Variabili d'Ambiente Necessarie
@@ -106,6 +106,19 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 01/10/2026 — Sessione 26 (Pausa notturna del bot: rientrare nelle 750 ore gratuite di Render)
+
+**Problema: email di Render "ti stai avvicinando al limite mensile del free tier".** Misurato sull'account (MCP Render): il limite che si avvicina sono le **ore-istanza** (750/mese per workspace), non la banda (~0,16 GB su 5, ~3%) né i minuti di build (~62 su 500). Un solo servizio nel workspace, sempre acceso per scelta (keep-alive): 720 h a settembre, **744 h a ottobre** — margine di 6 ore, che i deploy (vecchia e nuova istanza insieme per qualche secondo) erodono. Oltre le 750 Render sospende il bot fino al mese dopo.
+
+**Soluzione scelta dall'utente: il bot dorme ogni notte dalle 02:00 alle 07:30 (ora italiana).** Risparmio ~170 h/mese → ~575 h. Fascia scelta perché non contiene nessun job: l'AUTO UPDATE delle 01:00 (partite finite dopo mezzanotte) resta, il successivo è alle 08:00. Scartata la fascia 23:30–07:30 (~500 h): avrebbe perso proprio il job delle 01:00.
+- `PAUSA_NOTTURNA_INIZIO/FINE`, `in_pausa_notturna()`, `buco_spiegato_da_pausa()` in `bot_telegram.py`.
+- `task_autoping` non pinga in pausa: altrimenti il bot generava da solo il traffico in entrata e Render non lo spegneva mai.
+- L'**allarme keep-alive** non scatta per un buco fra ping che attraversa la pausa (voluto). `last_ping_time` è ora un datetime con fuso (adeguato anche `/diagnostica`).
+- **AUTO UPDATE deduplicato sul foglio `Stato`** (chiave `ultimo_auto_update`, valore `giornata|hash del report`), non più in RAM: senza, ogni mattina al risveglio la variabile era vuota e alle 08:00 partiva un doppione. Stessa regola del riepilogo: se lo Stato non si legge/scrive, il messaggio parte comunque. Azzerata in `archivia_stagione()`.
+- **Lato cron-job.org (a mano, account dell'utente)**: il job di ping va limitato agli orari 07:30–01:59 (fuso Europe/Rome). È lui a risvegliare il bot alle 07:30: un messaggio Telegram da solo **non** lo sveglia, perché il bot usa il polling.
+- Effetti accettati: un admin che scrive di notte riceve risposta dopo il risveglio (Telegram tiene gli update in coda fino a 24 h e il bot non li scarta: `drop_pending_updates` non è impostato). `ultime_anomalie_segnalate` resta in RAM: un'anomalia ancora aperta può essere ri-segnalata una volta al mattino.
+- 26 test nuovi in `tests/test_pausa_notturna.py` (520 totali, verdi). Restano in `tests/test_risparmio_risorse.py` tre test `TestAutoUpdateNonSiRipete` ormai tautologici (assegnano `bt.ultimo_report_inviato`, che non esiste più): passano, da eliminare.
 
 ### 26/09/2026 — Sessione 25 (Riepilogo non più duplicato dopo un riavvio, e i numeri veri di Render/Streamlit)
 

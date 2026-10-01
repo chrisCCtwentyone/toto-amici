@@ -1,6 +1,7 @@
 import os
 import sys
 import gc
+import hashlib
 import ctypes
 import json
 import logging
@@ -41,6 +42,47 @@ SERVICE_ACCOUNT_FILE = 'credenziali.json'
 # stesso spreadsheet con il suffisso dell'annata (es. "Giocate 2026-27"),
 # create da /archiviastagione. Vedi PROJECT_LOG.md, Sessione 13.
 FOGLI_STAGIONE = ("Giocate", "Classifica", "Cassa")
+
+TZ_ROMA = pytz.timezone('Europe/Rome')
+
+# Pausa notturna: il piano gratuito di Render da' 750 ore al mese, e un bot
+# tenuto sveglio 24/7 ne consuma 744 in un mese da 31 giorni: zero margine.
+# Di notte nessuno gioca, quindi il bot dorme: cron-job.org smette di pingare
+# in questa fascia (e lo risveglia alle 07:30), task_autoping fa lo stesso, e
+# Render lo spegne da solo dopo 15 minuti senza richieste in entrata.
+PAUSA_NOTTURNA_INIZIO = dt_time(2, 0)
+PAUSA_NOTTURNA_FINE = dt_time(7, 30)
+
+
+def in_pausa_notturna(momento):
+    """True se `momento` (datetime con fuso) cade in [02:00, 07:30) ora italiana.
+
+    Si converte sempre in Europe/Rome: sul server l'ora locale e' UTC, e con
+    l'ora legale la stessa 02:00 italiana cade a ore UTC diverse.
+    """
+    ora = momento.astimezone(TZ_ROMA).time()
+    return PAUSA_NOTTURNA_INIZIO <= ora < PAUSA_NOTTURNA_FINE
+
+
+def buco_spiegato_da_pausa(da, a):
+    """True se un qualunque istante dell'intervallo [da, a] cade nella pausa.
+
+    Serve all'allarme keep-alive: un buco di ore fra due ping e' voluto se
+    attraversa la notte, e non va segnalato come un guasto di cron-job.org.
+    Un buco di 24 ore o piu' contiene per forza una pausa intera.
+    """
+    if a - da >= timedelta(hours=24):
+        return True
+    if in_pausa_notturna(da) or in_pausa_notturna(a):
+        return True
+    # Ne' l'inizio ne' la fine sono in pausa: l'intervallo la copre solo se
+    # contiene un intero inizio-pausa, cioe' il primo dopo `da` e' <= `a`.
+    locale = da.astimezone(TZ_ROMA)
+    giorno = locale.date()
+    inizio = TZ_ROMA.localize(datetime.combine(giorno, PAUSA_NOTTURNA_INIZIO))
+    if inizio <= da:
+        inizio = TZ_ROMA.localize(datetime.combine(giorno + timedelta(days=1), PAUSA_NOTTURNA_INIZIO))
+    return inizio <= a
 
 
 def leggi_admin_ids(owner_id, grezzo):
@@ -322,7 +364,6 @@ if not TOKEN or not SPREADSHEET_ID or not FOOTBALL_DATA_KEY or ADMIN_ID == 0:
 
 last_ping_time = None
 ultime_anomalie_segnalate = set()  # chiavi stabili delle anomalie dell'ultimo avviso inviato (per non ripetere lo stesso avviso ad ogni controllo)
-ultimo_report_inviato = None  # (giornata, testo) dell'ultimo AUTO UPDATE: se non cambia nulla non lo si ripete
 ultima_giornata_riepilogo_inviata = None  # per non rimandare due volte il riepilogo della stessa giornata
 
 # ==========================================
@@ -342,14 +383,18 @@ def home():
     """
     global last_ping_time
     from datetime import datetime
-    now = datetime.now()
+    # Aware (non datetime.now() naive): serve a confrontare il buco fra due ping
+    # con la pausa notturna, che e' espressa in ora italiana.
+    now = datetime.now(TZ_ROMA)
     if last_ping_time is None:
         logging.info("PING keep-alive ricevuto (primo dall'avvio)")
     else:
         logging.info(f"PING keep-alive ricevuto ({int((now - last_ping_time).total_seconds())}s dal precedente)")
     if last_ping_time is not None:
         delta = (now - last_ping_time).total_seconds()
-        if delta > 900:  # > 15 minuti: oltre questa soglia Render spegne il servizio
+        # Un buco che attraversa la pausa notturna e' voluto (il bot dorme per
+        # risparmiare le ore di Render): niente allarme al risveglio delle 07:30.
+        if delta > 900 and not buco_spiegato_da_pausa(last_ping_time, now):  # > 15 minuti: oltre questa soglia Render spegne il servizio
             # Girano nel thread di Flask, senza il `context` di python-telegram-bot:
             # qui l'invio e' una POST diretta. Un fallimento su un admin non deve
             # impedire l'allarme agli altri, quindi il try sta DENTRO il ciclo.
@@ -996,6 +1041,7 @@ def stagione_corrente():
 # accorcia mai e non restano righe orfane.
 NOME_FOGLIO_STATO = "Stato"
 CHIAVE_ULTIMO_RIEPILOGO = "ultima_giornata_riepilogo"
+CHIAVE_ULTIMO_AUTO_UPDATE = "ultimo_auto_update"
 
 
 def leggi_stato(chiave, default=None):
@@ -1108,10 +1154,13 @@ def archivia_stagione(etichetta):
 
     # Senza questo, il riepilogo della Giornata 5 della stagione NUOVA verrebbe
     # scambiato per gia' mandato (e' lo stesso numero di giornata).
-    try:
-        scrivi_stato(CHIAVE_ULTIMO_RIEPILOGO, "")
-    except Exception as e:
-        logging.error("Stato del riepilogo non azzerato dopo l'archiviazione: %s", e)
+    # Idem per l'ultimo AUTO UPDATE: stessa giornata e stesso report nell'anno
+    # nuovo (es. tutti a 0 punti) verrebbero scambiati per gia' mandati.
+    for chiave in (CHIAVE_ULTIMO_RIEPILOGO, CHIAVE_ULTIMO_AUTO_UPDATE):
+        try:
+            scrivi_stato(chiave, "")
+        except Exception as e:
+            logging.error("Stato '%s' non azzerato dopo l'archiviazione: %s", chiave, e)
 
     dettaglio = "\n".join(f"- {n}: {righe_archiviate[n]} righe → «{n} {etichetta}»" for n in FOGLI_STAGIONE)
     return f"✅ *Stagione {etichetta} archiviata.*\n\n{dettaglio}\n\nI fogli di lavoro sono ora vuoti e pronti per la nuova stagione."
@@ -1491,7 +1540,7 @@ async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if last_ping_time is None:
         righe.append("⚠️ *Keep-alive*: nessun ping ricevuto dall'avvio")
     else:
-        da_quanto = (datetime.now() - last_ping_time).total_seconds()
+        da_quanto = (datetime.now(TZ_ROMA) - last_ping_time).total_seconds()
         icona = "✅" if da_quanto < 600 else "🔴"
         righe.append(f"{icona} *Keep-alive*: ultimo ping {int(da_quanto/60)} min fa (Render spegne a 15)")
 
@@ -2179,7 +2228,6 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
     noti piu'. Stessa logica gia' usata da task_controlla_anomalie_partite
     (Sessione 16).
     """
-    global ultimo_report_inviato
     giornata = await asyncio.to_thread(ottieni_giornata_corrente)
     if giornata is None:
         # Meglio saltare il giro che ricalcolare la giornata sbagliata.
@@ -2187,13 +2235,28 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
         return
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
 
-    impronta = (giornata, report)
-    if impronta == ultimo_report_inviato:
+    # L'impronta sta nel foglio Stato, non in RAM: il bot dorme ogni notte
+    # (pausa notturna) e al risveglio una variabile globale sarebbe vuota, quindi
+    # alle 08:00 gli admin riceverebbero ogni giorno lo stesso report. Si salva
+    # un hash e non il testo, che e' troppo lungo per una cella.
+    impronta = f"{giornata}|{hashlib.sha256(report.encode()).hexdigest()[:16]}"
+    try:
+        salvata = await asyncio.to_thread(leggi_stato, CHIAVE_ULTIMO_AUTO_UPDATE)
+    except Exception as e:
+        # Lo stato non e' mai piu' importante del lavoro: se non si legge, il
+        # messaggio parte (al peggio un doppione).
+        logging.warning("Stato AUTO UPDATE non leggibile (%s): invio comunque", e)
+        salvata = None
+    if impronta == salvata:
         logging.info(f"Auto update G.{giornata}: nessuna novita' rispetto all'ultimo invio, non lo ripeto")
         return
-    ultimo_report_inviato = impronta
 
     await avvisa_admin(context, f"⏰ **AUTO UPDATE (G.{giornata})**\n\n{report}")
+    try:
+        await asyncio.to_thread(scrivi_stato, CHIAVE_ULTIMO_AUTO_UPDATE, impronta)
+    except Exception as e:
+        # Il report e' gia' partito: si perde solo la protezione dal doppio invio.
+        logging.error("Non ho potuto salvare lo stato dell'AUTO UPDATE: %s", e)
 
 async def task_controlla_schedine_mancanti(context: ContextTypes.DEFAULT_TYPE):
     """Controlla chi non ha ancora caricato la schedina per la giornata corrente.
@@ -2612,10 +2675,17 @@ async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     finche' il bot e' vivo: basta che UNA delle due fonti funzioni.
 
     RENDER_EXTERNAL_URL viene impostata automaticamente da Render.
+
+    Di notte (pausa notturna, 02:00-07:30 ora italiana) NON pinga: il bot deve
+    poter dormire per restare dentro le 750 ore gratuite al mese di Render. Se
+    questo job continuasse a generare traffico in entrata, Render non lo
+    spegnerebbe mai.
     """
     url = os.environ.get("RENDER_EXTERNAL_URL")
     if not url:
         return  # in locale non serve
+    if in_pausa_notturna(datetime.now(TZ_ROMA)):
+        return
     try:
         # richiedi_con_retry riprova da solo: un blip di rete non deve valere
         # come ping perso, perche' ogni ping perso avvicina lo spegnimento.
@@ -2673,7 +2743,7 @@ def main():
 
     # AVVIO DEL BOT TELEGRAM
     app = Application.builder().token(TOKEN).post_init(post_init).build()
-    tz = pytz.timezone('Europe/Rome')
+    tz = TZ_ROMA
     # Orari scelti per dare più occasioni di "agganciare" un dato corretto prima che
     # Football-Data lo rielabori (visto il 30/08/2026): uno presto al mattino (prima di
     # eventuali rielaborazioni notturne), uno tardo dopo mezzanotte per le partite serali,
