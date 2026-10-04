@@ -491,18 +491,20 @@ class TestClassifica:
         assert c["giocatori"][0]["punti_per_giornata"] == [10, 20, None]
         assert st.classifica_ordinata(dict_classifica([("A", [])]), [])["giocatori"][0]["punti_per_giornata"] == []
 
-    def test_cella_non_numerica_solleva_invece_di_diventare_zero(self):
-        # D12: pd.to_numeric(errors='coerce').fillna(0) trasformava "abc" in 0 punti senza traccia.
-        vecchio = int(float("nan") if False else 0)  # il fallback silenzioso del vecchio codice
-        assert vecchio == 0
+    def test_cella_non_numerica_vale_zero_come_nel_bot_e_resta_tracciata(self):
+        # Decisione 04/10/2026: il bot somma solo le celle isdigit (il resto vale 0), il sito fa lo stesso.
+        # La traccia non va persa: l'anomalia nomina la colonna (diventa un avviso agli admin).
         valori = dati.classifica_valori([("A", [10])])
         valori[1][1] = "abc"
-        with pytest.raises(ValueError, match="Punti Totali"):
-            st.classifica_ordinata(st.righe_da_valori(valori), [])
-        valori = dati.classifica_valori([("A", [10])])
-        valori[1][2] = "x"
-        with pytest.raises(ValueError, match="Giornata 1"):
-            st.classifica_ordinata(st.righe_da_valori(valori), [])
+        valori[1][2] = "12,5"
+        voce = st._leggi_classifica(st.righe_da_valori(valori))[0]
+        assert voce["punti_totali"] == 0 and voce["celle"][1] == 0
+        assert sorted(voce["anomalie"]) == [("Giornata 1", "12,5"), ("Punti Totali", "abc")]
+        assert st.classifica_ordinata(st.righe_da_valori(valori), [])["giocatori"][0]["punti_totali"] == 0
+
+    def test_cella_vuota_o_numerica_non_da_anomalia(self):
+        valori = dati.classifica_valori([("A", [10, None])])
+        assert st._leggi_classifica(st.righe_da_valori(valori))[0]["anomalie"] == []
 
     def test_giocatore_duplicato_solleva(self):
         with pytest.raises(ValueError, match="due volte"):

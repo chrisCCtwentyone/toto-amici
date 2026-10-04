@@ -106,7 +106,7 @@ ORA = Pattern(ISO)
 
 PREMIO_PERCENTUALE = {"giocatore": "str", "win_rate": "num", "vinte": "int", "totali": "int"}
 PREMIO_QUOTA = {"giocatore": "str", "quota_media": "num"}
-STAT = {"nome": "str", "win_rate": "num", "quota_media": "num", "vinte": "int", "totali": "int"}
+STAT = {"nome": "str", "win_rate": "num", "quota_media": Nullable("num"), "vinte": "int", "totali": "int"}
 VOCE_COPPA = Nullable({"posizione": "int", "nome": "str"})
 
 SCHEMA = {
@@ -402,16 +402,19 @@ class TestDatiIllegibili:
         with pytest.raises(ValueError, match="fuso"):
             costruisci(c, ca, g, fd, datetime(2026, 10, 4, 15, 30))
 
-    def test_punteggio_non_numerico(self, base):
+    def test_cella_non_numerica_vale_zero_come_nel_bot_e_da_un_avviso(self, base):
+        """Decisione 04/10/2026: come esegui_calcolo_risultati (conta solo le celle isdigit)
+        la cella non numerica vale 0, niente ValueError, ma un avviso nomina giocatore e colonna."""
         c, ca, g, fd, a = base
-        c = copy.deepcopy(c)
-        c[1][1] = "n.d."
-        with pytest.raises(ValueError, match="Punti Totali"):
-            costruisci(c, ca, g, fd, a)
-        c = copy.deepcopy(base[0])
-        c[1][3] = "-"
-        with pytest.raises(ValueError, match="Giornata 2"):
-            costruisci(c, ca, g, fd, a)
+        _, avvisi_base = st.costruisci_snapshot_con_avvisi(c, ca, g, fd, a)
+        for riga, colonna, testo in ((1, 1, "n.d."), (1, 3, "-"), (1, 2, "12,5")):
+            cc = copy.deepcopy(c)
+            cc[riga][colonna] = testo
+            s, avvisi = st.costruisci_snapshot_con_avvisi(cc, ca, g, fd, a)  # non solleva
+            nuovi = [x for x in avvisi if x not in avvisi_base and "non numerico" in x]
+            assert len(nuovi) == 1 and repr(testo) in nuovi[0] and repr(c[0][colonna]) in nuovi[0]
+            assert cc[riga][0].strip().upper() in nuovi[0]
+            assert st.costruisci_snapshot(cc, ca, g, fd, a)["giocatori"] == s["giocatori"]
 
     def test_importo_di_cassa_illeggibile(self, base):
         c, ca, g, fd, a = base

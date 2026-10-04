@@ -387,3 +387,19 @@ class TestInvariantiSnapshot:
             r[1] += s["riepilogo"]["vinte"] + s["riepilogo"]["perse"]
         for stat in snapshot_intero["statistiche"]["giocatori"]:
             assert [stat["vinte"], stat["totali"]] == per_giocatore[stat["nome"]], stat["nome"]
+
+
+class TestEstraiNumeroInvarianti:
+    def test_importo_scritto_in_formato_italiano_si_rilegge_identico(self):
+        """INVARIANTE: per ogni importo da 0 a 100000 con 2 decimali, scritto con separatori
+        italiani ("1.674,56"), estrai_numero restituisce esattamente quell'importo. Blocca
+        la regola del punto senza virgola: i 3 decimali o le migliaia non devono mai
+        cambiare un valore scritto come lo scrive il bot."""
+        import random
+        rnd = random.Random(2026)
+        centesimi = [0, 1, 99, 100, 99999, 100000 * 100] + [rnd.randint(0, 100000 * 100) for _ in range(4000)]
+        for c in centesimi:
+            x = c / 100
+            testo = f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            assert bt.estrai_numero(testo) == x, testo
+            assert bt.estrai_numero(testo + " €") == x, testo

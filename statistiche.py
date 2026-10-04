@@ -63,12 +63,24 @@ def estrai_numero(testo):
     0,84 EUR invece di 837,28 EUR. Nessun dato storico ne e' stato intaccato
     (l'unica schedina chiusa valeva 855,70, sotto i mille), ma sarebbe successo
     alla prima vincita a quattro cifre. Vedi PROJECT_LOG.md, Sessione 8.
+
+    Senza virgola il punto e' ambiguo: "1.200" e' milleduecento (una vincita
+    scritta senza decimali) ma "1.85" e' una quota. Regola: se OGNI gruppo dopo
+    un punto ha esattamente 3 cifre sono migliaia ("1.200", "12.345.678"),
+    altrimenti il punto e' decimale ("1.85", "3.5", "2.25"). Prima "1.200"
+    veniva letto 1,2: in Cassa sarebbero finiti 1,20 EUR invece di 1.200.
+    Limite noto: una quota a tre decimali ("1.850") sarebbe letta come 1850; le
+    quote scritte dal bot hanno al massimo 2 decimali (vedi PROJECT_LOG.md).
     """
     try:
         s = re.sub(r'[^\d.,]', '', str(testo))
         if ',' in s:
             # Formato italiano: il punto separa le migliaia, la virgola i decimali.
             s = s.replace('.', '').replace(',', '.')
+        elif '.' in s and all(len(g) == 3 and g.isdigit() for g in s.split('.')[1:]):
+            # Senza virgola: "1.200" / "12.345.678" sono migliaia (ogni gruppo dopo
+            # un punto ha esattamente 3 cifre). "1.85", "3.5", "2.25" restano decimali.
+            s = s.replace('.', '')
         match = re.search(r'\d+(?:\.\d+)?', s)
         return float(match.group()) if match else 0.0
     except: return 0.0
@@ -527,22 +539,24 @@ def righe_da_valori(valori):
     ]
 
 
-def _intero_o_errore(valore, dove, vuoto=0):
-    """Un intero scritto in una cella. Cella vuota -> `vuoto`; qualsiasi altra
-    cosa non numerica -> ValueError (mai 0 punti senza traccia, §16 D12)."""
-    testo = str(valore if valore is not None else "").strip()
-    if testo == "":
-        return vuoto
-    if re.fullmatch(r"-?\d+", testo):
-        return int(testo)
-    raise ValueError(f"{dove}: valore non numerico {testo!r}")
-
-
 def _numero_o_errore(valore, dove):
     testo = str(valore if valore is not None else "").strip()
     if not re.search(r"\d", testo):
         raise ValueError(f"{dove}: importo non leggibile {testo!r}")
     return estrai_numero(testo)
+
+
+def _punti_classifica(valore, anomalie, colonna):
+    """Punti di una cella di Classifica, letti COME IL BOT (esegui_calcolo_risultati:
+    conta solo le celle `isdigit()`, il resto vale 0), cosi' sito e bot mostrano
+    gli stessi totali. Una cella scritta ma non numerica ("-", "12,5") vale 0 e
+    finisce in `anomalie` (diventa un avviso agli admin); vuota vale 0 senza avviso."""
+    testo = str(valore if valore is not None else "").strip()
+    if re.fullmatch(r"[0-9]+", testo):
+        return int(testo)
+    if testo != "":
+        anomalie.append((colonna, testo))
+    return 0
 
 
 def _quota_o_none(valore):
@@ -876,8 +890,9 @@ def costruisci_partite_e_schedine(righe, per_giornata, abbinate=None):
 
 def _leggi_classifica(righe_classifica):
     """Righe di Classifica (dizionari colonna -> valore) lette e validate.
-    Un valore non numerico solleva ValueError (D12); un giocatore scritto due
-    volte anche (non si indovina quale riga vale)."""
+    Una cella non numerica vale 0 come nel bot e finisce in voce["anomalie"]
+    [(colonna, testo)], da cui gli avvisi; un giocatore scritto due volte
+    solleva ValueError (non si indovina quale riga vale)."""
     voci, visti = [], set()
     for r in righe_classifica:
         nome = str(r.get("Giocatore", "")).strip()
@@ -887,15 +902,15 @@ def _leggi_classifica(righe_classifica):
         if chiave in visti:
             raise ValueError(f"Classifica: il giocatore {nome!r} compare due volte")
         visti.add(chiave)
-        celle = {}
+        celle, anomalie = {}, []
         for colonna, valore in r.items():
             n = numero_giornata(colonna)
             if n is not None:
-                celle[n] = None if _vuota(valore) else _intero_o_errore(valore, f"Classifica {nome} {colonna}")
+                celle[n] = None if _vuota(valore) else _punti_classifica(valore, anomalie, colonna)
         voci.append({
             "nome": nome_senza_ritiro(chiave), "ritirato": e_ritirato(chiave),
-            "punti_totali": _intero_o_errore(r.get("Punti Totali", ""), f"Classifica {nome} Punti Totali"),
-            "celle": celle,
+            "punti_totali": _punti_classifica(r.get("Punti Totali", ""), anomalie, "Punti Totali"),
+            "celle": celle, "anomalie": anomalie,
         })
     return voci
 
@@ -1032,7 +1047,7 @@ def statistiche_ritirati(righe_classifica, righe_pulite):
     valutate = [{"Giornata": f"Giornata {r['giornata']}", "Giocatore": r["giocatore"], "_riga": r}
                 for r in righe_pulite if r["esito"] in ("vinta", "persa")]
     ritirati = sorted((r for r in righe_classifica if str(r.get("Giocatore", "")).strip() and e_ritirato(r["Giocatore"])),
-                      key=lambda r: (-_intero_o_errore(r.get("Punti Totali", ""), "Punti Totali ritirato"),
+                      key=lambda r: (-_punti_classifica(r.get("Punti Totali", ""), [], "Punti Totali"),
                                      nome_senza_ritiro(r["Giocatore"]).upper()))
     risultato = []
     for riga in ritirati:
@@ -1268,6 +1283,9 @@ def _avvisi_snapshot(righe_classifica, movimenti, scartate, abbinate, info):
             avvisi.append(f"Giornata {r['giornata']}, {r['giocatore']}: la partita {r['partita_testo']!r} "
                           "non corrisponde a nessuna partita della giornata")
     for v in _leggi_classifica(righe_classifica):
+        for colonna, testo in v["anomalie"]:
+            avvisi.append(f"Classifica: {v['nome']}, colonna {colonna!r}: valore non numerico {testo!r}, "
+                          "contato come 0 (come fa il bot): correggi la cella")
         somma = sum(c for c in v["celle"].values() if c is not None)
         if somma != v["punti_totali"]:
             avvisi.append(f"Classifica: {v['nome']} ha Punti Totali {v['punti_totali']} ma le giornate sommano {somma}")

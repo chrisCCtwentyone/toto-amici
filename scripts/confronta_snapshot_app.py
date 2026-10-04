@@ -226,7 +226,6 @@ def confronta_live(app, snap):
     partite = {p["id"]: p for p in snap["partite"]}
     giornate = [o for o in app.tabs[1].selectbox[0].options]
     giocatori = list(snap["giocatori"])
-    tipologia_vuota = 0
     for etichetta in giornate:
         n = st.numero_giornata(etichetta)
         app.tabs[1].selectbox[0].set_value(etichetta).run()
@@ -271,11 +270,11 @@ def confronta_live(app, snap):
             orari_snap = sorted(in_roma(partite[r["partita_id"]]["inizio_il"]).strftime("%d/%m %H:%M")
                                 if partite[r["partita_id"]]["inizio_il"] else "" for r in schedina["righe"])
             confronta("Live/orari", orari_app, orari_snap, dettaglio=f"G{n} {giocatore}")
-            if all(c["tipologia_app"] == "" for c in carte):
-                tipologia_vuota += 1
-    if tipologia_vuota:
-        diff("Live/tipologia", f"{tipologia_vuota} schede: l'app non mostra MAI la tipologia (legge la colonna 'Tipologia', "
-             "l'intestazione vera e' 'Tipologia Giocata'); lo snapshot la porta", "BUG-APP")
+            # La tipologia (era sempre vuota nell'app: leggeva 'Tipologia' invece di 'Tipologia Giocata', corretto)
+            confronta("Live/tipologia",
+                      Counter((st.tipologia_da_testo(c["tipologia_app"]), c["pronostico"], num(c["quota"])) for c in carte),
+                      Counter((r["tipologia"], r["pronostico"], r["quota"]) for r in schedina["righe"]),
+                      dettaglio=f"G{n} {giocatore}")
 
 
 def formatta_scelta(sg):
@@ -390,7 +389,7 @@ def confronta_statistiche(app, snap):
         ok("Stat/per un soffio")
     elif [x[:2] + x[3:] for x in soffi_app] == [x[:2] + x[3:] for x in soffi_snap]:
         diff("Stat/per un soffio", f"solo il nome partita: app (testo del foglio) {[x[2] for x in soffi_app]} "
-             f"snapshot (nome ufficiale) {[x[2] for x in soffi_snap]}", "§8.3")
+             f"snapshot (nome ufficiale) {[x[2] for x in soffi_snap]}", "A15")
     else:
         diff("Stat/per un soffio", f"app {soffi_app} snapshot {soffi_snap}")
 

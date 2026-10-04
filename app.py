@@ -737,7 +737,7 @@ with tab_live:
                         pronostico = row.get('Pronostico', '')
                         quota = row.get('Quota', '')
                         punti = row.get('Punti Partita', '0')
-                        tipo = row.get('Tipologia', '')
+                        tipo = row.get('Tipologia Giocata', row.get('Tipologia', ''))
                         st.caption(f"{tipo} · Pronostico: **{pronostico}** · Quota: **@{quota}**")
                         # Non mostrare "Da giocare" se l'esito è già finale: capita quando i dati
                         # live di Football-Data non sono ancora allineati con un esito già calcolato

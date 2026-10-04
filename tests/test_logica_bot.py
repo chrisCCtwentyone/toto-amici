@@ -210,6 +210,20 @@ class TestEstraiNumero:
         0,84 EUR invece di 837,28 EUR."""
         assert bt.estrai_numero(testo) == pytest.approx(atteso)
 
+    @pytest.mark.parametrize("testo, atteso", [
+        # senza virgola, ogni gruppo dopo il punto di 3 cifre -> migliaia
+        ("1.200", 1200.0), ("12.345.678", 12345678.0), ("1.200 €", 1200.0),
+        # altrimenti il punto resta decimale
+        ("1.85", 1.85), ("3.5", 3.5), ("2.25", 2.25), ("1.5", 1.5), ("1.2000", 1.2),
+        # con la virgola vale sempre il formato italiano
+        ("1.674,56 €", 1674.56), ("430,00€", 430.0), ("855,70", 855.70), ("1,85", 1.85),
+        ("1.200,5", 1200.5), ("0,5", 0.5),
+        ("", 0.0), (None, 0.0), ("abc", 0.0), ("-", 0.0),
+    ])
+    def test_punto_senza_virgola_migliaia_o_decimale(self, testo, atteso):
+        """"1.200" prima veniva letto 1,2 (in Cassa 1,20 EUR invece di 1.200)."""
+        assert bt.estrai_numero(testo) == pytest.approx(atteso)
+
     def test_meta_vincita_versata_in_cassa_e_corretta(self):
         # Regolamento: 50% al giocatore, 50% al Fondo Cassa
         assert bt.estrai_numero("1.008,29") / 2 == pytest.approx(504.145)
