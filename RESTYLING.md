@@ -25,7 +25,7 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 
 1. **Il bot non si tocca nella logica di calcolo.** `esegui_calcolo_risultati`, `controlla_esito`, `normalizza_pronostico`, la scrittura su Sheets: fuori dallo scopo. Si aggiunge solo la pubblicazione dello snapshot.
 2. **Il repo è GitLab**, `git@gitlab.com:benanti64/toto-amici1.git`. L'account GitHub è sospeso.
-3. **Mai fare deploy del servizio `toto-amici-bot` su Render.** Punta ancora al repo GitHub sospeso: un *Manual Deploy* o un *Clear build cache* fallirebbe e farebbe cadere un bot che funziona.
+3. **Ogni push su `main` di GitLab ridistribuisce il bot.** Dal 04/10/2026 il servizio `toto-amici-bot` su Render è ricollegato a GitLab (`main`, auto-deploy a ogni commit). Il lavoro del restyling va quindi su un branch a parte e arriva su `main` solo quando è pronto e testato. Ogni deploy dà circa un minuto di `409 Conflict` mentre la vecchia istanza si spegne: è normale, ma va fatto lontano dalle partite e dagli orari del calcolo.
 4. **Il sito non scrive mai su Google Sheets.** Vale come prima: scrive solo il bot.
 5. **Lo snapshot è pubblico** (niente login, come oggi). Non deve contenere nulla che il sito non mostri già.
 6. **Si gira su dati veri prima di dichiarare fatto**: la dashboard attuale è il riferimento di confronto.
@@ -33,10 +33,32 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 ## Fasi
 
 ### Fase 0 — Decisioni da prendere prima di scrivere codice
-- [ ] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia.
-- [ ] Dove si pubblica: **Cloudflare KV** o **R2**.
-- [ ] Stack front-end: Vite + React, oppure Next.js su Pages.
-- [ ] Cosa resta davvero live e cosa no (vedi Fase 3).
+- [ ] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia. *Contenuto deciso (sotto), schema dei campi da scrivere.*
+- [x] Dove si pubblica: **Cloudflare KV** (04/10/2026). Un JSON da ~40 KB compressi, al massimo un centinaio di scritture al giorno contro le 1.000 del piano free.
+- [x] Stack front-end: **Vite + React su Cloudflare Workers con static assets** (04/10/2026), non Pages: un solo progetto serve sito, snapshot e risultati live, con deploy da GitLab.
+- [x] Cosa resta davvero live: i **punteggi delle partite e gli orari di inizio**, dal Worker (vedi Fase 3). Tutto il resto viene dallo snapshot.
+- [x] **Chi pubblica lo snapshot: il bot.** Sbloccato il 04/10/2026: il servizio è stato ricollegato da GitHub a GitLab dal pannello di Render (Settings → Build → Source), stesso URL e stesse variabili. Primo deploy da GitLab live alle 14:50 UTC con lo stesso codice di prima; solo i due `409` attesi della sovrapposizione.
+
+#### Decisioni sullo snapshot (04/10/2026)
+1. **I calcoli stanno in Python.** Tutto ciò che oggi `app.py` calcola da solo (ordinamento con spareggio, frecce di tendenza, podio, Cassa e grafico dei versamenti, protagonisti, giornata da incorniciare, Semper Fidelis, squadra amuleto/maledetta, statistiche per giocatore e ritirati, scelta del gruppo e totali del Confronto, normalizzazione dei nomi partita) passa in `statistiche.py` con i test. Lo snapshot porta questi risultati già pronti **più** le righe di Giocate già pulite (numeri veri, giornata come intero, nome partita ufficiale). Il React filtra per giornata e giocatore, non calcola.
+2. **Quando si pubblica:** dopo ogni scrittura del bot su Sheets, più un controllo ogni 15 minuti che ripubblica solo se qualcosa è cambiato (così arrivano anche le correzioni fatte a mano sul foglio). Il controllo lascia comunque un **segnale di vita** con l'orario. Niente controlli dalle 02:00 alle 07:30.
+3. **Avviso dati vecchi:** il sito mostra sempre "Aggiornato alle HH:MM del gg/mm" e avvisa se il segnale di vita manca da **più di 2 ore**, tranne di notte.
+4. **Live:** il Worker abbina i risultati alle partite per **nome ufficiale esatto**. La corrispondenza approssimativa di oggi (`normalizza_partita_completa`) la fa il Python prima di pubblicare.
+5. **Timer dell'ultima schedina vinta:** l'istante di partenza lo calcola il Python e lo mette già pronto nello snapshot.
+6. **Solo la stagione in corso**, con un campo `stagione` (il titolo del sito lo legge da lì). Lo storico si potrà aggiungere dopo senza cambiare formato.
+7. **Pubblico come il sito di oggi:** nomi, schedine, vincite potenziali, Cassa con nomi e importi. Mai ID Telegram, chiavi, `SPREADSHEET_ID` o altri dati tecnici.
+8. **Righe senza esito** (prima del primo calcolo): "Da giocare", e diventano "In corso" quando il live dice che la partita è iniziata.
+9. **Correzioni rispetto al sito di oggi**, da segnare come differenze attese nel confronto sui dati veri:
+   - frecce di tendenza con lo stesso criterio di spareggio per la posizione attuale e quella precedente;
+   - squadra amuleto/maledetta contata per squadra ufficiale, non per nome scritto nel foglio;
+   - la scheda Live conta anche RINVIATA, DA VERIFICARE e ANNULLATA;
+   - Regolamento: 16 giocatori, obiettivo Cassa 3.200 €, ripartizione in percentuale 40/27/17/10/6.
+
+   Tutto il resto si replica identico, compresi i titoli delle card delle Statistiche.
+10. **Logica da migliorare, non solo da spostare** (richiesta dell'utente, 04/10/2026): spostando i calcoli da `app.py` a `statistiche.py` si correggono errori logici, lavoro inutile e implementazioni fragili, con un test per ognuno. Le modifiche alla logica di calcolo **del bot** si propongono prima all'utente e passano da test + `scripts/dry_run_non_regressione.py`.
+
+#### Stile grafico scelto: **Diretta** (04/10/2026)
+Grafica da telecronaca: blu notte, barre oblique proporzionali ai punti, pallino LIVE, ticker in basso. Riferimento: direzione 5 in [restyling/proposte-stili.html](restyling/proposte-stili.html). Palette: `#040a22`, `#2f7bff`, `#19e3ff`, `#ff2d87`, `#ffd400`. Font: Saira Extra Condensed (cifre e titoli) + Saira (testo).
 
 ### Fase 1 — Lo snapshot (lato bot, Python)
 - [ ] Definire lo schema e scriverlo qui dentro.
@@ -71,9 +93,9 @@ Decisione dell'utente (04/10/2026): le correzioni non urgenti non si pubblicano 
 
 | # | Sessione | Modifica | Tocca | Note per `NOVITA` 3.0 |
 |---|---|---|---|---|
-| 1 | 28 | Classifica letta per intero invece di `A:Z` (le Giornate 25-38 si perdevano); `archivia_stagione()` svuota righe intere | bot, `app.py`, test | «Classifica, statistiche e Coppa leggono tutte le 38 giornate» |
+| 1 | 28 | Classifica letta per intero invece di `A:Z` (le Giornate 25-38 si perdevano); `archivia_stagione()` svuota righe intere | bot, `app.py`, test — **già in produzione dal 04/10/2026** (commit `b992ac1`) | «Classifica, statistiche e Coppa leggono tutte le 38 giornate» |
 
-**⚠️ Scadenza che non aspetta il front-end: la #1 deve essere sul bot in produzione prima dei risultati della Giornata 25.** Dalla 26 il bot sovrascrive i punti della 25 senza dare errori. Se a quella data il 3.0 non è pronto, la #1 va pubblicata da sola (è solo bot + un range in `app.py`, già testata). In ogni caso serve prima **ripuntare il bot su GitLab**, che è anche un prerequisito della Fase 1 (lo snapshot lo pubblica il bot).
+**La #1 è stata pubblicata da sola il 04/10/2026 alle 17:00**, subito dopo aver ricollegato il bot a GitLab: era l'unica con una scadenza (Giornata 25). Test 522/522, dry-run giornate 1-6 senza differenze, deploy di bot e sito riuscito. Resta nella tabella solo per la riga di `NOVITA` del 3.0.
 
 **Al momento del rilascio:** test + dry-run sul branch, `VERSIONE_APP = "3.0.0"` con le righe `NOVITA` raccolte qui sopra, merge in `main`, push su `gitlab`, poi aggiornare `PROJECT_LOG.md`.
 
