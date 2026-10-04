@@ -256,3 +256,37 @@ class TestInvariantiRitirati:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+# ---------------------------------------------------------------------------
+# La Classifica cresce per COLONNE: Giocatore, Punti Totali, poi una colonna per
+# giornata. 2 + 38 = 40 colonne, cioè fino ad AN. Un range "Classifica!A:Z"
+# tiene solo le Giornate 1-24: dalla 25 il bot scrive in AA, rilegge senza AA e
+# la Giornata 26 sovrascrive la 25 — perdendone i punti, senza nessun errore.
+# ---------------------------------------------------------------------------
+COLONNE_CLASSIFICA = 2 + 38
+
+
+def _indice_colonna(lettere):
+    n = 0
+    for c in lettere:
+        n = n * 26 + ord(c) - ord("A") + 1
+    return n
+
+
+@pytest.mark.parametrize("file", ["bot_telegram.py", "app.py"])
+def test_ogni_lettura_della_classifica_contiene_38_giornate(file):
+    import re
+    percorso = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), file)
+    with open(percorso, encoding="utf-8") as f:
+        sorgente = f.read()
+    # "Classifica!A:Z", "Classifica!A1:AN50"... "Classifica" da solo (foglio
+    # intero) e "Classifica!A1" (punto di partenza di una scrittura) vanno bene.
+    troppo_strette = [
+        r for r in re.findall(r"Classifica![A-Z]*\d*:([A-Z]+)", sorgente)
+        if _indice_colonna(r) < COLONNE_CLASSIFICA
+    ]
+    assert troppo_strette == [], (
+        f"{file}: range della Classifica che si ferma alla colonna {troppo_strette}, "
+        f"ne servono {COLONNE_CLASSIFICA}. Usa il foglio intero: range=\"Classifica\"."
+    )

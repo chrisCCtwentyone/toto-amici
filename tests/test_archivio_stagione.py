@@ -98,7 +98,9 @@ class TestArchiviaStagione:
 
         assert set(finto.duplicati) == {"Giocate 2026-27", "Classifica 2026-27", "Cassa 2026-27"}
         assert len(finto.cancellazioni) == 3
-        assert all("A2:Z" in c for c in finto.cancellazioni), "deve preservare la riga di intestazione"
+        # Righe intere dalla 2 all'ultima: preserva l'intestazione e, sulla
+        # Classifica, anche le colonne oltre la Z (Giornata 25-38).
+        assert sorted(finto.cancellazioni) == ["Cassa!2:3", "Classifica!2:3", "Giocate!2:3"]
         assert "2026-27" in esito
 
     def test_se_la_duplicazione_fallisce_non_cancella_nulla(self, monkeypatch):

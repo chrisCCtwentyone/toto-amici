@@ -235,7 +235,7 @@ def carica_tutti_i_dati():
         service = get_sheets_service()
         result = service.spreadsheets().values().batchGet(
             spreadsheetId=SPREADSHEET_ID,
-            ranges=["Classifica!A:Z", "Cassa!A:D", "Giocate!A:I"]
+            ranges=["Classifica", "Cassa!A:D", "Giocate!A:I"]
         ).execute(num_retries=3)
 
         dfs = []

@@ -1144,12 +1144,12 @@ def archivia_stagione(etichetta):
     righe_archiviate = {}
     for nome in FOGLI_STAGIONE:
         valori = service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range=f"{nome}!A:Z"
+            spreadsheetId=SPREADSHEET_ID, range=nome
         ).execute(num_retries=3).get("values", [])
         righe_archiviate[nome] = max(0, len(valori) - 1)
         if len(valori) > 1:
             service.spreadsheets().values().clear(
-                spreadsheetId=SPREADSHEET_ID, range=f"{nome}!A2:Z", body={}
+                spreadsheetId=SPREADSHEET_ID, range=f"{nome}!2:{len(valori)}", body={}
             ).execute(num_retries=3)
 
     # Senza questo, il riepilogo della Giornata 5 della stagione NUOVA verrebbe
@@ -1393,7 +1393,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         report += "\n".join(f"- {d}" for d in da_verificare_dettaglio)
         report += "\n\nIl bot non sa interpretare questi pronostici, quindi non ha assegnato nulla. Correggili sul foglio Giocate (colonna Pronostico) e poi rilancia *Aggiorna Risultati*.\n"
 
-    righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z").execute(num_retries=3).get('values', [["Giocatore", "Punti Totali"]])
+    righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica").execute(num_retries=3).get('values', [["Giocatore", "Punti Totali"]])
     col_g = f"Giornata {giornata}"
     if col_g not in righe_class[0]: righe_class[0].append(col_g)
     idx_g = righe_class[0].index(col_g)
@@ -2453,7 +2453,7 @@ async def task_backup_periodico(context: ContextTypes.DEFAULT_TYPE, destinatari=
         risultato = await asyncio.to_thread(
             lambda: service.spreadsheets().values().batchGet(
                 spreadsheetId=SPREADSHEET_ID,
-                ranges=["Giocate!A:I", "Classifica!A:Z", "Cassa!A:D"]
+                ranges=["Giocate!A:I", "Classifica", "Cassa!A:D"]
             ).execute(num_retries=3)
         )
         value_ranges = risultato.get("valueRanges", [])
@@ -2623,7 +2623,7 @@ async def task_riepilogo_whatsapp(context: ContextTypes.DEFAULT_TYPE, notifica_s
 
         righe_classifica = await asyncio.to_thread(
             lambda: service.spreadsheets().values().get(
-                spreadsheetId=SPREADSHEET_ID, range="Classifica!A:Z"
+                spreadsheetId=SPREADSHEET_ID, range="Classifica"
             ).execute(num_retries=3).get('values', [])
         )
         righe_cassa = await asyncio.to_thread(

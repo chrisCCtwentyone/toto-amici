@@ -65,6 +65,18 @@ Oggi `app.py` chiama Football-Data **da sola** (cache 3 minuti) per le partite i
 - [ ] Spegnere il servizio `toto-amici-sito` su Render: libera ~176 ore/mese, e a quel punto si può **rivalutare la pausa notturna del bot** (esiste solo per far quadrare le 750 ore).
 - [ ] Aggiornare `CLAUDE.md`, `PROJECT_LOG.md` e la tabella del deploy.
 
+## Modifiche in attesa del rilascio 3.0
+
+Decisione dell'utente (04/10/2026): le correzioni non urgenti non si pubblicano una alla volta, ma tutte insieme al nuovo front-end. Si accumulano sul branch **`rilascio-3.0`** (solo locale + backup, **non** su GitLab finché non si rilascia); `main` resta pulito per eventuali correzioni urgenti, che vanno poi riportate anche qui (`git merge main` dentro `rilascio-3.0`).
+
+| # | Sessione | Modifica | Tocca | Note per `NOVITA` 3.0 |
+|---|---|---|---|---|
+| 1 | 28 | Classifica letta per intero invece di `A:Z` (le Giornate 25-38 si perdevano); `archivia_stagione()` svuota righe intere | bot, `app.py`, test | «Classifica, statistiche e Coppa leggono tutte le 38 giornate» |
+
+**⚠️ Scadenza che non aspetta il front-end: la #1 deve essere sul bot in produzione prima dei risultati della Giornata 25.** Dalla 26 il bot sovrascrive i punti della 25 senza dare errori. Se a quella data il 3.0 non è pronto, la #1 va pubblicata da sola (è solo bot + un range in `app.py`, già testata). In ogni caso serve prima **ripuntare il bot su GitLab**, che è anche un prerequisito della Fase 1 (lo snapshot lo pubblica il bot).
+
+**Al momento del rilascio:** test + dry-run sul branch, `VERSIONE_APP = "3.0.0"` con le righe `NOVITA` raccolte qui sopra, merge in `main`, push su `gitlab`, poi aggiornare `PROJECT_LOG.md`.
+
 ## Riferimenti nel codice attuale
 
 | Cosa | Dove |
