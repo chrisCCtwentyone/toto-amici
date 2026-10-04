@@ -200,12 +200,19 @@ def _get_credentials():
        da una variabile d'ambiente (il JSON dentro una stringa).
     """
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-    if os.path.exists('credenziali.json'):
-        return Credentials.from_service_account_file('credenziali.json', scopes=SCOPES)
+    # /etc/secrets e' dove Render mette i Secret File: e' l'unico percorso che
+    # documenta come certo (la copia nella cartella del progetto c'e' solo per i
+    # servizi non-Docker, e non durante il build).
+    for percorso in ('credenziali.json', '/etc/secrets/credenziali.json'):
+        if os.path.exists(percorso):
+            return Credentials.from_service_account_file(percorso, scopes=SCOPES)
 
     info = segreto("gcp_service_account")
     if not info:
-        raise RuntimeError("Credenziali Google assenti: manca 'gcp_service_account'.")
+        raise RuntimeError(
+            "Credenziali Google assenti: serve un Secret File 'credenziali.json' "
+            "oppure la variabile 'gcp_service_account'."
+        )
     if isinstance(info, str):
         info = json.loads(info)  # variabile d'ambiente: il JSON arriva come testo
     return Credentials.from_service_account_info(dict(info), scopes=SCOPES)
