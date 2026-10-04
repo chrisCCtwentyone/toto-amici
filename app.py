@@ -135,7 +135,7 @@ if MANUTENZIONE:
 # --- TOTO-AMICI 3.0: IL SITO SI È SPOSTATO ---
 # Dal 04/10/2026 il sito ufficiale è quello nuovo su Cloudflare (frontend/).
 # Questa pagina resta solo per chi ha il vecchio segnalibro: non legge più Sheets.
-SITO_NUOVO = "https://toto-amici.benanti64.workers.dev"
+SITO_NUOVO = "https://toto-amici.totoamici.workers.dev"
 st.markdown("<br><br>", unsafe_allow_html=True)
 col_vuota1, col_centro, col_vuota2 = st.columns([1, 2, 1])
 with col_centro:

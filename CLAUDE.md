@@ -4,7 +4,7 @@ Punto d'ingresso rapido per Claude Code su questo repo. Per l'architettura compl
 
 ## Cos'è il progetto
 Torneo di pronostici Serie A tra amici. Due componenti in produzione:
-- **Sito (dal 04/10/2026, Toto-Amici 3.0)**: `frontend/` — React statico su Cloudflare Workers (https://toto-amici.benanti64.workers.dev), legge lo snapshot che il bot pubblica su Cloudflare KV; si pubblica con `npx wrangler deploy` da `frontend/`. Schema in `restyling/snapshot-schema.md`, guida in `frontend/GUIDA-SCHEDE.md`. `app.py` (Streamlit su Render) ora è solo una pagina che rimanda al sito nuovo: le regole qui sotto su Streamlit valgono solo se lo si riattiva.
+- **Sito (dal 04/10/2026, Toto-Amici 3.0)**: `frontend/` — React statico su Cloudflare Workers (https://toto-amici.totoamici.workers.dev), legge lo snapshot che il bot pubblica su Cloudflare KV; si pubblica con `npx wrangler deploy` da `frontend/`. Schema in `restyling/snapshot-schema.md`, guida in `frontend/GUIDA-SCHEDE.md`. `app.py` (Streamlit su Render) ora è solo una pagina che rimanda al sito nuovo: le regole qui sotto su Streamlit valgono solo se lo si riattiva.
 - `bot_telegram.py` — Bot Telegram (cuore operativo: lettura IA schedine via Gemini, scrittura su Sheets, calcolo risultati/classifica/cassa)
 
 Database: Google Sheets (nessun DB tradizionale).

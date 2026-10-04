@@ -110,9 +110,11 @@ Toto_Amici_Progetto/
 
 ### 04/10/2026 — Sessione 29, Fase 2-4 (Toto-Amici 3.0 rilasciato)
 
+**Indirizzo cambiato alle 22:55**: il sottodominio dell'account Cloudflare era `benanti64.workers.dev` e mostrava il nome dell'account nel link; cambiato in `totoamici.workers.dev` dal pannello (Workers & Pages → Account details → Subdomain). Vale per tutti i Worker dell'account (oggi solo questo; gli altri siti sono su pages.dev e non cambiano). Il vecchio link ha smesso di funzionare subito.
+
 **Toto-Amici 3.0 rilasciato alle 22:45, su richiesta dell'utente senza aspettare la Giornata 6.** `app.py` 3.0.0: pagina «Toto-Amici 3.0 è qui» col link nuovo, non legge più Sheets. Piè di pagina del sito nuovo «Toto-Amici 3.0». Decisioni dell'utente: nessuna nota privacy, il vecchio token Telegram nella storia git era già stato rigenerato, il tetto a Football-Data per istanza basta.
 
-**Il sito nuovo è online in prova: https://toto-amici.benanti64.workers.dev** (Cloudflare Worker `toto-amici`, deploy con `npx wrangler deploy` da `frontend/` dopo `wrangler login` dell'utente). Il sito vecchio su Render resta quello ufficiale finché non si annuncia il 3.0.
+**Il sito nuovo è online in prova: https://toto-amici.totoamici.workers.dev** (Cloudflare Worker `toto-amici`, deploy con `npx wrangler deploy` da `frontend/` dopo `wrangler login` dell'utente). Il sito vecchio su Render resta quello ufficiale finché non si annuncia il 3.0.
 - Sei schede in stile Diretta, verificate sui dati veri (commit 79352da → 5278ce3), poi verifica GDPR/sicurezza (22385f8, rapporto in `docs/CONFORMITA-SICUREZZA.md`): font ospitati in locale (nessuna chiamata a Google), CSP senza domini esterni, header di sicurezza, `/api/live` validato e con tetto di 4 chiamate/min a Football-Data per istanza.
 - Segreto `FOOTBALL_DATA_KEY` caricato con `wrangler secret put` (letto da `frontend/.dev.vars`, mai stampato).
 - Controllato sul sito pubblicato: header presenti, snapshot 114.704 byte, segnale aggiornato, `/api/live?giornata=abc` → 400, POST → 405, nessuna richiesta fuori dall'origine, console senza errori.
