@@ -78,7 +78,7 @@ export default function TimerUltimaVinta({ ultima }: { ultima: UltimaSchedinaVin
           <Conteggio inizio={inizio} />
           <p className="mt-3 text-sm text-ink-2">
             Ultima vinta: <strong className="font-semibold text-ink">{vincitori}</strong> · {etichettaGiornata(ultima.giornata)}, chiusa il{" "}
-            {formattaData(inizio)} verso le {formattaOra(inizio)} (fine dell'ultima partita). Si azzera alla prossima schedina vinta.
+            {formattaData(new Date(inizio))} verso le {formattaOra(new Date(inizio))} (fine dell'ultima partita). Si azzera alla prossima schedina vinta.
           </p>
         </>
       )}
