@@ -16,6 +16,21 @@ export function validaGiornata(testo: string | null): number | null {
   return n >= 1 && n <= 38 ? n : null;
 }
 
+/**
+ * Tetto alle chiamate verso Football-Data fatte da UN isolate del Worker: al massimo `max`
+ * ogni `finestraMs`. Football-Data concede 10/min in tutto, e il bot in produzione ne usa
+ * una parte: senza questo tetto, chi scorre ?giornata=1..38 le brucerebbe tutte.
+ * Muta `registro` (istanti delle chiamate recenti). Ritorna true se la chiamata e' permessa.
+ * ponytail: il tetto e' per isolate (la Cache API non lavora su *.workers.dev); con un
+ * dominio proprio si passa alla Cache API / a una regola di rate limiting Cloudflare.
+ */
+export function consumaBudget(registro: number[], ora: number, max = 4, finestraMs = 60_000): boolean {
+  while (registro.length && registro[0]! <= ora - finestraMs) registro.shift();
+  if (registro.length >= max) return false;
+  registro.push(ora);
+  return true;
+}
+
 const numeroOnull = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 

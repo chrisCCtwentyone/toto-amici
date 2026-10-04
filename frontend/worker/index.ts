@@ -1,4 +1,4 @@
-import { riduciPartite, validaGiornata } from "./live";
+import { consumaBudget, riduciPartite, validaGiornata } from "./live";
 
 interface Env {
   SNAPSHOT: KVNamespace;
@@ -13,10 +13,18 @@ const JSON_HDR = "application/json; charset=utf-8";
 const TTL_LIVE_S = 120;
 const TTL_LIVE_ERRORE_S = 30; // anche l'errore va in cache: niente raffica di retry su un 429
 
+// Intestazioni di sicurezza anche sulle risposte /api/* (il file public/_headers vale solo per i file statici).
+const SICUREZZA = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "cross-origin-resource-policy": "same-origin",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+};
+
 function risposta(corpo: BodyInit | null, extra: HeadersInit = {}, status = 200): Response {
   return new Response(corpo, {
     status,
-    headers: { "content-type": JSON_HDR, ...extra },
+    headers: { "content-type": JSON_HDR, ...SICUREZZA, ...extra },
   });
 }
 
@@ -33,6 +41,8 @@ async function daKV(env: Env, chiave: "snapshot" | "segnale"): Promise<Response>
 // Secondo livello: memoria dell'isolate. La Cache API non funziona su *.workers.dev,
 // questa tiene comunque il limite finche' il Worker resta caldo (best effort).
 const memoria = new Map<number, { scade: number; corpo: string }>();
+
+const chiamateUpstream: number[] = [];
 
 async function live(env: Env, ctx: ExecutionContext, giornata: number): Promise<Response> {
   const ora = Date.now();
@@ -55,6 +65,10 @@ async function live(env: Env, ctx: ExecutionContext, giornata: number): Promise<
 
   if (!env.FOOTBALL_DATA_KEY) {
     corpo = fallito("chiave Football-Data non configurata");
+  } else if (!consumaBudget(chiamateUpstream, ora)) {
+    // troppe chiamate in un minuto: meglio un dato scaduto (o vuoto) che bruciare il limite del bot
+    corpo = inMemoria?.corpo ?? fallito("troppe richieste, riprova fra poco");
+    ttl = TTL_LIVE_ERRORE_S;
   } else {
     try {
       const r = await fetch(

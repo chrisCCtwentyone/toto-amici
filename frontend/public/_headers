@@ -1,0 +1,14 @@
+# Intestazioni per i file statici (Workers Static Assets). Le risposte /api/* le imposta il Worker.
+# Nessun dominio esterno: font, script, stili e dati sono tutti del sito.
+# style-src 'unsafe-inline': React/motion scrivono stili inline (rischio basso, nessuno script).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+
+/font/*
+  Cache-Control: public, max-age=31536000, immutable

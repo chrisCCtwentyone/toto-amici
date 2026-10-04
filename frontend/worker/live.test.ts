@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { riduciPartite, validaGiornata } from "./live";
+import { consumaBudget, riduciPartite, validaGiornata } from "./live";
 
 describe("validaGiornata", () => {
   it("accetta 1-38", () => {
@@ -30,5 +30,14 @@ describe("riduciPartite", () => {
     expect(riduciPartite(null)).toEqual([]);
     expect(riduciPartite({})).toEqual([]);
     expect(riduciPartite({ matches: [{ status: "X" }, null] })).toEqual([]);
+  });
+});
+
+describe("consumaBudget", () => {
+  it("permette `max` chiamate al minuto, poi nega, poi riapre", () => {
+    const reg: number[] = [];
+    expect([0, 1, 2, 3, 4].map((t) => consumaBudget(reg, t * 1000, 4, 60_000))).toEqual([true, true, true, true, false]);
+    expect(consumaBudget(reg, 59_000, 4, 60_000)).toBe(false);
+    expect(consumaBudget(reg, 61_000, 4, 60_000)).toBe(true); // la prima e' uscita dalla finestra
   });
 });
