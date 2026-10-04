@@ -16,7 +16,7 @@ export default function Bolletta({ regole }: { regole: Regole }) {
       <p className="m-0">
         Costo: <strong>{formattaEuroIntero(regole.costo_giornata)}</strong> a giornata.
       </p>
-      <h4 className="mb-1 mt-3 text-sm font-semibold uppercase tracking-wider text-ink-2">Composizione obbligatoria</h4>
+      <h3 className="mb-1 mt-3 text-sm font-semibold uppercase tracking-wider text-ink-2">Composizione obbligatoria</h3>
       <ul className="m-0 grid list-none gap-2 p-0">
         {TIPOLOGIE.map((t) => (
           <li key={t.chiave} className="flex items-start gap-3">

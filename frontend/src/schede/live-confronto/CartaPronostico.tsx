@@ -72,7 +72,7 @@ export default function CartaPronostico({ riga, partita, live, soglia, indice }:
           <strong className="font-display text-2xl font-extrabold leading-none text-ink [overflow-wrap:anywhere]">{riga.pronostico}</strong>
           <span className="tabulare font-display text-xl font-bold text-accento-testo">
             @{formattaQuota(riga.quota)}
-            {alta && <span aria-label="quota alta, punti raddoppiati">*</span>}
+            {alta && <span role="img" aria-label="quota alta, punti raddoppiati">*</span>}
           </span>
         </p>
         <div className="flex items-center gap-3">

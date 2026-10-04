@@ -115,6 +115,8 @@
   html {
     -webkit-text-size-adjust: 100%;
     scroll-padding-top: 8rem;
+    /* il ticker fisso in basso (46px + margine + safe-area) non deve coprire l'elemento che riceve il focus */
+    scroll-padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
   }
   body {
     margin: 0;

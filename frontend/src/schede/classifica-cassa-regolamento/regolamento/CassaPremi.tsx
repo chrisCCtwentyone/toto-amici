@@ -23,9 +23,9 @@ export default function CassaPremi({ regole }: { regole: Regole }) {
         </li>
       </ul>
 
-      <h4 className="mb-1 mt-4 text-sm font-semibold uppercase tracking-wider text-ink-2">
+      <h3 className="mb-1 mt-4 text-sm font-semibold uppercase tracking-wider text-ink-2">
         Esempio ripartizione premi · {formattaIntero(regole.giocatori)} giocatori · {formattaEuroIntero(regole.obiettivo_cassa)}
-      </h4>
+      </h3>
       <table className="w-full border-collapse text-base">
         <thead>
           <tr className="font-display text-base font-extrabold uppercase tracking-wide text-ink-2">

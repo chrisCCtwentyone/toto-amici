@@ -108,7 +108,7 @@ function CardPremio({ scheda, indice }: { scheda: Scheda; indice: number }) {
     >
       <Card bandiera={scheda.bandiera} className="h-full">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-          <h4 className="titolo-diretta text-[1.4rem] leading-[1.05] text-ink">{scheda.titolo}</h4>
+          <h3 className="titolo-diretta text-[1.4rem] leading-[1.05] text-ink">{scheda.titolo}</h3>
           {parimerito > 1 && (
             <span className="obliquo bg-oro px-2.5 text-su-oro">
               <span className="contro-obliquo block font-display text-sm font-extrabold uppercase leading-6 tracking-wider">
@@ -120,7 +120,7 @@ function CardPremio({ scheda, indice }: { scheda: Scheda; indice: number }) {
         <p className="mt-1 text-sm text-ink-2">{scheda.descrizione}</p>
 
         {gg === null ? (
-          <p className="mt-4 font-display text-4xl font-extrabold text-ink-2" aria-label="Nessun dato">—</p>
+          <p role="img" className="mt-4 font-display text-4xl font-extrabold text-ink-2" aria-label="Nessun dato">—</p>
         ) : (
           <div className="mt-3 divide-y divide-linea">
             {gg.map((g) => (

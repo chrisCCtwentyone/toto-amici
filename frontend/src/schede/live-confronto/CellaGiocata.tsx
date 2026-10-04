@@ -33,7 +33,7 @@ export default function CellaGiocata({ righe, soglia }: { righe: RigaSchedina[];
           <span className="font-display text-lg font-extrabold text-ink [overflow-wrap:anywhere]">{r.pronostico}</span>{" "}
           <span className="tabulare whitespace-nowrap font-display text-base font-bold text-accento-testo">
             @{formattaQuota(r.quota)}
-            {haQuotaAlta(r.quota, soglia) && <span aria-label="quota alta, punti raddoppiati">*</span>}
+            {haQuotaAlta(r.quota, soglia) && <span role="img" aria-label="quota alta, punti raddoppiati">*</span>}
           </span>
           {r.esito === "vinta" && <span aria-hidden="true" className="ml-1 font-bold text-vinta">✓</span>}
           {r.esito === "persa" && <span aria-hidden="true" className="ml-1 font-bold text-persa">✕</span>}

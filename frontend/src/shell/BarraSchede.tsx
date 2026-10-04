@@ -18,8 +18,21 @@ export const idPannello = (id: string) => `pannello-${id}`;
 export default function BarraSchede({ attiva, onSeleziona }: Props) {
   const lista = useRef<HTMLDivElement>(null);
 
+  const precedente = useRef(attiva);
+
   useEffect(() => {
-    lista.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ inline: "center", block: "nearest" });
+    // Solo quando la scheda cambia, non al primo render: scrollIntoView sposta il punto di partenza del Tab
+    // e il primo Tab salterebbe intestazione e barra.
+    const barra = lista.current;
+    const tab = barra?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!barra || !tab) return;
+    if (precedente.current === attiva) {
+      // primo render (apertura con #scheda): centra la scheda a mano, senza toccare il punto di partenza del Tab
+      barra.scrollLeft = tab.offsetLeft - (barra.clientWidth - tab.offsetWidth) / 2;
+      return;
+    }
+    precedente.current = attiva;
+    tab.scrollIntoView({ inline: "center", block: "nearest" });
   }, [attiva]);
 
   const alTasto = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -53,7 +66,7 @@ export default function BarraSchede({ attiva, onSeleziona }: Props) {
               type="button"
               role="tab"
               aria-selected={on}
-              aria-controls={idPannello(s.id)}
+              aria-controls={on ? idPannello(s.id) : undefined}
               tabIndex={on ? 0 : -1}
               onClick={() => onSeleziona(i)}
               className={`obliquo relative min-h-11 flex-none cursor-pointer px-5 transition-colors duration-150 ${on ? "text-su-accento" : "bg-superficie text-ink-2 hover:text-ink"}`}

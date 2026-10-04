@@ -5,7 +5,7 @@ import { PallinoLive } from "../componenti";
 
 /** Titolo con la stagione (dallo snapshot), "Aggiornato alle HH:MM del gg/mm" e interruttore del tema. */
 export default function Intestazione() {
-  const { snapshot, segnale, vecchiaia } = useDati();
+  const { snapshot, segnale, vecchiaia, fase } = useDati();
   const { tema, alterna } = useTema();
   const vecchio = vecchiaia?.vecchio ?? false;
   const nelPassato = segnale ? new Date(segnale.ultimo_controllo_il) : null;
@@ -25,7 +25,7 @@ export default function Intestazione() {
             </>
           ) : snapshot ? (
             <span>Aggiornamento non verificabile</span>
-          ) : (
+          ) : fase === "errore" ? null : (
             <span>Caricamento…</span>
           )}
         </p>

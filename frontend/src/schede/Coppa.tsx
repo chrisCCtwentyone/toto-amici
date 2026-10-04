@@ -38,11 +38,13 @@ export default function Coppa() {
         <p className="mb-2 text-xs text-ink-2 lg:hidden">Scorri di lato per vedere tutti i turni →</p>
         <Tabellone turni={coppa.turni} campione={coppa.campione} />
 
-        <p className="mt-4 text-sm text-ink-2">
-          {coppa.definitiva
-            ? "Chi passa il turno compare solo quando tutte le partite della giornata sono finite: fino ad allora vedi i punti che maturano."
-            : "Accoppiamenti aggiornati alla classifica di oggi: dai un'occhiata a chi ti toccherebbe."}
-        </p>
+        {coppa.tabellone_disponibile && (
+          <p className="mt-4 text-sm text-ink-2">
+            {coppa.definitiva
+              ? "Chi passa il turno compare solo quando tutte le partite della giornata sono finite: fino ad allora vedi i punti che maturano."
+              : "Accoppiamenti aggiornati alla classifica di oggi: dai un'occhiata a chi ti toccherebbe."}
+          </p>
+        )}
       </Card>
 
       <div className="grid items-start gap-4 md:grid-cols-2">
