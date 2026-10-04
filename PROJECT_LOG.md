@@ -108,6 +108,14 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 04/10/2026 — Sessione 29, Fase 2-3 (sito nuovo online sull'indirizzo di prova)
+
+**Il sito nuovo è online in prova: https://toto-amici.benanti64.workers.dev** (Cloudflare Worker `toto-amici`, deploy con `npx wrangler deploy` da `frontend/` dopo `wrangler login` dell'utente). Il sito vecchio su Render resta quello ufficiale finché non si annuncia il 3.0.
+- Sei schede in stile Diretta, verificate sui dati veri (commit 79352da → 5278ce3), poi verifica GDPR/sicurezza (22385f8, rapporto in `docs/CONFORMITA-SICUREZZA.md`): font ospitati in locale (nessuna chiamata a Google), CSP senza domini esterni, header di sicurezza, `/api/live` validato e con tetto di 4 chiamate/min a Football-Data per istanza.
+- Segreto `FOOTBALL_DATA_KEY` caricato con `wrangler secret put` (letto da `frontend/.dev.vars`, mai stampato).
+- Controllato sul sito pubblicato: header presenti, snapshot 114.704 byte, segnale aggiornato, `/api/live?giornata=abc` → 400, POST → 405, nessuna richiesta fuori dall'origine, console senza errori.
+- **Lavorare un agente alla volta**: il flusso in parallelo si è interrotto per i limiti d'uso lasciando tre schede a metà; con un agente per coppia di schede e commit a fine lavoro non si perde nulla.
+
 ### 04/10/2026 — Sessione 29 (Bot ricollegato a GitLab, fix Classifica in produzione, Fase 0 del restyling)
 
 **Il bot è di nuovo aggiornabile.** Il servizio `toto-amici-bot` su Render è stato ricollegato da GitHub (account sospeso) a `gitlab.com/benanti64/toto-amici1`, branch `main`, con la funzione «cambia repository di un servizio esistente» introdotta da Render l'11/05/2026 (Settings → Build → Source). Fatto dall'utente dal pannello: il salvataggio fa partire subito un deploy.

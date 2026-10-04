@@ -32,6 +32,8 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 
 ## Fasi
 
+> **Stato al 04/10/2026 sera:** Fasi 0-1 in produzione; sito nuovo (Fasi 2-3) online in prova su https://toto-amici.benanti64.workers.dev. Manca la Fase 4 (prova di qualche giorno, poi link ai giocatori = Toto-Amici 3.0).
+
 ### Fase 0 — Decisioni da prendere prima di scrivere codice
 - [x] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia. *Contenuto deciso (sotto); schema approvato il 04/10/2026 in [restyling/snapshot-schema.md](restyling/snapshot-schema.md).*
 - [x] Dove si pubblica: **Cloudflare KV** (04/10/2026). Un JSON da ~40 KB compressi, al massimo un centinaio di scritture al giorno contro le 1.000 del piano free.
