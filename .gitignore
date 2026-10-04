@@ -15,3 +15,5 @@ backup_toto_amici_*.json
 # File di sistema Mac e cache
 .DS_Store
 __pycache__/
+# Snapshot generato in locale dai dati veri (scripts/genera_snapshot_locale.py)
+restyling/snapshot-locale.json

@@ -90,6 +90,8 @@ Oggi `app.py` chiama Football-Data **da sola** (cache 3 minuti) per le partite i
 
 ## Modifiche in attesa del rilascio 3.0
 
+**Ordine di rilascio deciso il 04/10/2026:** «Toto-Amici 3.0» è il momento in cui i giocatori ricevono il link del sito nuovo. Prima di allora, appena la Fase 1 è pronta e testata, si pubblica **solo la parte del bot** che genera e salva lo snapshot: non cambia nulla di ciò che il bot fa oggi e il sito vecchio non se ne accorge. Serve a provare il sito nuovo su un indirizzo di prova con dati veri e aggiornati, per qualche giorno e almeno una giornata di partite, prima del passaggio.
+
 Decisione dell'utente (04/10/2026): le correzioni non urgenti non si pubblicano una alla volta, ma tutte insieme al nuovo front-end. Si accumulano sul branch **`rilascio-3.0`** (solo locale + backup, **non** su GitLab finché non si rilascia); `main` resta pulito per eventuali correzioni urgenti, che vanno poi riportate anche qui (`git merge main` dentro `rilascio-3.0`).
 
 | # | Sessione | Modifica | Tocca | Note per `NOVITA` 3.0 |

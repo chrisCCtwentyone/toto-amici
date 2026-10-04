@@ -1276,7 +1276,7 @@ setInterval(aggiorna, 1000);
                         "Giornata": soffio["giornata"],
                         "Evento sbagliato": soffio["partita"],
                         "Pronostico": soffio["pronostico"],
-                        "Quota": soffio["quota"],
+                        "Quota": soffio["quota_testo"],
                     }
                     for soffio in soffi
                 ]).set_index("Giocatore")

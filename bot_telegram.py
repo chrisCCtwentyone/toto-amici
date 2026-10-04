@@ -12,7 +12,7 @@ import resource
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
-from statistiche import e_ritirato, nome_senza_ritiro
+from statistiche import e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro
 from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
@@ -1002,19 +1002,6 @@ def ottieni_giornata_corrente():
         logging.error("ottieni_giornata_corrente: API non raggiungibile, giro saltato")
         return None
 
-def etichetta_stagione(data_inizio):
-    """Da "2026-08-23" ricava "2026-27".
-
-    La Serie A va da agosto a maggio, quindi una stagione sta a cavallo di due
-    anni solari e non basta l'anno della data.
-    """
-    # Deve essere una data ISO tipo "2026-08-23": un input malformato deve dare
-    # None, non un'etichetta plausibile ma sbagliata usata poi per nominare fogli.
-    if not re.match(r'^\d{4}-\d{2}-\d{2}$', str(data_inizio or "")):
-        return None
-    anno = int(str(data_inizio)[:4])
-    return f"{anno}-{str(anno + 1)[2:]}"
-
 def stagione_corrente():
     """Etichetta della stagione in corso secondo Football-Data, o None."""
     try:
@@ -1186,25 +1173,6 @@ def saldo_cassa(righe_cassa):
         if len(riga) > 2 and str(riga[2]).strip():
             totale += estrai_numero(riga[2])
     return totale
-
-def estrai_numero(testo):
-    """Legge un numero scritto in formato italiano ("1.674,56" = milleseicento...).
-
-    ATTENZIONE: questa funzione legge anche le vincite che finiscono in Cassa.
-    La versione precedente faceva solo replace(',', '.'), quindi "1.674,56"
-    diventava "1.674.56" e il match si fermava a 1.674 -> in Cassa sarebbe finito
-    0,84 EUR invece di 837,28 EUR. Nessun dato storico ne e' stato intaccato
-    (l'unica schedina chiusa valeva 855,70, sotto i mille), ma sarebbe successo
-    alla prima vincita a quattro cifre. Vedi PROJECT_LOG.md, Sessione 8.
-    """
-    try:
-        s = re.sub(r'[^\d.,]', '', str(testo))
-        if ',' in s:
-            # Formato italiano: il punto separa le migliaia, la virgola i decimali.
-            s = s.replace('.', '').replace(',', '.')
-        match = re.search(r'\d+(?:\.\d+)?', s)
-        return float(match.group()) if match else 0.0
-    except: return 0.0
 
 ESITO_DA_VERIFICARE = "⚠️ DA VERIFICARE"
 ESITO_RINVIATA = "⏸️ RINVIATA"

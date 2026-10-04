@@ -140,7 +140,7 @@ def test_soffio_caso_reale_vincenzo_giornata_3():
     righe.append(_riga("Giornata 3", "VINCENZO", "Fiorentina - Torino", "❌ PERSA", "X", "3,2"))
     assert schedine_perse_per_un_soffio(righe) == [{
         "giocatore": "VINCENZO", "giornata": 3, "partita": "Fiorentina - Torino",
-        "pronostico": "X", "quota": "3,2",
+        "pronostico": "X", "quota": 3.2, "quota_testo": "3,2",
     }]
 
 

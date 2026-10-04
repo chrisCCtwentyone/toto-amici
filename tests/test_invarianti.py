@@ -290,3 +290,100 @@ def test_ogni_lettura_della_classifica_contiene_38_giornate(file):
         f"{file}: range della Classifica che si ferma alla colonna {troppo_strette}, "
         f"ne servono {COLONNE_CLASSIFICA}. Usa il foglio intero: range=\"Classifica\"."
     )
+
+
+# ======================================================================
+# SNAPSHOT del restyling (statistiche.costruisci_snapshot)
+# ======================================================================
+# Le stesse domande di sempre, fatte allo snapshot: ricalcolarlo puo' toccare cio' che non deve?
+# L'ordine delle righe nel foglio puo' cambiare il risultato? I numeri tornano fra una sezione e l'altra?
+import copy
+import random
+
+import statistiche as st
+import dati_finti as dati
+
+
+@pytest.fixture(scope="module")
+def stagione_snapshot():
+    return dati.dataset_stagione()
+
+
+@pytest.fixture(scope="module")
+def snapshot_intero(stagione_snapshot):
+    return st.costruisci_snapshot(*stagione_snapshot)
+
+
+class TestInvariantiSnapshot:
+    def test_costruire_lo_snapshot_non_modifica_i_dati_in_ingresso(self, stagione_snapshot):
+        """INVARIANTE: lo snapshot e' una lettura. Se modificasse le righe lette dal chiamante, il bot
+        rischierebbe di riscrivere su Sheets dati alterati o di ripubblicare qualcosa di diverso al giro dopo."""
+        classifica, cassa, giocate, fd, adesso = stagione_snapshot
+        prima = copy.deepcopy((classifica, cassa, giocate, fd))
+        st.costruisci_snapshot(classifica, cassa, giocate, fd, adesso)
+        assert (classifica, cassa, giocate, fd) == prima
+
+    def test_la_somma_dei_punti_per_giornata_e_il_totale(self, snapshot_intero):
+        """INVARIANTE: per ogni giocatore, attivo o ritirato, i punti delle giornate sommano a Punti Totali."""
+        for g in snapshot_intero["classifica"]["giocatori"] + snapshot_intero["classifica"]["ritirati"]:
+            assert sum(p for p in g["punti_per_giornata"] if p is not None) == g["punti_totali"], g["nome"]
+
+    def test_le_posizioni_sono_coerenti_con_i_punti(self, snapshot_intero):
+        """INVARIANTE: chi ha piu' punti non sta mai sotto chi ne ha meno; la posizione non salta senza un pari merito."""
+        righe = snapshot_intero["classifica"]["giocatori"]
+        for sopra, sotto in zip(righe, righe[1:]):
+            assert sopra["punti_totali"] >= sotto["punti_totali"]
+            assert sopra["posizione"] <= sotto["posizione"]
+        for r in righe:
+            assert r["posizione"] == 1 + sum(1 for x in righe if x["posizione"] < r["posizione"])
+
+    def test_l_ordine_delle_righe_nei_fogli_non_cambia_lo_snapshot(self, stagione_snapshot):
+        """INVARIANTE (A7): niente nello snapshot dipende dall'ordine in cui le righe stanno nel foglio.
+        Il vecchio sito risolveva i pari merito con l'ordine del foglio: una riga spostata a mano
+        cambiava chi era "Il Cecchino"."""
+        classifica, cassa, giocate, fd, adesso = stagione_snapshot
+        atteso = st.impronta_snapshot(st.costruisci_snapshot(classifica, cassa, giocate, fd, adesso))
+        for seme in (1, 2, 3):
+            caso = random.Random(seme)
+            c = [classifica[0]] + caso.sample(classifica[1:], len(classifica) - 1)  # intestazione sempre in testa
+            g = [giocate[0]] + caso.sample(giocate[1:], len(giocate) - 1)
+            f = copy.deepcopy(fd)
+            caso.shuffle(f["matches"])
+            assert st.impronta_snapshot(st.costruisci_snapshot(c, cassa, g, f, adesso)) == atteso, f"seme {seme}"
+
+    @pytest.mark.parametrize("giornata", [1, 2, 10, 11, 12, 21, 38])
+    def test_ricostruire_con_la_sola_giornata_n_non_cambia_la_giornata_n(self, giornata, stagione_snapshot, snapshot_intero):
+        """INVARIANTE (Sessione 13, bug della sottostringa): "1" non e' contenuto in "Giornata 12". Lo snapshot
+        costruito con le sole righe della giornata N contiene per quella giornata le stesse partite e le stesse
+        schedine dello snapshot intero: nessuna giornata ne mescola un'altra."""
+        classifica, cassa, giocate, fd, adesso = stagione_snapshot
+        solo = [giocate[0]] + [r for r in giocate[1:] if r[0] == f"Giornata {giornata}"]
+        parziale = st.costruisci_snapshot(classifica, cassa, solo, fd, adesso)
+        assert [s for s in parziale["schedine"]] == [s for s in snapshot_intero["schedine"] if s["giornata"] == giornata]
+        assert [p for p in parziale["partite"]] == [p for p in snapshot_intero["partite"] if p["giornata"] == giornata]
+        assert len(parziale["schedine"]) == 16 and len(parziale["partite"]) == 10
+
+    def test_ogni_schedina_ha_dieci_righe_e_ogni_riga_una_partita_della_sua_giornata(self, snapshot_intero):
+        """INVARIANTE: una riga punta sempre a una partita della stessa giornata della schedina."""
+        giornata_di = {p["id"]: p["giornata"] for p in snapshot_intero["partite"]}
+        for s in snapshot_intero["schedine"]:
+            assert len(s["righe"]) == 10
+            assert {giornata_di[r["partita_id"]] for r in s["righe"]} == {s["giornata"]}
+
+    def test_la_cassa_torna(self, snapshot_intero):
+        """INVARIANTE: il saldo e' la somma delle entrate, i versamenti per giornata sommano al saldo
+        e l'ultimo "Saldo Totale" scritto coincide (nessuna correzione a mano nei dati finti)."""
+        c = snapshot_intero["cassa"]
+        assert c["saldo"] == pytest.approx(sum(m["entrata"] for m in c["movimenti"]))
+        assert sum(v["versato"] for v in c["versamenti_per_giornata"]) == pytest.approx(c["saldo"], abs=0.005)
+        assert c["movimenti"][-1]["saldo"] == pytest.approx(c["saldo"], abs=0.005)
+
+    def test_vinte_piu_perse_sono_le_righe_valutate_delle_statistiche(self, snapshot_intero):
+        """INVARIANTE: la tabella delle statistiche e le schedine contano le stesse righe valutate."""
+        per_giocatore = {}
+        for s in snapshot_intero["schedine"]:
+            r = per_giocatore.setdefault(s["giocatore"], [0, 0])
+            r[0] += s["riepilogo"]["vinte"]
+            r[1] += s["riepilogo"]["vinte"] + s["riepilogo"]["perse"]
+        for stat in snapshot_intero["statistiche"]["giocatori"]:
+            assert [stat["vinte"], stat["totali"]] == per_giocatore[stat["nome"]], stat["nome"]
