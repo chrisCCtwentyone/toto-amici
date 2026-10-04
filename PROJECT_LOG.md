@@ -123,6 +123,9 @@ Toto_Amici_Progetto/
 
 ### 04/10/2026 — Sessione 29, Fase 1B (il bot pubblica lo snapshot su Cloudflare KV)
 
+**In produzione dal 04/10/2026 alle 18:10** (commit `8c3e6a3`, su GitLab `main`). Archivio KV `toto-amici` creato, token con solo il permesso «Workers KV Storage: Edit». Prima pubblicazione con `/pubblica` alle 18:21: 114.704 byte, 0 avvisi. Controllo automatico delle 18:22: «invariato», scritto solo il segnale. **Memoria misurata su Render**: 202 → 125 MB e 249 → 127 MB dopo il rilascio: scende da sola, lontano dai 512 MB.
+- Inciampo da ricordare: due variabili erano state scritte `CLOUDFARE_…` (senza la L) e il bot all'avvio diceva «spenta (variabili mancanti)». Il log di avvio della pubblicazione è il primo posto da guardare. Il token è stato poi rigenerato (Roll) perché era finito in uno screenshot.
+
 **Aggiunta, non modifica**: la logica di calcolo del bot non è cambiata. Dettagli e variabili in [RESTYLING.md](RESTYLING.md), Fase 1.
 - **Cosa fa** (`bot_telegram.py`, sezione «Pubblicazione dello snapshot su Cloudflare KV»): legge Classifica (foglio intero), `Cassa!A:D`, `Giocate!A:I` con una batchGet, le 380 partite con **una** chiamata a Football-Data tenuta 60 minuti in RAM (ridotta ai soli campi usati), costruisce lo snapshot con `costruisci_snapshot_con_avvisi` e scrive su KV `snapshot` (solo se l'impronta cambia, o con `/pubblica`) e `segnale` (a ogni controllo). Spenta se manca una delle tre variabili `CLOUDFLARE_*`.
 - **Quando**: job ogni 15 minuti (`task_pubblica_snapshot`, non gira nella pausa notturna) e `programma_pubblicazione(context)` dopo `scegli_giornata_update`, `task_aggiornamento_automatico`, `esegui_conferma_risultato_manuale`, `esegui_salvataggio_ia`, `verifica_codice_archiviazione`: una `run_once` fra 10 secondi, una sola anche con più scritture ravvicinate. Un `asyncio.Lock` evita pubblicazioni sovrapposte.
