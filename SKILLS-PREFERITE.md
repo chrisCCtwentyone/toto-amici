@@ -39,7 +39,7 @@ Da incollare (o citare) a inizio sessione in qualsiasi progetto.
 
 ## Installate solo in Toto-Amici (restyling, 04/10/2026)
 Trovate con find-skills, in `.claude/skills/` del progetto:
-cloudflare, shadcn, tailwind-design-system, design-motion-principles, vercel-react-best-practices, web-design-guidelines.
+cloudflare, shadcn, tailwind-design-system, design-motion-principles, vercel-react-best-practices, web-design-guidelines, **apple-design** (Emil Kowalski: principi Apple tradotti per il web) e **playwright-cli** (Microsoft: verifica delle UI dal browser, telefono e computer).
 
 ## Da non usare
 - **omniroute**: scartato per scelta (28/09/2026), non riproporlo.
