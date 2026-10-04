@@ -32,7 +32,7 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 
 ## Fasi
 
-> **Toto-Amici 3.0 rilasciato il 04/10/2026 alle 22:45** su https://toto-amici.totoamici.workers.dev. Il vecchio indirizzo su Render mostra solo un rimando. Restano: spegnere/sospendere `toto-amici-sito` su Render quando i giocatori hanno il link nuovo, e rivalutare la pausa notturna del bot. `scripts/confronta_snapshot_app.py` non serve più (confrontava col vecchio app.py).
+> **Toto-Amici 3.0 rilasciato il 04/10/2026 alle 22:45** su https://toto-amici.totoamici.workers.dev. Il vecchio indirizzo su Render mostra solo un rimando. `toto-amici-sito` su Render **sospeso il 04/10/2026 alle 23:15** su richiesta dell'utente (si riattiva con «Resume Web Service»; il vecchio indirizzo non risponde più). Resta: rivalutare la pausa notturna del bot con le ~176 ore/mese liberate. `scripts/confronta_snapshot_app.py` non serve più (confrontava col vecchio app.py).
 
 ### Fase 0 — Decisioni da prendere prima di scrivere codice
 - [x] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia. *Contenuto deciso (sotto); schema approvato il 04/10/2026 in [restyling/snapshot-schema.md](restyling/snapshot-schema.md).*

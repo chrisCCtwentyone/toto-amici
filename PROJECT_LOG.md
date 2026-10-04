@@ -110,6 +110,8 @@ Toto_Amici_Progetto/
 
 ### 04/10/2026 — Sessione 29, Fase 2-4 (Toto-Amici 3.0 rilasciato)
 
+**Sito Streamlit su Render sospeso alle 23:15** (`toto-amici-sito`, Settings → Suspend Web Service; reversibile con Resume). Il bot `toto-amici-bot` resta attivo e pubblica lo snapshot. Da qui in poi un push su `main` ridistribuisce solo il bot. Icona da app e manifest aggiunti al sito nuovo (commit ceb1196).
+
 **Indirizzo cambiato alle 22:55**: il sottodominio dell'account Cloudflare era `benanti64.workers.dev` e mostrava il nome dell'account nel link; cambiato in `totoamici.workers.dev` dal pannello (Workers & Pages → Account details → Subdomain). Vale per tutti i Worker dell'account (oggi solo questo; gli altri siti sono su pages.dev e non cambiano). Il vecchio link ha smesso di funzionare subito.
 
 **Toto-Amici 3.0 rilasciato alle 22:45, su richiesta dell'utente senza aspettare la Giornata 6.** `app.py` 3.0.0: pagina «Toto-Amici 3.0 è qui» col link nuovo, non legge più Sheets. Piè di pagina del sito nuovo «Toto-Amici 3.0». Decisioni dell'utente: nessuna nota privacy, il vecchio token Telegram nella storia git era già stato rigenerato, il tetto a Football-Data per istanza basta.
