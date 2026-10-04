@@ -12,7 +12,8 @@ import resource
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
-from statistiche import e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro
+from statistiche import (e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro,
+                         costruisci_snapshot_con_avvisi, costruisci_segnale, impronta_snapshot)
 from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
@@ -1029,9 +1030,10 @@ def stagione_corrente():
 NOME_FOGLIO_STATO = "Stato"
 CHIAVE_ULTIMO_RIEPILOGO = "ultima_giornata_riepilogo"
 CHIAVE_ULTIMO_AUTO_UPDATE = "ultimo_auto_update"
+CHIAVE_AVVISI_SNAPSHOT = "avvisi_snapshot"  # impronta degli avvisi gia' mandati agli admin (Fase 1B)
 
 
-def leggi_stato(chiave, default=None):
+def leggi_stato(chiave, default=None, service=None):
     """Valore salvato per quella chiave, o `default`.
 
     Non solleva mai: se il foglio non c'e' o non e' leggibile restituisce il
@@ -1040,7 +1042,7 @@ def leggi_stato(chiave, default=None):
     lavoro vero.
     """
     try:
-        service = connetti_sheets()
+        service = service or connetti_sheets()
         righe = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, range=f"{NOME_FOGLIO_STATO}!A:B"
         ).execute(num_retries=3).get("values", [])
@@ -1054,13 +1056,13 @@ def leggi_stato(chiave, default=None):
     return default
 
 
-def scrivi_stato(chiave, valore):
+def scrivi_stato(chiave, valore, service=None):
     """Salva (o azzera, con valore vuoto) una chiave nel foglio Stato.
 
     Crea il foglio se non esiste: cosi' non c'e' niente da preparare a mano,
     ne' ora ne' quando si aggiungera' un'altra chiave.
     """
-    service = connetti_sheets()
+    service = service or connetti_sheets()
     meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute(num_retries=3)
     titoli = {f["properties"]["title"] for f in meta.get("sheets", [])}
 
@@ -1143,7 +1145,10 @@ def archivia_stagione(etichetta):
     # scambiato per gia' mandato (e' lo stesso numero di giornata).
     # Idem per l'ultimo AUTO UPDATE: stessa giornata e stesso report nell'anno
     # nuovo (es. tutti a 0 punti) verrebbero scambiati per gia' mandati.
-    for chiave in (CHIAVE_ULTIMO_RIEPILOGO, CHIAVE_ULTIMO_AUTO_UPDATE):
+    # Idem per gli avvisi dello snapshot (deduplica per testo, ma i testi nominano giornate).
+    global _avvisi_visti
+    _avvisi_visti = None
+    for chiave in (CHIAVE_ULTIMO_RIEPILOGO, CHIAVE_ULTIMO_AUTO_UPDATE, CHIAVE_AVVISI_SNAPSHOT):
         try:
             scrivi_stato(chiave, "")
         except Exception as e:
@@ -1664,6 +1669,7 @@ async def verifica_codice_archiviazione(update: Update, context: ContextTypes.DE
     try:
         esito = await asyncio.to_thread(archivia_stagione, etichetta)
         archiviata = True
+        programma_pubblicazione(context)
         await avvisa_admin(context, esito, destinatari=update.effective_user.id)
     except Exception as e:
         await avvisa_admin(context, f"❌ Archiviazione fallita: {e}",
@@ -1996,6 +2002,8 @@ async def esegui_salvataggio_ia(update: Update, context: ContextTypes.DEFAULT_TY
         # cui due "Salva" simultanei non trovino entrambi il posto libero.
         async with lock_salvataggio_schedina():
             successo = await asyncio.to_thread(scrivi_su_sheets_con_regole, gio, giorn, risultato_json)
+        if successo:
+            programma_pubblicazione(context)
         msg = f"✅ Schedina salvata definitivamente nel Database!" if successo else "⚠️ Errore durante la scrittura su Sheets."
         await query.edit_message_text(msg)
     except SchedinaGiaPresente as gia:
@@ -2020,6 +2028,7 @@ async def scegli_giornata_update(update: Update, context: ContextTypes.DEFAULT_T
     giornata = query.data.split('_')[1]
     await query.edit_message_text(f"⏳ Aggiornamento manuale Giornata {giornata}...")
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
+    programma_pubblicazione(context)
     await avvisa_admin(context, report, destinatari=update.effective_user.id)
     await traccia_azione(update, context, f"ha ricalcolato i punteggi della Giornata {escape_markdown(str(giornata))}.")
     return ConversationHandler.END
@@ -2142,6 +2151,7 @@ async def esegui_conferma_risultato_manuale(update: Update, context: ContextType
     try:
         report = await asyncio.to_thread(applica_risultato_manuale, giornata, casa_full, ospite_full, gol_casa, gol_ospite)
         applicato = True
+        programma_pubblicazione(context)
         await avvisa_admin(context, report, destinatari=update.effective_user.id)
     except Exception as e:
         await avvisa_admin(context, f"❌ Errore durante l'applicazione del risultato: {e}",
@@ -2202,6 +2212,7 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
         logging.warning("task_aggiornamento_automatico: giornata corrente sconosciuta, giro saltato")
         return
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
+    programma_pubblicazione(context)
 
     # L'impronta sta nel foglio Stato, non in RAM: il bot dorme ogni notte
     # (pausa notturna) e al risveglio una variabile globale sarebbe vuota, quindi
@@ -2662,12 +2673,373 @@ async def task_autoping(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"Auto-ping fallito: {e}")
 
+# ==========================================
+# PUBBLICAZIONE DELLO SNAPSHOT SU CLOUDFLARE KV (Fase 1B del restyling)
+# ==========================================
+# Il sito nuovo non calcola niente: legge due documenti JSON gia' pronti su
+# Cloudflare Workers KV (schema in restyling/snapshot-schema.md, §2 e §4).
+#   `snapshot` : tutto il contenuto, riscritto SOLO se la sua impronta cambia;
+#   `segnale`  : segnale di vita, riscritto a OGNI controllo.
+# Qui il bot AGGIUNGE la pubblicazione e basta: la logica di calcolo non si tocca.
+#
+# Regola d'oro, la stessa dello stato persistente: la pubblicazione non e' mai
+# piu' importante del lavoro. Niente di quello che segue deve poter far fallire
+# un calcolo, un salvataggio o un job: ogni eccezione si logga e si ferma qui.
+#
+# Variabili d'ambiente (Render). Se ne manca una la pubblicazione e' spenta:
+# niente chiamate, niente errori, niente avvisi agli admin.
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CLOUDFLARE_KV_NAMESPACE_ID = os.environ.get("CLOUDFLARE_KV_NAMESPACE_ID", "").strip()
+VARIABILI_CLOUDFLARE = ("CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_KV_NAMESPACE_ID")
+
+TIMEOUT_CLOUDFLARE_S = 20
+TIMEOUT_FOOTBALL_DATA_S = 30        # la risposta intera e' ~350 KB
+INTERVALLO_PUBBLICAZIONE_S = 900    # il controllo periodico: 15 minuti
+# Il controllo gira ai minuti :07 :22 :37 :52, mai vicino ai calcoli (:00 e :30):
+# il picco di memoria della pubblicazione (~58 MB per le letture) non deve cadere
+# sopra quello del calcolo risultati, su 512 MB con un picco noto di ~410.
+MINUTI_PUBBLICAZIONE = (7, 22, 37, 52)
+RITARDO_PUBBLICAZIONE_S = 10        # dopo una scrittura su Sheets: raggruppa scritture ravvicinate
+CACHE_PARTITE_FD_S = 3600           # orari e id cambiano raramente; i punteggi live li da' il Worker
+CACHE_PARTITE_FD_MAX_VECCHIA_S = 6 * 3600  # se Football-Data non risponde si usa la copia, ma non per sempre
+FALLIMENTI_PER_AVVISO = 4           # ~1 ora di controlli falliti di fila prima di disturbare gli admin
+MAX_AVVISI_NEL_MESSAGGIO = 15
+
+# Tutto lo stato qui sotto sta in RAM di proposito: dopo un riavvio si
+# ripubblica una volta (una scrittura KV in piu', invisibile ai giocatori) e
+# si rilegge Stato una volta. Costa meno che mantenerlo su Sheets.
+_ultima_pubblicazione = {"impronta": None, "generato_il": None}
+_cache_partite_fd = {"quando": 0.0, "matches": None}
+_avvisi_visti = None              # impronta degli avvisi gia' segnalati (la verita' e' nel foglio Stato)
+_fallimenti_consecutivi = 0
+_pubblicazione_programmata = False
+_lock_pubblicazione = None
+
+
+# Orari (ora italiana) dei calcoli risultati schedulati: li legge main() e li
+# legge il test che li tiene lontani dalla pubblicazione.
+ORARI_CALCOLO_RISULTATI = [(1, 0), (8, 0), (17, 30), (20, 30), (23, 0)]
+
+
+def prossimo_orario_pubblicazione(adesso):
+    """Primo istante (UTC, secondi a zero) con minuto in MINUTI_PUBBLICAZIONE,
+    almeno 60 secondi dopo `adesso`. Si ragiona in UTC: gli scarti di fuso sono
+    ore intere, quindi i minuti sono gli stessi in ora italiana anche con
+    l'ora legale. L'intervallo di 900 s mantiene poi l'allineamento."""
+    base = adesso.astimezone(pytz.UTC).replace(second=0, microsecond=0)
+    for passo in range(1, 62):
+        candidato = base + timedelta(minutes=passo)
+        if candidato.minute in MINUTI_PUBBLICAZIONE and candidato - adesso >= timedelta(seconds=60):
+            return candidato
+
+
+def pubblicazione_attiva():
+    return bool(CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_KV_NAMESPACE_ID)
+
+
+def lock_pubblicazione():
+    """Una pubblicazione alla volta (il bot e' un processo solo). Creato alla
+    prima chiamata, cioe' dentro un event loop gia' avviato."""
+    global _lock_pubblicazione
+    if _lock_pubblicazione is None:
+        _lock_pubblicazione = asyncio.Lock()
+    return _lock_pubblicazione
+
+
+def _errore_leggibile(e):
+    """Testo dell'eccezione senza token ne' id Cloudflare (l'URL e' nel messaggio di requests)."""
+    testo = f"{type(e).__name__}: {e}"
+    for riservato in (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_KV_NAMESPACE_ID):
+        if riservato:
+            testo = testo.replace(riservato, "***")
+    return testo[:300]
+
+
+def scrivi_kv(chiave, corpo):
+    """PUT di un valore (bytes) su Workers KV, con retry e timeout espliciti.
+    Corpo grezzo (application/octet-stream), come previsto dalla documentazione."""
+    url = (f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+           f"/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{chiave}")
+    richiedi_con_retry(
+        url, metodo="PUT", dati=corpo, timeout=TIMEOUT_CLOUDFLARE_S,
+        headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}", "Content-Type": "application/octet-stream"},
+    )
+
+
+def _partita_ridotta(m):
+    """Solo i campi che statistiche.partite_della_stagione legge: 380 partite
+    intere pesano qualche MB, queste poche centinaia di KB, e restano in cache."""
+    ridotta = {k: m[k] for k in ("id", "matchday", "utcDate") if k in m}
+    for squadra in ("homeTeam", "awayTeam"):
+        ridotta[squadra] = {k: v for k, v in (m.get(squadra) or {}).items() if k in ("name", "shortName")}
+    ridotta["season"] = {"startDate": (m.get("season") or {}).get("startDate")}
+    return ridotta
+
+
+def partite_football_data(aggiorna=False):
+    """Le 380 partite della stagione: UNA chiamata, tenuta in RAM per 60 minuti
+    (limite Football-Data: 10 richieste/minuto, condiviso col resto del bot).
+    Se la chiamata fallisce si usa la copia vecchia (fino a 6 ore); senza copia
+    l'errore sale e la pubblicazione salta il giro."""
+    ora = time.time()
+    cache = _cache_partite_fd
+    if cache["matches"] is not None and not aggiorna and ora - cache["quando"] < CACHE_PARTITE_FD_S:
+        return cache["matches"]
+    try:
+        risposta = richiedi_con_retry(
+            "https://api.football-data.org/v4/competitions/SA/matches",
+            headers={"X-Auth-Token": FOOTBALL_DATA_KEY}, timeout=TIMEOUT_FOOTBALL_DATA_S,
+        ).json()
+        matches = [_partita_ridotta(m) for m in risposta.get("matches", [])]
+        del risposta
+        if not matches:
+            raise ValueError("Football-Data ha risposto senza partite")
+    except Exception as e:
+        if cache["matches"] is not None and ora - cache["quando"] < CACHE_PARTITE_FD_MAX_VECCHIA_S:
+            logging.warning("Football-Data non risponde (%s): uso la copia di %d minuti fa",
+                            _errore_leggibile(e), int((ora - cache["quando"]) / 60))
+            return cache["matches"]
+        raise
+    cache["quando"], cache["matches"] = ora, matches
+    return matches
+
+
+def nuovo_client_sheets(sola_lettura=True):
+    """Un client Sheets PRIVATO della pubblicazione, costruito a ogni uso e poi buttato.
+
+    Perche' non connetti_sheets(): quel client e' uno solo, condiviso, e httplib2
+    (sotto googleapiclient) NON e' thread-safe. La pubblicazione gira in un thread
+    e puo' sovrapporsi al calcolo risultati o a un salvataggio: due thread sullo
+    stesso client possono mescolare le risposte, e il calcolo e' proprio il
+    percorso che scrive punti e Cassa. Con un client a parte la pubblicazione non
+    puo' toccare quel percorso nemmeno per sbaglio. Scope readonly per le
+    letture; serve quello completo solo per il foglio Stato (deduplica avvisi).
+    cache_discovery=False: niente file di cache su un disco effimero.
+    """
+    scope = "https://www.googleapis.com/auth/spreadsheets" + (".readonly" if sola_lettura else "")
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=[scope])
+    return build('sheets', 'v4', credentials=creds, cache_discovery=False)
+
+
+def leggi_fogli_per_snapshot():
+    """Classifica (foglio intero, come dopo la Sessione 28), Cassa, Giocate: UNA
+    batchGet con il client privato (vedi nuovo_client_sheets), rilasciato all'uscita."""
+    service = nuovo_client_sheets()
+    try:
+        risposta = service.spreadsheets().values().batchGet(
+            spreadsheetId=SPREADSHEET_ID, ranges=["Classifica", "Cassa!A:D", "Giocate!A:I"]
+        ).execute(num_retries=3)
+    finally:
+        service.close()
+    trovati = [v.get("values", []) for v in risposta.get("valueRanges", [])]
+    return (trovati + [[], [], []])[:3]
+
+
+def pubblica_snapshot_bloccante(forza=False):
+    """Costruisce lo snapshot dai fogli e lo pubblica. NON SOLLEVA MAI.
+
+    Restituisce {"stato", "byte", "avvisi", "errore"}; `stato`:
+      "pubblicato"        snapshot (se cambiato o `forza`) e segnale scritti;
+      "invariato"         impronta uguale all'ultima pubblicazione: scritto solo il segnale;
+      "dati_illeggibili"  costruisci_snapshot ha sollevato: non si pubblica NIENTE;
+      "errore"            Sheets, Football-Data o Cloudflare non hanno risposto.
+    `errore` non e' None quando qualcosa e' andato storto, anche se lo snapshot e' passato
+    ma il segnale no.
+
+    Il segnale NON si scrive quando snapshot o dati non sono a posto (§4): vuol
+    dire «ho verificato i fogli e lo snapshot e' allineato», e dirlo mentre non
+    lo e' nasconderebbe il guasto. Lasciandolo invecchiare, il sito mostra da
+    solo l'avviso «dati vecchi» dopo 2 ore: che e' esattamente la verita'.
+    Va nell'ordine snapshot -> segnale: il sito riscarica lo snapshot quando il
+    segnale annuncia un'impronta nuova, che quindi deve gia' esserci.
+    """
+    esito = {"stato": "errore", "byte": 0, "avvisi": [], "errore": None}
+    try:
+        adesso = datetime.now(pytz.UTC)
+        classifica, cassa, giocate = leggi_fogli_per_snapshot()
+        partite = partite_football_data(aggiorna=forza)
+        try:
+            snapshot, esito["avvisi"] = costruisci_snapshot_con_avvisi(classifica, cassa, giocate, partite, adesso)
+        except Exception as e:  # ValueError di norma: dati vuoti o illeggibili (§17.13)
+            esito.update(stato="dati_illeggibili", errore=_errore_leggibile(e))
+            logging.error("Snapshot non costruito, tengo quello precedente: %s", esito["errore"])
+            return esito
+        # I fogli letti non servono piu': meno memoria in giro (512 MB su Render).
+        del classifica, cassa, giocate, partite
+
+        impronta = impronta_snapshot(snapshot)
+        if forza or impronta != _ultima_pubblicazione["impronta"]:
+            corpo = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            scrivi_kv("snapshot", corpo)
+            esito["byte"] = len(corpo)
+            _ultima_pubblicazione.update(impronta=impronta, generato_il=snapshot["generato_il"])
+            esito["stato"] = "pubblicato"
+            del corpo
+        else:
+            esito["stato"] = "invariato"
+
+        # Il segnale riporta il generato_il dello snapshot GIA' pubblicato, che
+        # se l'impronta e' uguale non e' quello appena costruito.
+        segnale = costruisci_segnale({**snapshot, "generato_il": _ultima_pubblicazione["generato_il"]}, adesso)
+        del snapshot
+        try:
+            scrivi_kv("segnale", json.dumps(segnale, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        except Exception as e:
+            esito["errore"] = "segnale non scritto: " + _errore_leggibile(e)
+            logging.error("Pubblicazione: %s", esito["errore"])
+        logging.info("Pubblicazione snapshot: %s (%d byte, %d avvisi)", esito["stato"], esito["byte"], len(esito["avvisi"]))
+    except Exception as e:
+        esito.update(stato="errore", errore=_errore_leggibile(e))
+        logging.error("Pubblicazione snapshot non riuscita: %s", esito["errore"])
+    finally:
+        prima = memoria_mb()
+        libera_memoria_al_sistema_operativo()
+        logging.info("Pubblicazione snapshot: memoria %.0f MB -> %.0f MB dopo il rilascio", prima, memoria_mb())
+    return esito
+
+
+async def segnala_avvisi_snapshot(context, avvisi):
+    """Manda agli admin gli avvisi di costruisci_snapshot, UNA volta.
+
+    La deduplica sta nel foglio Stato (impronta dell'insieme di avvisi): lo
+    stesso avviso non riparte ogni 15 minuti ne' a ogni riavvio. Quando gli
+    avvisi spariscono la chiave si azzera, cosi' un problema che ritorna viene
+    segnalato di nuovo. Se lo Stato non si legge o non si scrive il messaggio
+    parte comunque: si perde la protezione dal doppio invio, non l'avviso.
+    """
+    global _avvisi_visti
+    impronta = hashlib.sha256("\n".join(sorted(avvisi)).encode()).hexdigest()[:16] if avvisi else ""
+    if impronta == _avvisi_visti:
+        return
+    # Anche lo Stato col client privato: stesso motivo di leggi_fogli_per_snapshot.
+    # Se non si riesce a costruirlo NON si ripiega sul client globale: l'avviso
+    # parte comunque (senza deduplica), che e' il compromesso gia' previsto.
+    try:
+        servizio = await asyncio.to_thread(nuovo_client_sheets, False)
+    except Exception as e:
+        logging.warning("Client Sheets per lo Stato non costruito (%s): avviso senza deduplica", _errore_leggibile(e))
+        servizio = None
+    try:
+        salvata = "" if servizio is None else await asyncio.to_thread(leggi_stato, CHIAVE_AVVISI_SNAPSHOT, "", servizio)
+        if impronta != salvata:
+            if avvisi:
+                righe = [f"- {escape_markdown(a)}" for a in avvisi[:MAX_AVVISI_NEL_MESSAGGIO]]
+                if len(avvisi) > MAX_AVVISI_NEL_MESSAGGIO:
+                    righe.append(f"... e altri {len(avvisi) - MAX_AVVISI_NEL_MESSAGGIO}")
+                await avvisa_admin(context, f"⚠️ *Snapshot del sito: {len(avvisi)} avvisi*\n" + "\n".join(righe))
+            if servizio is not None:
+                try:
+                    await asyncio.to_thread(scrivi_stato, CHIAVE_AVVISI_SNAPSHOT, impronta, servizio)
+                except Exception as e:
+                    logging.error("Non ho potuto salvare lo stato degli avvisi snapshot: %s", e)
+    finally:
+        if servizio is not None:
+            servizio.close()
+    _avvisi_visti = impronta
+
+
+async def pubblica_snapshot(context, forza=False):
+    """Pubblica e gestisce gli avvisi. Non solleva mai: restituisce l'esito."""
+    global _fallimenti_consecutivi
+    try:
+        async with lock_pubblicazione():
+            # Se un admin sta salvando una schedina si aspetta che finisca (si prende
+            # e si rilascia subito il lock dei salvataggi: NON lo si tiene durante la
+            # pubblicazione, che con Cloudflare giu' puo' durare un minuto e
+            # bloccherebbe i salvataggi). Per il calcolo risultati non esiste un
+            # flag: lo coprono gli orari del job (MINUTI_PUBBLICAZIONE) e il ritardo di
+            # RITARDO_PUBBLICAZIONE_S dopo la scrittura.
+            async with lock_salvataggio_schedina():
+                pass
+            esito = await asyncio.to_thread(pubblica_snapshot_bloccante, forza)
+        if esito["stato"] == "dati_illeggibili":
+            _fallimenti_consecutivi = 0
+            await segnala_avvisi_snapshot(context, [f"Snapshot NON pubblicato, dati illeggibili: {esito['errore']}"])
+        else:
+            if esito["errore"] is None:
+                _fallimenti_consecutivi = 0
+            else:
+                # Un blip isolato non merita un messaggio: il sito avvisa da solo
+                # dopo 2 ore. Un guasto che dura (token scaduto...) si'.
+                _fallimenti_consecutivi += 1
+                if _fallimenti_consecutivi == FALLIMENTI_PER_AVVISO:
+                    await avvisa_admin(
+                        context,
+                        f"⚠️ La pubblicazione dello snapshot e' fallita {FALLIMENTI_PER_AVVISO} volte di fila: "
+                        f"{escape_markdown(esito['errore'])}\nIl sito nuovo mostra dati che invecchiano.")
+            if esito["stato"] in ("pubblicato", "invariato"):
+                await segnala_avvisi_snapshot(context, esito["avvisi"])
+        return esito
+    except Exception as e:
+        logging.error("Pubblicazione snapshot: errore inatteso: %s", _errore_leggibile(e))
+        return {"stato": "errore", "byte": 0, "avvisi": [], "errore": _errore_leggibile(e)}
+
+
+async def task_pubblica_snapshot(context: ContextTypes.DEFAULT_TYPE):
+    """Ogni 15 minuti. Di notte NON gira (pausa notturna): il bot dorme, e il
+    sito non avvisa «dati vecchi» in quella fascia (schema §4)."""
+    if not pubblicazione_attiva() or in_pausa_notturna(datetime.now(TZ_ROMA)):
+        return
+    await pubblica_snapshot(context)
+
+
+async def task_pubblica_dopo_scrittura(context: ContextTypes.DEFAULT_TYPE):
+    global _pubblicazione_programmata
+    # Prima di pubblicare: una scrittura che arriva mentre si pubblica ne programma un'altra.
+    _pubblicazione_programmata = False
+    await pubblica_snapshot(context)
+
+
+def programma_pubblicazione(context, ritardo=RITARDO_PUBBLICAZIONE_S):
+    """Da chiamare DOPO una scrittura riuscita su Sheets che cambia dati visibili.
+
+    Non pubblica subito: fra qualche secondo, e una sola volta anche se le
+    scritture sono tre di fila. NON SOLLEVA MAI, e se la pubblicazione e'
+    spenta non fa niente. Se la scrittura non porta mai qui (eccezione a meta'),
+    ci pensa il controllo dei 15 minuti: l'impronta sara' cambiata.
+    """
+    global _pubblicazione_programmata
+    try:
+        if not pubblicazione_attiva() or _pubblicazione_programmata:
+            return
+        context.job_queue.run_once(task_pubblica_dopo_scrittura, ritardo)
+        _pubblicazione_programmata = True
+    except Exception as e:
+        logging.warning("Pubblicazione dopo la scrittura non programmata: %s", e)
+
+
+async def pubblica_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Forza una pubblicazione (anche se l'impronta e' uguale, e con Football-Data
+    riletto) e risponde a chi l'ha lanciata, con esito, dimensione e avvisi."""
+    if not e_admin(update.effective_user.id): return
+    chi = update.effective_user.id
+    if not pubblicazione_attiva():
+        mancanti = [n for n in VARIABILI_CLOUDFLARE if not os.environ.get(n, "").strip()]
+        await avvisa_admin(context, "ℹ️ La pubblicazione non e' attiva: mancano le variabili d'ambiente "
+                           + ", ".join(mancanti) + ".", destinatari=chi, parse_mode=None)
+        return
+    await update.message.reply_text("⏳ Pubblico lo snapshot...")
+    esito = await pubblica_snapshot(context, forza=True)
+    if esito["stato"] == "pubblicato":
+        testo = f"✅ Snapshot pubblicato: {esito['byte'] / 1024:.1f} KB."
+        if esito["errore"]:
+            testo += f"\n⚠️ {esito['errore']}"
+    else:
+        testo = f"❌ Snapshot non pubblicato ({esito['stato']}): {esito['errore']}"
+    if esito["avvisi"]:
+        testo += f"\n\nAvvisi ({len(esito['avvisi'])}):\n" + "\n".join(f"- {a}" for a in esito["avvisi"][:MAX_AVVISI_NEL_MESSAGGIO])
+        if len(esito["avvisi"]) > MAX_AVVISI_NEL_MESSAGGIO:
+            testo += f"\n... e altri {len(esito['avvisi']) - MAX_AVVISI_NEL_MESSAGGIO}"
+    await avvisa_admin(context, testo, destinatari=chi, parse_mode=None)
+
 COMANDI_ADMIN = [
     ("start", "Apri il menu principale"),
     ("status", "Giornata corrente e schedine mancanti"),
     ("diagnostica", "Controlla memoria, Sheets, API e modelli IA"),
     ("backup", "Esporta subito un backup dei dati"),
     ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
+    ("pubblica", "Pubblica subito lo snapshot per il sito nuovo"),
 ]
 
 # Riservati all'owner: toccano una credenziale e cancellano dati.
@@ -2701,6 +3073,11 @@ def main():
         return
 
     logging.info("Admin autorizzati: %d (owner: %s)", len(ADMIN_IDS), OWNER_ID)
+    if pubblicazione_attiva():
+        logging.info("Pubblicazione snapshot su Cloudflare KV: attiva (controllo ogni %d min)", INTERVALLO_PUBBLICAZIONE_S // 60)
+    else:
+        logging.info("Pubblicazione snapshot su Cloudflare KV: spenta (variabili mancanti: %s)",
+                     ", ".join(n for n in VARIABILI_CLOUDFLARE if not os.environ.get(n, "").strip()))
 
     residue = pulisci_foto_residue()
     if residue:
@@ -2716,7 +3093,7 @@ def main():
     # Football-Data lo rielabori (visto il 30/08/2026): uno presto al mattino (prima di
     # eventuali rielaborazioni notturne), uno tardo dopo mezzanotte per le partite serali,
     # più i tre già esistenti nel corso della giornata/sera.
-    for h, m in [(1,0), (8,0), (17,30), (20,30), (23,0)]:
+    for h, m in ORARI_CALCOLO_RISULTATI:
         app.job_queue.run_daily(task_aggiornamento_automatico, time=dt_time(hour=h, minute=m, tzinfo=tz))
 
     # Job giornaliero: alle 10:00 controlla se ci sono partite oggi e schedula promemoria 30min prima
@@ -2731,6 +3108,12 @@ def main():
     # senza traffico, quindi a 10 minuti di intervallo UN SOLO ping perso creerebbe
     # un buco di 20 minuti e ucciderebbe il servizio. A 5 ne sopravvive due di fila.
     app.job_queue.run_repeating(task_autoping, interval=300, first=60)
+
+    # Snapshot per il sito nuovo: controllo ogni 15 minuti, ripubblica solo se cambiato.
+    # Non gira nella pausa notturna (lo controlla il job stesso). Spento senza variabili Cloudflare.
+    # first allineato ai minuti :07 :22 :37 :52, lontano dai calcoli (vedi MINUTI_PUBBLICAZIONE).
+    app.job_queue.run_repeating(task_pubblica_snapshot, interval=INTERVALLO_PUBBLICAZIONE_S,
+                                first=prossimo_orario_pubblicazione(datetime.now(pytz.UTC)))
 
     # Backup settimanale (lunedì mattina, orario tranquillo) inviato come documento all'admin
     app.job_queue.run_daily(task_backup_periodico, time=dt_time(hour=9, minute=0, tzinfo=tz), days=(0,))
@@ -2796,6 +3179,7 @@ def main():
     app.add_handler(CommandHandler("diagnostica", diagnostica_command))
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
+    app.add_handler(CommandHandler("pubblica", pubblica_command))
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("archiviastagione", archivia_stagione_command)],
         states={CONFERMA_ARCHIVIA_STAGIONE: [

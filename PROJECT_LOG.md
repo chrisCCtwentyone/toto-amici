@@ -21,6 +21,7 @@
 | `ADMIN_IDS` | Render (Environment Variables, opzionale) | Altri admin autorizzati, separati da virgola (es. `123456,789012`). Fanno tutta la gestione quotidiana; l'owner è sempre incluso anche se non elencato |
 | `SPREADSHEET_ID` | Render + Streamlit Secrets | ID del Google Spreadsheet centrale |
 | `FOOTBALL_DATA_KEY` | Render + Streamlit Secrets | Chiave API football-data.org |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_KV_NAMESPACE_ID` | Render (opzionali) | Pubblicazione dello snapshot su Cloudflare KV (Fase 1B del restyling). Senza, la pubblicazione è spenta |
 | `gcp_service_account` | Streamlit Secrets (JSON) | Credenziali service account Google Cloud |
 
 ### File Credenziali Locali (NON in git, in .gitignore)
@@ -119,6 +120,20 @@ Toto_Amici_Progetto/
 **Copia locale del progetto**: dopo la sospensione di GitHub, il repo ha un secondo remote `backup` (repo bare in `~/Backups/Toto_Amici/toto-amici1.git`) e i file segreti sono copiati in `~/Backups/Toto_Amici/segreti/`. Si aggiorna con `scripts/backup_locale.sh`.
 
 **Restyling, Fase 0**: decisioni sullo snapshot, KV, Vite + React su Workers, stile grafico «Diretta». Tutto in [RESTYLING.md](RESTYLING.md).
+
+### 04/10/2026 — Sessione 29, Fase 1B (il bot pubblica lo snapshot su Cloudflare KV)
+
+**Aggiunta, non modifica**: la logica di calcolo del bot non è cambiata. Dettagli e variabili in [RESTYLING.md](RESTYLING.md), Fase 1.
+- **Cosa fa** (`bot_telegram.py`, sezione «Pubblicazione dello snapshot su Cloudflare KV»): legge Classifica (foglio intero), `Cassa!A:D`, `Giocate!A:I` con una batchGet, le 380 partite con **una** chiamata a Football-Data tenuta 60 minuti in RAM (ridotta ai soli campi usati), costruisce lo snapshot con `costruisci_snapshot_con_avvisi` e scrive su KV `snapshot` (solo se l'impronta cambia, o con `/pubblica`) e `segnale` (a ogni controllo). Spenta se manca una delle tre variabili `CLOUDFLARE_*`.
+- **Quando**: job ogni 15 minuti (`task_pubblica_snapshot`, non gira nella pausa notturna) e `programma_pubblicazione(context)` dopo `scegli_giornata_update`, `task_aggiornamento_automatico`, `esegui_conferma_risultato_manuale`, `esegui_salvataggio_ia`, `verifica_codice_archiviazione`: una `run_once` fra 10 secondi, una sola anche con più scritture ravvicinate. Un `asyncio.Lock` evita pubblicazioni sovrapposte.
+- **Regola di errore**: ogni eccezione si logga e si ferma lì. Se i dati sono illeggibili o lo snapshot non si scrive, **il segnale non si scrive** (§4: «ho verificato e sono allineato» sarebbe falso); il sito mostra da solo «dati vecchi» dopo 2 ore. Dopo 4 controlli falliti di fila (~1 ora) un solo avviso agli admin. Se Football-Data cade si usa la copia in cache fino a 6 ore.
+- **Avvisi** di `costruisci_snapshot_con_avvisi` agli admin con `avvisa_admin()` (testo da `escape_markdown`), deduplicati sul foglio `Stato` (chiave `avvisi_snapshot`, azzerata in `archivia_stagione()`): una volta sola, anche dopo un riavvio; se il problema sparisce e ritorna, di nuovo.
+- **`/pubblica`** (admin): forza snapshot + segnale (e rilegge Football-Data), risponde a chi l'ha lanciato con esito, KB e avvisi.
+- **`api_utils.richiedi_con_retry`** accetta `metodo` e `dati` (per il PUT); senza, è identica a prima.
+- **Test**: 784 → **859 verdi** (70 in `tests/test_pubblicazione_snapshot.py`, 3 in `test_api_utils.py`, 2 invarianti: «una pubblicazione che fallisce non cambia ciò che `esegui_calcolo_risultati` scrive»). Dry-run giornate 1-5: 1.600 celle, 0 differenze. Prova locale sui dati veri (sola lettura, PUT finto): snapshot 114.704 byte, segnale 281 byte, impronta identica fra due giri.
+- **Client Sheets privato** (richiesta del coordinatore, risolve il rischio httplib2 non thread-safe): la pubblicazione costruisce a ogni giro `nuovo_client_sheets()` (scope readonly, `cache_discovery=False`) e lo chiude; il foglio Stato per la deduplica ne usa un secondo a scope completo, costruito solo quando serve. `leggi_stato`/`scrivi_stato` hanno un parametro `service` opzionale (retrocompatibile). Un test fa sollevare `connetti_sheets()` se la pubblicazione lo tocca. Costo misurato in locale: client ~0,85 MB di heap Python (tracemalloc), +0-0,7 MB di RSS, rilasciato a fine giro. Test: 868 verdi. Regola aggiunta a `CLAUDE.md`.
+- **Memoria**: il job dei 15 minuti gira ai minuti :07 :22 :37 :52 (`first` calcolato da `prossimo_orario_pubblicazione`, orari dei calcoli in `ORARI_CALCOLO_RISULTATI`), a ≥7 minuti da ogni calcolo schedulato, così il picco della pubblicazione non cade sopra quello del calcolo. La pubblicazione aspetta un salvataggio in corso (prende e rilascia `lock_salvataggio_schedina()`); per il calcolo non esiste un flag e non è stato aggiunto. Test: 878 verdi.
+- **Da fare a mano**: creare namespace KV e token, impostare le tre variabili su Render, poi `/pubblica`. Fra archiviazione e prima schedina della nuova stagione lo snapshot è vuoto ma valido (si pubblica).
 
 ### 04/10/2026 — Sessione 28 (Classifica letta solo fino alla colonna Z: Giornate 25-38 a rischio)
 

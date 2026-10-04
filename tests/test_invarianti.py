@@ -403,3 +403,86 @@ class TestEstraiNumeroInvarianti:
             testo = f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
             assert bt.estrai_numero(testo) == x, testo
             assert bt.estrai_numero(testo + " €") == x, testo
+
+
+# ======================================================================
+# Fase 1B: la pubblicazione dello snapshot e' un'aggiunta, non una modifica
+# ======================================================================
+class _ValuesConBatchGet(FakeValues):
+    """Come FakeValues, piu' la batchGet che usa la pubblicazione (solo lettura)."""
+
+    def batchGet(self, spreadsheetId, ranges):
+        class _R:
+            def execute(self_inner, **kwargs):
+                return {"valueRanges": [{"values": [["Giocatore", "Punti Totali"]]},
+                                        {"values": [["Giornata", "Descrizione", "Entrate", "Saldo Totale"]]},
+                                        {"values": self_valori}]}
+        self_valori = self._righe
+        return _R()
+
+
+class _ClientSoloLettura:
+    """Il client privato della pubblicazione: sa solo leggere. Qualunque altra cosa fa fallire il test."""
+
+    def __init__(self, righe): self._righe = righe
+    def close(self): pass
+    def spreadsheets(self): return self
+
+    def values(self):
+        return _ValuesConBatchGet(self._righe)
+
+    def __getattr__(self, nome):
+        raise AssertionError(f"la pubblicazione ha usato {nome}")
+
+
+class TestInvariantePubblicazione:
+    """INVARIANTE: una pubblicazione che fallisce non cambia nulla di cio' che
+    esegui_calcolo_risultati scrive, e la pubblicazione stessa non scrive MAI su
+    Sheets (a parte la chiave di deduplica nel foglio Stato, che qui e' intercettata).
+    """
+
+    def _calcolo(self, monkeypatch, pubblicazione_rotta):
+        righe = _stagione_completa()
+        service = FakeService(righe)
+        service.values_obj = _ValuesConBatchGet(righe)
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+        scritture_stato = []
+        monkeypatch.setattr(bt, "scrivi_stato", lambda chiave, valore, service=None: scritture_stato.append(chiave))
+        monkeypatch.setattr(bt, "leggi_stato", lambda chiave, default=None, service=None: default)
+
+        monkeypatch.setattr(bt, "nuovo_client_sheets", lambda sola_lettura=True: _ClientSoloLettura(righe))
+
+        def rete_rotta(*a, **k):
+            raise ConnectionError("Cloudflare e Football-Data non rispondono")
+
+        if pubblicazione_rotta:
+            monkeypatch.setattr(bt, "CLOUDFLARE_API_TOKEN", "t")
+            monkeypatch.setattr(bt, "CLOUDFLARE_ACCOUNT_ID", "a")
+            monkeypatch.setattr(bt, "CLOUDFLARE_KV_NAMESPACE_ID", "n")
+            monkeypatch.setattr(bt, "richiedi_con_retry", rete_rotta)
+        contesto = type("C", (), {"job_queue": None, "bot": None})()
+
+        import asyncio
+        if pubblicazione_rotta:
+            asyncio.run(bt.pubblica_snapshot(contesto, forza=True))      # prima del calcolo...
+        report = bt.esegui_calcolo_risultati("7", matches_api=[_match(SQUADRE[0], SQUADRE[1], 2, 0)])
+        scritto_dal_calcolo = (list(service.values_obj.celle_scritte), list(service.values_obj.cassa_scritta))
+        if pubblicazione_rotta:
+            bt.programma_pubblicazione(contesto)                         # ...durante...
+            asyncio.run(bt.pubblica_snapshot(contesto, forza=True))      # ...e dopo.
+        scritto_alla_fine = (list(service.values_obj.celle_scritte), list(service.values_obj.cassa_scritta))
+        return report, scritto_dal_calcolo, scritto_alla_fine, scritture_stato
+
+    def test_una_pubblicazione_che_fallisce_non_cambia_cio_che_il_calcolo_scrive(self, monkeypatch):
+        report_a, scritto_a, fine_a, _ = self._calcolo(monkeypatch, pubblicazione_rotta=False)
+        monkeypatch.undo()
+        report_b, scritto_b, fine_b, _ = self._calcolo(monkeypatch, pubblicazione_rotta=True)
+        assert scritto_a[0], "il calcolo di prova deve scrivere qualcosa, altrimenti il confronto non prova niente"
+        assert report_b == report_a
+        assert scritto_b == scritto_a
+        assert fine_b == scritto_b, "la pubblicazione ha scritto su Sheets dopo il calcolo"
+
+    def test_la_pubblicazione_non_scrive_su_sheets_nemmeno_quando_riesce_a_leggere(self, monkeypatch):
+        _, _, fine, scritture_stato = self._calcolo(monkeypatch, pubblicazione_rotta=True)
+        # Celle e Cassa: solo quelle del calcolo (nessun'altra scrittura). Lo Stato, se toccato, e' solo la chiave di deduplica.
+        assert set(scritture_stato) <= {bt.CHIAVE_AVVISI_SNAPSHOT}

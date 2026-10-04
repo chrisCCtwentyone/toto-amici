@@ -63,10 +63,21 @@ Grafica da telecronaca: blu notte, barre oblique proporzionali ai punti, pallino
 
 ### Fase 1 — Lo snapshot (lato bot, Python)
 - [x] Definire lo schema (scritto nel file a parte [restyling/snapshot-schema.md](restyling/snapshot-schema.md), approvato il 04/10/2026).
-- [ ] Generazione dello snapshot dopo `esegui_calcolo_risultati`, riusando `statistiche.py`.
-- [ ] Pubblicazione su Cloudflare (token come variabile d'ambiente su Render, mai nel repo).
+- [x] Generazione dello snapshot dopo `esegui_calcolo_risultati`, riusando `statistiche.py` (1A: `costruisci_snapshot_con_avvisi`; 1B: il bot lo costruisce dopo ogni scrittura su Sheets e ogni 15 minuti).
+- [x] Pubblicazione su Cloudflare KV, due chiavi `snapshot` e `segnale` (1B, Sessione 29). **Il codice è pronto ma spento finché su Render non ci sono le tre variabili qui sotto**: senza, il bot non pubblica e non lo dice a nessuno.
 - [ ] Test: lo snapshot contiene quello che le sei schede mostrano oggi.
-- [ ] **Se la pubblicazione fallisce, il calcolo non deve fallire.** Stessa regola dello stato persistente: lo stato non è mai più importante del lavoro.
+- [x] **Se la pubblicazione fallisce, il calcolo non deve fallire.** Stessa regola dello stato persistente: lo stato non è mai più importante del lavoro. Bloccato da `tests/test_pubblicazione_snapshot.py` e da un'invariante in `tests/test_invarianti.py`.
+- [ ] Creare su Cloudflare il namespace KV e il token API (permesso *Workers KV Storage: Edit*, solo sul namespace/account), e impostare le variabili su Render (a mano, dall'utente). Poi `/pubblica` dal bot per la prima pubblicazione e controllo del contenuto su KV.
+
+**Variabili d'ambiente del bot su Render** (mai nel repo; se ne manca una la pubblicazione è spenta, con una sola riga informativa nel log all'avvio):
+
+| Nome | Cosa è |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Token API Cloudflare con permesso di scrittura su Workers KV |
+| `CLOUDFLARE_ACCOUNT_ID` | ID dell'account Cloudflare |
+| `CLOUDFLARE_KV_NAMESPACE_ID` | ID del namespace KV che contiene `snapshot` e `segnale` |
+
+**Come pubblica il bot** (`bot_telegram.py`, sezione «Pubblicazione dello snapshot»): `PUT https://api.cloudflare.com/client/v4/accounts/{account}/storage/kv/namespaces/{namespace}/values/{chiave}`, corpo grezzo, timeout 20 s. Un controllo ogni 15 minuti (non nella pausa notturna) più una pubblicazione ~10 secondi dopo ogni scrittura su Sheets (calcolo risultati, salvataggio schedina, risultato manuale, archiviazione). `snapshot` si riscrive solo se l'impronta cambia, `segnale` a ogni controllo; **se i dati sono illeggibili o la scrittura fallisce il segnale NON si scrive**, così il sito invecchia e avvisa da solo dopo 2 ore. Football-Data: una chiamata per stagione, in cache 60 minuti. Comando admin `/pubblica` per forzare. Gli avvisi di `costruisci_snapshot_con_avvisi` vanno agli admin una volta sola (foglio `Stato`, chiave `avvisi_snapshot`).
 
 ### Fase 2 — Front-end
 - [ ] Scaffold React su Cloudflare Pages, deploy da GitLab.

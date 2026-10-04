@@ -14,8 +14,9 @@ import time
 import requests
 
 
-def richiedi_con_retry(url, headers=None, timeout=10, tentativi=3, backoff_base=1.5):
-    """GET con retry ed exponential backoff.
+def richiedi_con_retry(url, headers=None, timeout=10, tentativi=3, backoff_base=1.5, metodo="GET", dati=None):
+    """GET (o altro metodo, es. "PUT" con `dati` come corpo) con retry ed
+    exponential backoff. Senza `metodo` e `dati` e' identica a prima.
 
     - tentativi=3: al massimo 3 richieste totali (1 + 2 retry).
     - backoff_base=1.5: attese di ~1.5s poi ~2.25s tra un tentativo e l'altro.
@@ -28,7 +29,8 @@ def richiedi_con_retry(url, headers=None, timeout=10, tentativi=3, backoff_base=
     ultimo_errore = None
     for tentativo in range(1, tentativi + 1):
         try:
-            r = requests.get(url, headers=headers, timeout=timeout)
+            extra = {} if dati is None else {"data": dati}
+            r = getattr(requests, metodo.lower())(url, headers=headers, timeout=timeout, **extra)
             r.raise_for_status()
             return r
         except Exception as e:

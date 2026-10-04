@@ -87,3 +87,28 @@ class TestRichiediConRetry:
         attese = [c.args[0] for c in mock_sleep.call_args_list]
         assert attese == sorted(attese), "il backoff deve crescere, non restare piatto o diminuire"
         assert len(attese) == 2  # tra tentativo 1->2 e 2->3, non dopo l'ultimo fallimento
+
+
+class TestMetodoEDati:
+    """Fase 1B: la stessa funzione serve anche per il PUT su Cloudflare KV."""
+
+    @patch("api_utils.requests.put")
+    def test_put_passa_il_corpo_e_gli_header(self, mock_put):
+        mock_put.return_value = _risposta_ok()
+        richiedi_con_retry("https://esempio.test/kv", headers={"X": "1"}, timeout=7, metodo="PUT", dati=b"{}")
+        mock_put.assert_called_once_with("https://esempio.test/kv", headers={"X": "1"}, timeout=7, data=b"{}")
+
+    @patch("api_utils.requests.get")
+    def test_il_get_resta_identico_senza_data(self, mock_get):
+        """Retrocompatibilita': nessun argomento `data` nelle chiamate di prima."""
+        mock_get.return_value = _risposta_ok()
+        richiedi_con_retry("https://esempio.test/api", headers={"X": "1"}, timeout=7)
+        mock_get.assert_called_once_with("https://esempio.test/api", headers={"X": "1"}, timeout=7)
+
+    @patch("api_utils.time.sleep", return_value=None)
+    @patch("api_utils.requests.put")
+    def test_put_ritenta_e_poi_rilancia(self, mock_put, mock_sleep):
+        mock_put.side_effect = requests.exceptions.Timeout("lento")
+        with pytest.raises(requests.exceptions.Timeout):
+            richiedi_con_retry("https://esempio.test/kv", metodo="PUT", dati=b"x", tentativi=3)
+        assert mock_put.call_count == 3
