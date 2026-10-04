@@ -132,6 +132,26 @@ if MANUTENZIONE:
             )
     st.stop()
 
+# --- TOTO-AMICI 3.0: IL SITO SI È SPOSTATO ---
+# Dal 04/10/2026 il sito ufficiale è quello nuovo su Cloudflare (frontend/).
+# Questa pagina resta solo per chi ha il vecchio segnalibro: non legge più Sheets.
+SITO_NUOVO = "https://toto-amici.benanti64.workers.dev"
+st.markdown("<br><br>", unsafe_allow_html=True)
+col_vuota1, col_centro, col_vuota2 = st.columns([1, 2, 1])
+with col_centro:
+    with st.container(border=True):
+        st.markdown(
+            "<div style='text-align:center; padding: 2rem 1rem;'>"
+            "<div style='font-size: 3rem;'>⚽</div>"
+            "<h2>Toto-Amici 3.0 è qui</h2>"
+            "<p>Il sito ha una casa nuova, più veloce e sempre acceso.<br>"
+            "Aggiorna il segnalibro:</p>"
+            f"<p style='font-size: 1.2rem;'><a href='{SITO_NUOVO}' target='_self'><b>{SITO_NUOVO.removeprefix('https://')}</b></a></p>"
+            "</div>",
+            unsafe_allow_html=True
+        )
+st.stop()
+
 # --- CONFIGURAZIONE (INDIPENDENTE DALL'HOST) ---
 def segreto(chiave, default=None):
     """Valore di configurazione, da `st.secrets` oppure dall'ambiente.
@@ -168,8 +188,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.11.4"
+VERSIONE_APP = "3.0.0"
 NOVITA = [
+    ("3.0.0", "04/10/2026", "Toto-Amici 3.0: sito tutto nuovo, più veloce e sempre acceso, con i risultati in diretta. Questo indirizzo ora porta a quello nuovo."),
     ("2.11.4", "04/10/2026", "Il sito ha cambiato casa e ha un nuovo indirizzo: aggiorna il segnalibro. I dati e le classifiche sono gli stessi di sempre."),
     ("2.11.3", "18/09/2026", "Il sito chiede meno spesso i dati delle giornate già finite, che tanto non cambiano più: meno attese e meno rischio di rallentamenti."),
     ("2.11.2", "18/09/2026", "Se il sito è in aggiornamento ora compare un messaggio chiaro al posto della schermata di errore."),
