@@ -9,7 +9,7 @@
 ### Deploy
 | Componente | Piattaforma | Sorgente | Note |
 |---|---|---|---|
-| Web Dashboard (`app.py`) | Streamlit Community Cloud | GitHub `main` | Pubblica, sempre online |
+| Web Dashboard (`app.py`) | **Render** (Web Service, free) | **GitLab** `main` | Pubblica. Si spegne dopo 15 min di inattività e si riaccende da sola alla prima visita (~1 min) |
 | Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + cron-job.org ogni 10 min. Render spegne dopo 15 min senza traffico **in entrata**. **Dorme di proposito 02:00–07:30** per stare nelle 750 h/mese gratuite (Sessione 26) |
 | Database | Google Sheets | — | SPREADSHEET_ID: `1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE` |
 
@@ -121,6 +121,18 @@ Toto_Amici_Progetto/
 - 26 test nuovi in `tests/test_pausa_notturna.py` (520 totali, verdi). Restano in `tests/test_risparmio_risorse.py` tre test `TestAutoUpdateNonSiRipete` ormai tautologici (assegnano `bt.ultimo_report_inviato`, che non esiste più): passano, da eliminare.
 
 ### 04/10/2026 — Sessione 27 (Account GitHub sospeso: sito indipendente dall'host)
+
+**ESITO: migrazione completata, sito di nuovo online** → **https://toto-amici-sito.onrender.com**
+
+- **Repo su GitLab**: `git@gitlab.com:benanti64/toto-amici1.git`, **privato** (meglio del vecchio su GitHub, che era pubblico — è così che in passato sono trapelate delle chiavi). 101 commit, verificato che nessun file di credenziali sia finito dentro. Autenticazione via **chiave SSH**, che a differenza dei token di GitLab **non scade** (GitLab.com impone un massimo di 365 giorni sui personal access token).
+- **Sito su Render**, secondo servizio free dallo stesso workspace del bot. Il deploy automatico da GitLab funziona: un push fa partire il build da solo.
+- **Credenziali Google via Secret File**, non via variabile d'ambiente: Render li mette in `/etc/secrets/`, e `_get_credentials()` cerca in entrambi i posti. Più semplice e meno fragile che incollare 2,3 KB di JSON in un campo env.
+- **Verificato sul sito vero**: Classifica, Cassa, Statistiche e Confronto Giocate caricano i dati reali. Tempi a caldo **0,24–0,31s**, cioè gli stessi del bot sullo stesso piano (0,37s): a regime non è più lento di prima. Cambia solo il primo accesso dopo 15 minuti di inattività (~1 min di riaccensione) — che su Streamlit Cloud costava comunque un risveglio, con in più un bottone da premere.
+- **Piè di pagina**: tolti i due link a GitHub, ora morti (account sospeso, e il repo nuovo è privato). Un link che dà 404 è peggio di nessun link.
+
+**Ancora da fare**: ripuntare il **bot** da GitHub a GitLab. Finché non si fa, il bot continua a girare (Render esegue l'immagine già costruita) ma **non è aggiornabile**.
+
+
 
 **L'account GitHub dell'utente è stato sospeso per abuse.** Questo spiega anche il «Oh no. Error running app.» del sito indagato il 03/10: Streamlit Cloud non riusciva più a leggere il repo sospeso. Il codice era sano — verificato allora su streamlit 1.65 e pandas 3.0.6, tutte le schede, dati veri.
 
