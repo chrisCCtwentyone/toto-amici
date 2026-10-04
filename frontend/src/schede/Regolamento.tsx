@@ -1,19 +1,29 @@
-import { Card, StatoVuoto } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
-import { formattaIntero } from "../lib/format";
+import Bolletta from "./classifica-cassa-regolamento/regolamento/Bolletta";
+import Punteggi from "./classifica-cassa-regolamento/regolamento/Punteggi";
+import RegoleErrori from "./classifica-cassa-regolamento/regolamento/RegoleErrori";
+import CassaPremi from "./classifica-cassa-regolamento/regolamento/CassaPremi";
+import { TitoloSezione } from "../componenti";
 
 /**
- * SEGNAPOSTO della scheda "Regolamento": va sostituito per intero (lascia `export default`).
- * Legge: §10 regole.
- * Campi dello snapshot: regole. Vedi GUIDA-SCHEDE.md.
+ * Scheda "Regolamento": i testi sono del sito (copia statica), i numeri vengono da §10 `regole`
+ * (costi, punti, soglia, premi): cosi' non esistono tre copie da tenere allineate.
  */
 export default function Regolamento() {
-  const snapshot = useSnapshot();
+  const { regole } = useSnapshot();
   return (
-    <Card titolo="Regolamento" evidenza="in costruzione" bandiera="accento">
-      <StatoVuoto titolo="Scheda da costruire">
-        I dati ci sono già: {formattaIntero(snapshot.regole.giocatori)} giocatori in regolamento.
-      </StatoVuoto>
-    </Card>
+    <div className="pb-4">
+      <TitoloSezione evidenza="ufficiale">Regolamento</TitoloSezione>
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <div className="grid gap-4">
+          <Bolletta regole={regole} />
+          <Punteggi regole={regole} />
+        </div>
+        <div className="grid gap-4">
+          <RegoleErrori regole={regole} />
+          <CassaPremi regole={regole} />
+        </div>
+      </div>
+    </div>
   );
 }

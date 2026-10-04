@@ -1,19 +1,18 @@
-import { Card, StatoVuoto } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
-import { formattaIntero } from "../lib/format";
+import Podio from "./classifica-cassa-regolamento/Podio";
+import ClassificaCompleta from "./classifica-cassa-regolamento/ClassificaCompleta";
+import FondoCassa from "./classifica-cassa-regolamento/FondoCassa";
 
-/**
- * SEGNAPOSTO della scheda "Classifica & Cassa": va sostituito per intero (lascia `export default`).
- * Legge: §5 classifica, §6 cassa.
- * Campi dello snapshot: classifica, cassa. Vedi GUIDA-SCHEDE.md.
- */
+/** Scheda "Classifica & Cassa": legge solo §5 classifica e §6 cassa, non calcola nulla. */
 export default function ClassificaCassa() {
-  const snapshot = useSnapshot();
+  const { classifica, cassa } = useSnapshot();
   return (
-    <Card titolo="Classifica & Cassa" evidenza="in costruzione" bandiera="accento">
-      <StatoVuoto titolo="Scheda da costruire">
-        I dati ci sono già: {formattaIntero(snapshot.classifica.giocatori.length)} giocatori in classifica.
-      </StatoVuoto>
-    </Card>
+    <div className="grid gap-4 pb-4">
+      <Podio classifica={classifica} />
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <ClassificaCompleta classifica={classifica} />
+        <FondoCassa cassa={cassa} />
+      </div>
+    </div>
   );
 }
