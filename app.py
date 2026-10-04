@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
 import os
 import pytz
 from datetime import datetime
@@ -131,12 +132,34 @@ if MANUTENZIONE:
             )
     st.stop()
 
+# --- CONFIGURAZIONE (INDIPENDENTE DALL'HOST) ---
+def segreto(chiave, default=None):
+    """Valore di configurazione, da `st.secrets` oppure dall'ambiente.
+
+    Streamlit Cloud passa i segreti con `secrets.toml`; Render e quasi tutti gli
+    altri host li passano come variabili d'ambiente, che `st.secrets` non legge.
+    Leggendo da entrambi, lo stesso `app.py` gira ovunque senza modifiche — cosa
+    che e' servita davvero quando il sito ha dovuto cambiare casa di corsa.
+
+    L'accesso a `st.secrets` sta dentro un try perche' senza il file dei segreti
+    **solleva** invece di restituire vuoto: una riga di questo tipo lasciata
+    scoperta fa morire tutta la pagina.
+    """
+    try:
+        if chiave in st.secrets:
+            return st.secrets[chiave]
+    except Exception:
+        pass
+    # Anche in MAIUSCOLO: e' la convenzione dei pannelli delle variabili
+    # d'ambiente, e sbagliare maiuscole qui fallirebbe in silenzio.
+    return os.environ.get(chiave, os.environ.get(chiave.upper(), default))
+
+
 # --- COSTANTI ---
-try:
-    SPREADSHEET_ID = st.secrets["SPREADSHEET_ID"]
-    FOOTBALL_DATA_KEY = st.secrets["FOOTBALL_DATA_KEY"]
-except KeyError:
-    st.error(":material/error: Chiavi segrete mancanti! Configurale su Streamlit Cloud nei Secrets.")
+SPREADSHEET_ID = segreto("SPREADSHEET_ID")
+FOOTBALL_DATA_KEY = segreto("FOOTBALL_DATA_KEY")
+if not SPREADSHEET_ID or not FOOTBALL_DATA_KEY:
+    st.error(":material/error: Chiavi segrete mancanti! Configurale nei Secrets dell'host.")
     st.stop()
 
 OBIETTIVO_CASSA = 3200.0
@@ -145,8 +168,9 @@ EMOJI_POSIZIONE = {0: "🥇", 1: "🥈", 2: "🥉"}
 # --- VERSIONE E NOVITÀ ---
 # Aggiornare ad ogni sessione di modifiche pubblicate. Schema: MAJOR.MINOR.PATCH
 # (MAJOR = redesign/rilascio importante, MINOR = nuove funzionalità, PATCH = fix minori).
-VERSIONE_APP = "2.11.3"
+VERSIONE_APP = "2.11.4"
 NOVITA = [
+    ("2.11.4", "04/10/2026", "Il sito ha cambiato casa e ha un nuovo indirizzo: aggiorna il segnalibro. I dati e le classifiche sono gli stessi di sempre."),
     ("2.11.3", "18/09/2026", "Il sito chiede meno spesso i dati delle giornate già finite, che tanto non cambiano più: meno attese e meno rischio di rallentamenti."),
     ("2.11.2", "18/09/2026", "Se il sito è in aggiornamento ora compare un messaggio chiaro al posto della schermata di errore."),
     ("2.11.1", "18/09/2026", "Nel confronto giocate le partite sono in ordine di orario: la prima della giornata è la prima riga della tabella."),
@@ -171,15 +195,20 @@ NOVITA = [
 # ==========================================
 def _get_credentials():
     """
-    1. Locale / Render: legge credenziali.json
-    2. Streamlit Cloud: fallback su st.secrets["gcp_service_account"]
+    1. In locale: il file credenziali.json
+    2. Sull'host: `gcp_service_account`, da secrets.toml (una tabella) oppure
+       da una variabile d'ambiente (il JSON dentro una stringa).
     """
     SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
     if os.path.exists('credenziali.json'):
         return Credentials.from_service_account_file('credenziali.json', scopes=SCOPES)
-    return Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=SCOPES
-    )
+
+    info = segreto("gcp_service_account")
+    if not info:
+        raise RuntimeError("Credenziali Google assenti: manca 'gcp_service_account'.")
+    if isinstance(info, str):
+        info = json.loads(info)  # variabile d'ambiente: il JSON arriva come testo
+    return Credentials.from_service_account_info(dict(info), scopes=SCOPES)
 
 @st.cache_resource
 def get_sheets_service():

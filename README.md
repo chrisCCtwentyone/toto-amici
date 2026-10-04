@@ -131,7 +131,9 @@ Nessuna credenziale è inclusa nel repository. Servono:
 | `SPREADSHEET_ID` | Render + Streamlit Secrets | Foglio Google usato come database |
 | `FOOTBALL_DATA_KEY` | Render + Streamlit Secrets | API dei risultati |
 | `GEMINI_API_KEY` | Render | Lettura IA delle schedine |
-| `gcp_service_account` | Streamlit Secrets | Service account Google (JSON) |
+| `gcp_service_account` | Secrets dell'host | Service account Google (JSON) |
+
+Il sito legge la configurazione **sia** dai secrets di Streamlit **sia** dalle variabili d'ambiente (vedi `segreto()` in `app.py`), quindi lo stesso `app.py` gira su Streamlit Cloud, su Render o in locale senza modifiche. Come variabile d'ambiente, `gcp_service_account` (o `GCP_SERVICE_ACCOUNT`) contiene l'intero JSON su una riga.
 
 In locale, al posto delle ultime due si possono usare i file `credenziali.json` e `chiave_api.txt`, entrambi esclusi da Git.
 

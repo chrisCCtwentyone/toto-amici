@@ -120,6 +120,30 @@ Toto_Amici_Progetto/
 - Effetti accettati: un admin che scrive di notte riceve risposta dopo il risveglio (Telegram tiene gli update in coda fino a 24 h e il bot non li scarta: `drop_pending_updates` non è impostato). `ultime_anomalie_segnalate` resta in RAM: un'anomalia ancora aperta può essere ri-segnalata una volta al mattino.
 - 26 test nuovi in `tests/test_pausa_notturna.py` (520 totali, verdi). Restano in `tests/test_risparmio_risorse.py` tre test `TestAutoUpdateNonSiRipete` ormai tautologici (assegnano `bt.ultimo_report_inviato`, che non esiste più): passano, da eliminare.
 
+### 04/10/2026 — Sessione 27 (Account GitHub sospeso: sito indipendente dall'host)
+
+**L'account GitHub dell'utente è stato sospeso per abuse.** Questo spiega anche il «Oh no. Error running app.» del sito indagato il 03/10: Streamlit Cloud non riusciva più a leggere il repo sospeso. Il codice era sano — verificato allora su streamlit 1.65 e pandas 3.0.6, tutte le schede, dati veri.
+
+**Cosa NON si è perso, verificato:**
+- Il clone locale è completo e integro: 100 commit, allineato a `origin/main`. GitHub era una copia, non l'originale.
+- **Il bot è rimasto online per tutto il tempo**: `https://toto-amici-bot.onrender.com` risponde HTTP 200 in 0,25s, deploy del 01/10 `live`. Render esegue l'**immagine già costruita**: GitHub gli serve solo per deploy *nuovi*. Il campionato poteva ripartire senza toccare niente.
+- Backup su `~/Desktop/toto-amici-backup-20261004/`: bundle git con tutta la storia (`git bundle verify`: "records a complete history"), più credenziali e le variabili pronte da incollare.
+
+**Da non fare, finché il repo non ha un remote raggiungibile:** nessun *Manual Deploy* / *Clear build cache* su Render. Proverebbe a clonare il repo sospeso e fallirebbe, facendo cadere un bot che invece funziona. Un *Restart* è sicuro (riusa l'immagine).
+
+**Streamlit Community Cloud deploya SOLO da GitHub.** Niente GitLab, niente Bitbucket, e non è in programma. Quindi senza GitHub il sito non può restare lì: non è un problema di configurazione, è un vincolo della piattaforma.
+
+**Hugging Face Spaces scartato dopo verifica**, non per gusto: la documentazione dice che gli SDK sono Gradio, Docker e HTML statico, e che gli Spaces con compute **richiedono un piano a pagamento** per gli account personali. Sembrava la risposta ovvia (gratis, Streamlit nativo, git proprio) e non lo era.
+
+**Scelto Render**, che l'utente ha già: supporta GitHub, GitLab e Bitbucket, e il bot con la pausa notturna lascia libere circa 195 delle 750 ore mensili — un sito che dorme quando non è usato ci sta comodo.
+
+**La modifica vera: `segreto()` in `app.py`.** Streamlit Cloud passa i segreti con `secrets.toml`, Render come variabili d'ambiente, e `st.secrets` **non legge l'ambiente**. Peggio: senza il file dei segreti `st.secrets` **solleva** invece di restituire vuoto — infatti il vecchio `except KeyError` non avrebbe intercettato niente. Ora la stessa `app.py` gira su Streamlit Cloud, su Render e in locale senza modifiche; `_get_credentials()` accetta il service account sia come tabella (secrets.toml) sia come JSON in una stringa (variabile d'ambiente), e `segreto()` prova anche il nome in MAIUSCOLO perché è la convenzione dei pannelli env.
+- **Verificato davvero**: sito avviato in una cartella **senza `secrets.toml` e senza `credenziali.json`**, con le sole variabili d'ambiente — Classifica, Cassa, Statistiche, dati veri. Provato con entrambe le convenzioni di nome.
+
+**Scoperta collaterale, da ricordare: la `private_key` dentro `.streamlit/secrets.toml` è corrotta** — 1707 caratteri e 27 a capo contro i 1704 e 28 di `credenziali.json`. In locale non se ne accorge nessuno perché `credenziali.json` ha la precedenza, e il primo test di migrazione è fallito proprio lì. **Per configurare un host nuovo usare `credenziali.json`, mai quel `secrets.toml`.**
+
+Sito a **2.11.4**. Test: **520** (il totale era salito a 520 con i 26 test della pausa notturna di Sessione 26).
+
 ### 26/09/2026 — Sessione 25 (Riepilogo non più duplicato dopo un riavvio, e i numeri veri di Render/Streamlit)
 
 **Domanda dell'utente: due settimane di pausa nazionali creano problemi di attività, stato online o spegnimento automatico?** Risposta misurata, non ipotizzata — e le due piattaforme si comportano in modo opposto.
