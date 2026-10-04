@@ -33,7 +33,7 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 ## Fasi
 
 ### Fase 0 — Decisioni da prendere prima di scrivere codice
-- [ ] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia. *Contenuto deciso (sotto), schema dei campi da scrivere.*
+- [x] **Formato dello snapshot JSON.** È il contratto fra bot e sito: va deciso per primo, perché tutto il resto ci si appoggia. *Contenuto deciso (sotto); schema approvato il 04/10/2026 in [restyling/snapshot-schema.md](restyling/snapshot-schema.md).*
 - [x] Dove si pubblica: **Cloudflare KV** (04/10/2026). Un JSON da ~40 KB compressi, al massimo un centinaio di scritture al giorno contro le 1.000 del piano free.
 - [x] Stack front-end: **Vite + React su Cloudflare Workers con static assets** (04/10/2026), non Pages: un solo progetto serve sito, snapshot e risultati live, con deploy da GitLab.
 - [x] Cosa resta davvero live: i **punteggi delle partite e gli orari di inizio**, dal Worker (vedi Fase 3). Tutto il resto viene dallo snapshot.
@@ -43,7 +43,7 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 1. **I calcoli stanno in Python.** Tutto ciò che oggi `app.py` calcola da solo (ordinamento con spareggio, frecce di tendenza, podio, Cassa e grafico dei versamenti, protagonisti, giornata da incorniciare, Semper Fidelis, squadra amuleto/maledetta, statistiche per giocatore e ritirati, scelta del gruppo e totali del Confronto, normalizzazione dei nomi partita) passa in `statistiche.py` con i test. Lo snapshot porta questi risultati già pronti **più** le righe di Giocate già pulite (numeri veri, giornata come intero, nome partita ufficiale). Il React filtra per giornata e giocatore, non calcola.
 2. **Quando si pubblica:** dopo ogni scrittura del bot su Sheets, più un controllo ogni 15 minuti che ripubblica solo se qualcosa è cambiato (così arrivano anche le correzioni fatte a mano sul foglio). Il controllo lascia comunque un **segnale di vita** con l'orario. Niente controlli dalle 02:00 alle 07:30.
 3. **Avviso dati vecchi:** il sito mostra sempre "Aggiornato alle HH:MM del gg/mm" e avvisa se il segnale di vita manca da **più di 2 ore**, tranne di notte.
-4. **Live:** il Worker abbina i risultati alle partite per **nome ufficiale esatto**. La corrispondenza approssimativa di oggi (`normalizza_partita_completa`) la fa il Python prima di pubblicare.
+4. **Live:** il Worker abbina i risultati alle partite per **id di Football-Data**, non per nome. L'abbinamento riga del foglio → partita lo fa il Python prima di pubblicare, **solo fra le 10 partite di quella giornata** (matchday) scaricate da Football-Data, confrontando le due squadre normalizzate (minuscole, senza suffissi societari): nelle Giornate 1-2 il foglio ha nomi disordinati (29 scritture diverse per 10 partite in G1), dalla G3 coincidono con `shortName`. Se una riga non trova partita, il bot non indovina: avvisa gli admin e la pubblica come `ufficiale: false`.
 5. **Timer dell'ultima schedina vinta:** l'istante di partenza lo calcola il Python e lo mette già pronto nello snapshot.
 6. **Solo la stagione in corso**, con un campo `stagione` (il titolo del sito lo legge da lì). Lo storico si potrà aggiungere dopo senza cambiare formato.
 7. **Pubblico come il sito di oggi:** nomi, schedine, vincite potenziali, Cassa con nomi e importi. Mai ID Telegram, chiavi, `SPREADSHEET_ID` o altri dati tecnici.
@@ -56,12 +56,13 @@ Il carico non è un problema e non lo sarà: 16-20 persone sono tre ordini di gr
 
    Tutto il resto si replica identico, compresi i titoli delle card delle Statistiche.
 10. **Logica da migliorare, non solo da spostare** (richiesta dell'utente, 04/10/2026): spostando i calcoli da `app.py` a `statistiche.py` si correggono errori logici, lavoro inutile e implementazioni fragili, con un test per ognuno. Le modifiche alla logica di calcolo **del bot** si propongono prima all'utente e passano da test + `scripts/dry_run_non_regressione.py`.
+11. **Schema approvato** il 04/10/2026: [restyling/snapshot-schema.md](restyling/snapshot-schema.md) (`versione_schema: 1`), con tutte le domande aperte chiuse. Decisioni di dominio: card a pari merito mostrano **tutti** i pari merito, senza minimo di pronostici (14); classifica con **stessa posizione** a parità di punti e pronostici vinti (15); il sostituto eredita i pronostici vinti del ritirato per lo spareggio (17); Semper Fidelis conta **giornate distinte** giocate e non annullate (19); amuleto/maledetta contano **solo la squadra scelta** dal pronostico (20); Coppa «definitiva» quando la Giornata 34 è **conclusa** (21).
 
 #### Stile grafico scelto: **Diretta** (04/10/2026)
 Grafica da telecronaca: blu notte, barre oblique proporzionali ai punti, pallino LIVE, ticker in basso. Riferimento: direzione 5 in [restyling/proposte-stili.html](restyling/proposte-stili.html). Palette: `#040a22`, `#2f7bff`, `#19e3ff`, `#ff2d87`, `#ffd400`. Font: Saira Extra Condensed (cifre e titoli) + Saira (testo).
 
 ### Fase 1 — Lo snapshot (lato bot, Python)
-- [ ] Definire lo schema e scriverlo qui dentro.
+- [x] Definire lo schema (scritto nel file a parte [restyling/snapshot-schema.md](restyling/snapshot-schema.md), approvato il 04/10/2026).
 - [ ] Generazione dello snapshot dopo `esegui_calcolo_risultati`, riusando `statistiche.py`.
 - [ ] Pubblicazione su Cloudflare (token come variabile d'ambiente su Render, mai nel repo).
 - [ ] Test: lo snapshot contiene quello che le sei schede mostrano oggi.
