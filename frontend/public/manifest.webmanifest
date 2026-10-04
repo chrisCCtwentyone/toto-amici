@@ -1,0 +1,16 @@
+{
+  "name": "Toto-Amici",
+  "short_name": "Toto-Amici",
+  "description": "Torneo di pronostici Serie A tra amici",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#040a22",
+  "theme_color": "#040a22",
+  "lang": "it",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="96" fill="#040a22"/>
+<g transform="translate(256 256) scale(1.0) translate(-256 -256)">
+<g fill="#ffffff" transform="translate(12.0 421.0) skewX(-14) scale(0.4797 -0.4797) translate(-6 0)"><path d="M107 0V561H6V688H345V561H244V0Z"/><path transform="translate(421 0)" d="M280 0 263 137H160L143 0H6L109 688H316L419 0ZM215 553H208L173 258H250Z"/></g>
+<polygon fill="#040a22" points="242.9,45.0 326.9,45.0 221.6,467.0 137.6,467.0"/>
+<polygon fill="#19e3ff" points="259.9,45.0 281.9,45.0 176.6,467.0 154.6,467.0"/>
+<polygon fill="#ff2d87" points="282.9,45.0 314.9,45.0 209.6,467.0 177.6,467.0"/>
+</g></svg>
