@@ -17,3 +17,10 @@ backup_toto_amici_*.json
 __pycache__/
 # Snapshot generato in locale dai dati veri (scripts/genera_snapshot_locale.py)
 restyling/snapshot-locale.json
+
+# Sito nuovo (frontend/): dipendenze, build, segreti locali, artefatti dei test nel browser
+frontend/node_modules/
+frontend/dist/
+frontend/.wrangler/
+frontend/.dev.vars
+frontend/.playwright-cli/

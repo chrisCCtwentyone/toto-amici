@@ -1,0 +1,173 @@
+@import "tailwindcss";
+
+/*
+ * TEMA "DIRETTA" — design token.
+ * Palette di marca (da restyling/proposte-stili.html, direzione 5):
+ *   notte #040a22 · blu #2f7bff · ciano #19e3ff · rosa #ff2d87 · oro #ffd400
+ * Il SCURO e' quello della proposta. Il CHIARO e' la stessa identita' in versione giorno:
+ * fondo azzurro ghiaccio, inchiostro blu notte, le stesse barre oblique; i colori usati
+ * come TESTO sono scuriti per il contrasto (ciano e oro su chiaro non si leggerebbero).
+ *
+ * Tutti i colori sono in light-dark(chiaro, scuro): `color-scheme` sceglie il ramo.
+ * Default = preferenza del sistema; l'interruttore in intestazione scrive data-tema
+ * ("chiaro" | "scuro") su <html>.  NIENTE colori letterali nei componenti: solo token.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* superfici */
+  --bg: light-dark(#eaf0ff, #040a22);
+  --bg-fondo: light-dark(#d6e2ff, #12195c);
+  --superficie: light-dark(#ffffff, #0a1438);
+  --superficie-2: light-dark(#f1f5ff, #101c4a);
+  --traccia: light-dark(#d9e3fb, #ffffff14);
+  /* le barre sono pannelli da regia: restano scure anche nel tema chiaro (testo bianco sempre leggibile) */
+  --barra-traccia: light-dark(#14236b, #ffffff14);
+  --su-barra: #ffffff;
+  --linea: light-dark(#c3d1f5, #2a3a78);
+  --strisce: light-dark(#0a1a5a09, #ffffff06);
+
+  /* testo */
+  --ink: light-dark(#040a22, #ffffff);
+  --ink-2: light-dark(#46558a, #9fb0e8);
+
+  /* marca */
+  --marchio: #2f7bff;
+  --marchio-scuro: #1f4fd8;
+  --marchio-testo: light-dark(#1d4fd1, #7fb0ff);
+  --accento: #19e3ff;
+  --su-accento: #040a22;
+  --accento-testo: light-dark(#006f86, #19e3ff);
+  --live: light-dark(#d6126c, #ff2d87);
+  --live-scuro: #d41f6e;
+  --su-live: #ffffff;
+  --oro: #ffd400;
+  --su-oro: #040a22;
+  --oro-testo: light-dark(#8a6a00, #ffd400);
+
+  /* significato (esiti, tendenze) */
+  --vinta: light-dark(#0b8a4b, #2bff88);
+  --persa: light-dark(#cf1a3f, #ff3b5c);
+  --in-corso: var(--oro-testo);
+  --sale: light-dark(#0b8a4b, #7dffb0);
+  --scende: light-dark(#cf1a3f, #ffb0b0);
+  --avviso-fondo: light-dark(#fff4c2, #3a2f00);
+  --avviso-bordo: light-dark(#d9a900, #ffd400);
+
+  --focus: light-dark(#1d4fd1, #19e3ff);
+  --ombra-card: light-dark(0 6px 22px #1f3a8a1f, none);
+
+  /* forma e movimento */
+  --obliquo: -14deg;
+  --raggio: 2px;
+  --durata-rapida: 150ms;
+  --durata: 280ms;
+  --durata-lenta: 600ms;
+  --ease-uscita: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* font */
+  --font-display: "Saira Extra Condensed", "Arial Narrow", "Roboto Condensed", Impact, sans-serif;
+  --font-testo: "Saira", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+:root[data-tema="chiaro"] { color-scheme: light; }
+:root[data-tema="scuro"] { color-scheme: dark; }
+
+/* I token diventano utility Tailwind: bg-superficie, text-ink-2, border-linea, font-display... */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fondo: var(--bg-fondo);
+  --color-superficie: var(--superficie);
+  --color-superficie-2: var(--superficie-2);
+  --color-traccia: var(--traccia);
+  --color-barra-traccia: var(--barra-traccia);
+  --color-su-barra: var(--su-barra);
+  --color-linea: var(--linea);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-marchio: var(--marchio);
+  --color-marchio-scuro: var(--marchio-scuro);
+  --color-marchio-testo: var(--marchio-testo);
+  --color-accento: var(--accento);
+  --color-su-accento: var(--su-accento);
+  --color-accento-testo: var(--accento-testo);
+  --color-live: var(--live);
+  --color-live-scuro: var(--live-scuro);
+  --color-su-live: var(--su-live);
+  --color-oro: var(--oro);
+  --color-su-oro: var(--su-oro);
+  --color-oro-testo: var(--oro-testo);
+  --color-vinta: var(--vinta);
+  --color-persa: var(--persa);
+  --color-in-corso: var(--in-corso);
+  --color-sale: var(--sale);
+  --color-scende: var(--scende);
+  --color-avviso-fondo: var(--avviso-fondo);
+  --color-avviso-bordo: var(--avviso-bordo);
+  --color-focus: var(--focus);
+  --font-display: var(--font-display);
+  --font-testo: var(--font-testo);
+  --radius-diretta: var(--raggio);
+  --shadow-card: var(--ombra-card);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-padding-top: 8rem;
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    color: var(--ink);
+    font-family: var(--font-testo);
+    font-size: 1rem;
+    line-height: 1.5;
+    background-color: var(--bg);
+    background-image:
+      repeating-linear-gradient(115deg, transparent 0 40px, var(--strisce) 40px 80px),
+      linear-gradient(170deg, var(--bg), var(--bg-fondo) 70%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+  /* cifre in colonna: i punteggi non ballano quando cambiano */
+  .tabulare { font-variant-numeric: tabular-nums; }
+}
+
+@layer components {
+  /* Marchio della grafica: parallelogramma. Il contenuto va in un figlio .contro-obliquo. */
+  .obliquo { transform: skewX(var(--obliquo)); }
+  .contro-obliquo { transform: skewX(calc(var(--obliquo) * -1)); }
+
+  .titolo-diretta {
+    font-family: var(--font-display);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .scorri-nascosto { scrollbar-width: none; }
+  .scorri-nascosto::-webkit-scrollbar { display: none; }
+  .solo-lettori {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+}
+
+@keyframes lampeggia { 50% { opacity: 0.25; } }
+@keyframes scorre-ticker { to { transform: translateX(-50%); } }
+@keyframes luccica { 100% { background-position: -200% 0; } }
+
+/* movimento ridotto: niente animazioni continue ne' transizioni lunghe */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

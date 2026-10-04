@@ -1,0 +1,21 @@
+{
+  // Un solo Worker serve sito (static assets), snapshot, segnale e risultati live.
+  // Gli id non sono segreti. Il secret FOOTBALL_DATA_KEY si imposta a parte
+  // (wrangler secret put FOOTBALL_DATA_KEY), mai in questo file.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "toto-amici",
+  "account_id": "ccb3992ef30baf5bc5eb29eab8da711a",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // solo /api/* passa dal Worker: il resto lo serve direttamente la rete (gratis)
+    "run_worker_first": ["/api/*"]
+  },
+  "kv_namespaces": [
+    { "binding": "SNAPSHOT", "id": "8d3b3469dfc04ab8a760adb74cd6173c" }
+  ],
+  "observability": { "enabled": true }
+}

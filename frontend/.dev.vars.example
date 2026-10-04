@@ -1,0 +1,3 @@
+# Copia in .dev.vars (gitignored) per provare il Worker in locale con "npm run cf:dev".
+# La chiave vera sta solo nel secret del Worker e in .dev.vars: mai nel repo.
+FOOTBALL_DATA_KEY=
