@@ -35,12 +35,14 @@ export default function ConfrontoGiocate() {
       ) : (
         <>
           <p className="m-0 text-sm text-ink-2">Scorri di lato per vedere tutti i giocatori: la colonna delle partite resta ferma.</p>
-          {/* regione scorrevole con tastiera (tabIndex): lo scroll orizzontale e' dentro il contenitore, non nella pagina */}
+          {/* regione scorrevole con tastiera (tabIndex): lo scroll orizzontale e' dentro il contenitore, non nella pagina.
+              "relative" serve: i testi .solo-lettori sono absolute e, senza un antenato posizionato, uscirebbero dal
+              contenitore e allargherebbero la pagina; min-w-0 evita che la griglia genitrice si allarghi al contenuto. */}
           <div
             role="region"
             aria-label={`Tabella dei pronostici, ${etichettaGiornata(giornata ?? 0)}`}
             tabIndex={0}
-            className="overflow-x-auto overscroll-x-contain rounded-diretta border-l border-t border-linea bg-superficie shadow-card"
+            className="relative min-w-0 overflow-x-auto overscroll-x-contain rounded-diretta border-l border-t border-linea bg-superficie shadow-card"
           >
             <table className="w-max min-w-full border-separate border-spacing-0 text-left">
               <caption className="solo-lettori">
@@ -48,17 +50,17 @@ export default function ConfrontoGiocate() {
               </caption>
               <thead>
                 <tr>
-                  <th scope="col" className={`${CELLA} ${FISSA} z-20 w-40 min-w-40 bg-superficie-2 sm:w-64 sm:min-w-64`}>
+                  <th scope="col" className={`${CELLA} ${FISSA} z-20 w-36 min-w-36 bg-superficie-2 sm:w-64 sm:min-w-64`}>
                     <span className="titolo-diretta text-lg text-ink-2">Partita</span>
-                  </th>
-                  <th scope="col" className={`${CELLA} min-w-36 bg-accento/10`}>
-                    <span className="titolo-diretta text-lg text-accento-testo">Scelta del gruppo</span>
                   </th>
                   {schedine.map((x) => (
                     <th key={x.giocatore} scope="col" className={`${CELLA} min-w-32 bg-superficie-2`}>
                       <span className="titolo-diretta text-lg text-ink">{x.giocatore}</span>
                     </th>
                   ))}
+                  <th scope="col" className={`${CELLA} min-w-40 bg-accento/10`}>
+                    <span className="titolo-diretta text-lg text-accento-testo">Scelta del gruppo</span>
+                  </th>
                 </tr>
               </thead>
               {/* una sola dissolvenza all'apertura/cambio giornata: niente movimento sulle righe (la colonna fissa non deve ballare) */}
@@ -72,15 +74,12 @@ export default function ConfrontoGiocate() {
                   const orario = testoOrario(p.inizio_il);
                   return (
                     <tr key={p.id} className="group">
-                      <th scope="row" className={`${CELLA} ${FISSA} w-40 min-w-40 font-normal group-hover:bg-superficie-2 sm:w-64 sm:min-w-64`}>
+                      <th scope="row" className={`${CELLA} ${FISSA} w-36 min-w-36 font-normal group-hover:bg-superficie-2 sm:w-64 sm:min-w-64`}>
                         <span className="block font-display text-lg font-extrabold uppercase leading-tight tracking-wide text-ink [overflow-wrap:anywhere]">
                           {p.nome}
                         </span>
                         <span className="block text-sm text-ink-2">{orario ?? "Orario da definire"}</span>
                       </th>
-                      <td className={`${CELLA} bg-accento/10 font-display text-lg font-extrabold leading-tight text-ink`}>
-                        {testoSceltaGruppo(p.scelta_gruppo)}
-                      </td>
                       {schedine.map((x) => {
                         const righe = x.righe.filter((r) => r.partita_id === p.id);
                         return (
@@ -89,6 +88,9 @@ export default function ConfrontoGiocate() {
                           </td>
                         );
                       })}
+                      <td className={`${CELLA} bg-accento/10 font-display text-lg font-extrabold leading-tight text-ink`}>
+                        {testoSceltaGruppo(p.scelta_gruppo)}
+                      </td>
                     </tr>
                   );
                 })}
@@ -98,12 +100,12 @@ export default function ConfrontoGiocate() {
                   <th scope="row" className={`${CELLA} ${FISSA} bg-superficie-2 font-normal`}>
                     <span className="titolo-diretta text-lg text-ink-2">Vincita potenziale</span>
                   </th>
-                  <td className={`${CELLA} bg-superficie-2`} />
                   {schedine.map((x) => (
                     <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-accento-testo`}>
                       {formattaEuro(x.vincita_potenziale)}
                     </td>
                   ))}
+                  <td className={`${CELLA} bg-superficie-2`} />
                 </tr>
               </tfoot>
             </table>

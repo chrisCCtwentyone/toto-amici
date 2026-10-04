@@ -6,7 +6,7 @@ import { formattaIntero } from "../lib/format";
  * Numero che "sale" fino al valore (e si riassesta se il valore cambia).
  * `formato` e' uno dei formattatori di lib/format (es. formattaEuro, o
  * (n) => formattaDecimale(n, 1)). Con movimento ridotto mostra subito il valore finale.
- * Gli screen reader leggono solo il valore finale, non i passaggi intermedi.
+ * Gli screen reader leggono solo il valore finale (aria-label), una volta sola, non i passaggi intermedi.
  */
 interface Props {
   valore: number;
@@ -39,12 +39,11 @@ export default function NumeroAnimato({ valore, formato = formattaIntero, durata
     return () => ctrl.stop();
   }, [valore, formato, durata, ridotto]);
 
+  // Un solo nodo nel DOM: role="img" + aria-label = il valore finale, letto UNA volta;
+  // le cifre che salgono sono contenuto presentazionale (non vengono lette ne' estratte come testo doppio).
   return (
-    <>
-      <span ref={rif} className={`tabulare ${className}`} aria-hidden="true">
-        {formato(ridotto ? valore : ultimo.current)}
-      </span>
-      <span className="solo-lettori">{formato(valore)}</span>
-    </>
+    <span ref={rif} role="img" aria-label={formato(valore)} className={`tabulare ${className}`}>
+      {formato(ridotto ? valore : ultimo.current)}
+    </span>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, PallinoLive, Scheletro, SelettoreGiocatore, SelettoreGiornata, StatoVuoto } from "../componenti";
+import { Card, PallinoLive,SelettoreGiocatore, SelettoreGiornata, StatoVuoto } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
 import { riepilogoVisualizzato } from "../lib/esiti";
 import { etichettaGiornata, formattaQuota } from "../lib/format";
