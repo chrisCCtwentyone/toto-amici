@@ -4,7 +4,7 @@ import { useSnapshot } from "../lib/DatiContext";
 import { riepilogoVisualizzato } from "../lib/esiti";
 import { etichettaGiornata, formattaQuota } from "../lib/format";
 import { useLive } from "../lib/useLive";
-import { giornateDisponibili, mappaPartite } from "../lib/selettori";
+import { giocatoreEffettivo, giocatoriConSchedina, giornataEffettiva, giornateDisponibili, mappaPartite, type SceltaGiocatore } from "../lib/selettori";
 import CartaPronostico from "./live-confronto/CartaPronostico";
 import Riepilogo from "./live-confronto/Riepilogo";
 import { staGiocando } from "./live-confronto/dati";
@@ -22,8 +22,13 @@ function useStabile<T>(valore: T, ms: number): T {
 export default function SchedineLive() {
   const s = useSnapshot();
   const giornate = giornateDisponibili(s);
-  const [giornata, setGiornata] = useState<number | null>(s.giornata_corrente ?? giornate.at(-1) ?? null);
-  const [giocatore, setGiocatore] = useState<string | null>(s.giocatori[0] ?? null);
+  // scelte a mano: finche' sono null la scheda segue lo snapshot (giornata corrente, primo giocatore con schedina)
+  const [giornataScelta, setGiornataScelta] = useState<number | null>(null);
+  const [giocatoreScelto, setGiocatoreScelto] = useState<SceltaGiocatore | null>(null);
+  const giornata = giornataEffettiva(s, giornataScelta);
+  const giocatore = giocatoreEffettivo(s, giornata, giocatoreScelto);
+  const conSchedina = giocatoriConSchedina(s, giornata);
+  const senzaScheda = new Set(s.giocatori.filter((g) => !conSchedina.has(g)));
 
   const giornataLive = useStabile(giornata, 600);
   const live = useLive(giornataLive);
@@ -52,8 +57,16 @@ export default function SchedineLive() {
         azione={inDiretta ? <PallinoLive etichetta="LIVE" /> : undefined}
       >
         <div className="grid gap-3">
-          <SelettoreGiornata giornate={giornate} valore={giornata} onChange={setGiornata} />
-          <SelettoreGiocatore giocatori={s.giocatori} valore={giocatore} onChange={setGiocatore} />
+          <SelettoreGiornata giornate={giornate} valore={giornata} onChange={setGiornataScelta} />
+          <p className="m-0 text-sm text-ink-2" aria-live="polite">
+            {conSchedina.size} di {s.giocatori.length} schedine caricate
+          </p>
+          <SelettoreGiocatore
+            giocatori={s.giocatori}
+            valore={giocatore}
+            senzaScheda={senzaScheda}
+            onChange={(g) => setGiocatoreScelto({ giocatore: g, giornata })}
+          />
         </div>
       </Card>
 

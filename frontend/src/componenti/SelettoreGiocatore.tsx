@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 
 /**
  * Selettore di giocatore a "pillole" (radiogroup: frecce per spostarsi, un solo tab stop).
@@ -9,12 +9,19 @@ interface Props {
   valore: string | null;
   onChange: (nome: string) => void;
   etichetta?: string;
+  /** Giocatori senza dati per la giornata: restano selezionabili ma attenuati, con testo per i lettori di schermo. */
+  senzaScheda?: ReadonlySet<string>;
   className?: string;
 }
 
-export default function SelettoreGiocatore({ giocatori, valore, onChange, etichetta = "Giocatore", className = "" }: Props) {
+export default function SelettoreGiocatore({ giocatori, valore, onChange, etichetta = "Giocatore", senzaScheda, className = "" }: Props) {
   const gruppo = useRef<HTMLDivElement>(null);
   const attivo = valore ?? giocatori[0];
+
+  // la pillola attiva (anche scelta in automatico) deve essere visibile nella riga scorrevole
+  useEffect(() => {
+    gruppo.current?.querySelector('[aria-checked="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [attivo]);
 
   const alTasto = (e: KeyboardEvent<HTMLDivElement>) => {
     const i = giocatori.findIndex((g) => g === attivo);
@@ -41,6 +48,7 @@ export default function SelettoreGiocatore({ giocatori, valore, onChange, etiche
     >
       {giocatori.map((g) => {
         const on = g === attivo;
+        const vuoto = senzaScheda?.has(g) ?? false;
         return (
           <button
             key={g}
@@ -49,9 +57,10 @@ export default function SelettoreGiocatore({ giocatori, valore, onChange, etiche
             aria-checked={on}
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(g)}
-            className={`obliquo min-h-11 flex-none cursor-pointer px-4 transition-colors duration-150 ${on ? "bg-accento text-su-accento" : "bg-superficie-2 text-ink-2 hover:text-ink"}`}
+            className={`obliquo min-h-11 flex-none cursor-pointer px-4 transition-colors duration-150 ${on ? "bg-accento text-su-accento" : "bg-superficie-2 text-ink-2 hover:text-ink"} ${vuoto && !on ? "opacity-60" : ""}`}
           >
             <span className="contro-obliquo block font-display text-lg font-extrabold uppercase tracking-wide">{g}</span>
+            {vuoto && <span className="solo-lettori">, nessuna schedina</span>}
           </button>
         );
       })}

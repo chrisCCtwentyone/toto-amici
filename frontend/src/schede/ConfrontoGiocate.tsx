@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { Card, SelettoreGiornata, StatoVuoto } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
 import { etichettaGiornata, formattaEuro, formattaQuota } from "../lib/format";
-import { giornateDisponibili } from "../lib/selettori";
+import { giornataEffettiva, giornateDisponibili } from "../lib/selettori";
 import CellaGiocata, { sfondoCella } from "./live-confronto/CellaGiocata";
 import { testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
 
@@ -15,7 +15,9 @@ const FISSA = "sticky left-0 z-10 bg-superficie";
 export default function ConfrontoGiocate() {
   const s = useSnapshot();
   const giornate = giornateDisponibili(s);
-  const [giornata, setGiornata] = useState<number | null>(s.giornata_corrente ?? giornate.at(-1) ?? null);
+  // finche' l'utente non sceglie, segue la giornata corrente dello snapshot
+  const [giornataScelta, setGiornata] = useState<number | null>(null);
+  const giornata = giornataEffettiva(s, giornataScelta);
 
   // uguaglianza di interi, mai per sottostringa (bug di Sessione 13); gli array sono gia' nell'ordine giusto (§7)
   const partite = s.partite.filter((p) => p.giornata === giornata);
@@ -34,7 +36,12 @@ export default function ConfrontoGiocate() {
         </StatoVuoto>
       ) : (
         <>
-          <p className="m-0 text-sm text-ink-2">Scorri di lato per vedere tutti i giocatori: la colonna delle partite resta ferma.</p>
+          <p className="m-0 text-sm text-ink-2">
+            {schedine.length} di {s.giocatori.length} schedine caricate.
+            {schedine.length > 1
+              ? " Scorri di lato per vedere tutti i giocatori: la colonna delle partite resta ferma."
+              : " Scorri di lato per vedere anche la scelta del gruppo: la colonna delle partite resta ferma."}
+          </p>
           {/* regione scorrevole con tastiera (tabIndex): lo scroll orizzontale e' dentro il contenitore, non nella pagina.
               "relative" serve: i testi .solo-lettori sono absolute e, senza un antenato posizionato, uscirebbero dal
               contenitore e allargherebbero la pagina; min-w-0 evita che la griglia genitrice si allarghi al contenuto. */}
