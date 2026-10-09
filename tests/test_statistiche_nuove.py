@@ -253,6 +253,91 @@ def partite_g1():
              "inizio": None} for i, (c, sc, o, so) in enumerate(G1_UFFICIALI)]
 
 
+class TestAbbinaPartitaFormati:
+    """Incidente 09/10/2026 (Giornata 6): Gemini ha scritto "Atalanta Venezia" senza trattino."""
+
+    @pytest.mark.parametrize("testo", [
+        "Atalanta - Sassuolo", "Atalanta-Sassuolo", "ATALANTA – SASSUOLO", "Atalanta vs Sassuolo",
+        "atalanta VS. sassuolo", "Atalanta v Sassuolo", "Atalanta Sassuolo", "ATALANTA SASSUOLO CALCIO",
+        "Atalanta BC Sassuolo", "  Atalanta   -   Sassuolo ", "Sassuolo - Atalanta", "Sassuolo Atalanta",
+    ])
+    def test_formati_diversi_stessa_partita(self, testo):
+        assert st.abbina_partita(testo, partite_g1())["id"] == 101, testo
+
+    def test_squadre_con_due_parole_e_senza_separatore(self):
+        assert st.abbina_partita("Udinese Como", partite_g1())["id"] == 108
+        assert st.abbina_partita("Venezia FC Lecce", partite_g1())["id"] == 109
+        assert st.abbina_partita("Inter AC Monza", partite_g1())["id"] == 103
+
+    def test_ordine_invertito_segnalato(self):
+        g = partite_g1()
+        assert st.abbina_partita_con_ordine("Atalanta Sassuolo", g) == (g[1], False)
+        assert st.abbina_partita_con_ordine("Sassuolo vs Atalanta", g) == (g[1], True)
+        assert st.abbina_partita_con_ordine("Boh", g) == (None, False)
+
+    def test_funziona_anche_sul_formato_grezzo_di_football_data(self):
+        grezze = dati.partite_fd_g1()["matches"]
+        m = st.abbina_partita("Atalanta Sassuolo", grezze)
+        assert m["homeTeam"]["shortName"] == "Atalanta" and m["awayTeam"]["shortName"] == "Sassuolo"
+
+    @pytest.mark.parametrize("testo", ["", "   ", None, "-", "vs", "Roma", "Pisa Cremo", "Roma Roma", "Roma Lazio",
+                                       "Roma Fiorentina Inter", "asdf qwer", "12345", "Atalanta - Sassuolo - Roma"])
+    def test_spazzatura_o_inesistente_non_si_indovina(self, testo):
+        assert st.abbina_partita(testo, partite_g1()) is None, testo
+
+    def test_candidato_non_unico_non_si_indovina(self):
+        doppie = partite_g1() + [{"id": 999, "nome": "x", "casa": {"name": "Atalanta BC", "shortName": "Atalanta"},
+                                  "ospite": {"name": "US Sassuolo", "shortName": "Sassuolo"}, "inizio": None}]
+        assert st.abbina_partita("Atalanta Sassuolo", doppie) is None
+        assert st.abbina_partita("Sassuolo - Atalanta", doppie) is None
+
+    def test_nome_ambiguo_fra_due_squadre_non_si_indovina(self):
+        # "Milano" e' forma sia dell'Inter ("Internazionale Milano" -> no: e' intera) sia di una squadra con shortName "Milano":
+        # due partite diverse in cui la stessa forma compare in casa => ambiguo.
+        g = [
+            {"id": 1, "casa": {"name": "AC Milan", "shortName": "Milano"}, "ospite": {"name": "Torino FC", "shortName": "Torino"}},
+            {"id": 2, "casa": {"name": "FC Internazionale Milano", "shortName": "Milano"}, "ospite": {"name": "Torino FC", "shortName": "Torino"}},
+        ]
+        assert st.abbina_partita("Milano Torino", g) is None
+
+
+class TestAbbinaPartitaRipiegoPrefisso:
+    """Tolleranza del vecchio abbinamento (prefisso): "Juve", "Hellas", "Cremo"."""
+
+    @staticmethod
+    def _g():
+        def p(i, c, sc, o, so):
+            return {"id": i, "casa": {"name": c, "shortName": sc}, "ospite": {"name": o, "shortName": so}}
+        return [p(1, "Juventus FC", "Juventus", "AC Milan", "Milan"), p(2, "Hellas Verona FC", "Verona", "Genoa CFC", "Genoa"),
+                p(3, "US Cremonese", "Cremonese", "AS Roma", "Roma"), p(4, "FC Internazionale Milano", "Inter", "Torino FC", "Torino")]
+
+    @pytest.mark.parametrize("testo,pid", [("Juve - Milan", 1), ("Milan Juve", 1), ("JUVE-MILAN", 1), ("Hellas Verona", None),
+                                           ("Hellas - Genoa", 2), ("Hellas Genoa", 2), ("Genoa vs Hellas", 2), ("Cremo - Roma", 3)])
+    def test_nomi_abbreviati(self, testo, pid):
+        if pid:
+            assert st.abbina_partita(testo, self._g())["id"] == pid, testo
+        else:
+            assert st.abbina_partita("Hellas Verona Genoa", self._g())["id"] == 2
+
+    def test_prefisso_condiviso_da_due_squadre_non_si_indovina(self):
+        g = self._g() + [{"id": 5, "casa": {"name": "Veronese FC", "shortName": "Veronese"}, "ospite": {"name": "US Lecce", "shortName": "Lecce"}},
+                         {"id": 6, "casa": {"name": "Veronetta FC", "shortName": "Veronetta"}, "ospite": {"name": "US Lecce", "shortName": "Lecce"}}]
+        assert st.abbina_partita("Veron - Lecce", g) is None
+        assert st.abbina_partita("Veronese - Lecce", g)["id"] == 5
+
+    def test_prefisso_troppo_corto_non_basta(self):
+        assert st.abbina_partita("Juv - Mil", self._g()) is None
+
+    def test_il_nome_esatto_di_unaltra_squadra_non_si_confonde(self):
+        # "Milan" e' esatto per l'AC Milan: non deve diventare l'Inter ("milano") per prefisso.
+        assert st.abbina_partita("Milan - Torino", self._g()) is None
+        assert st.abbina_partita("Inter - Torino", self._g())["id"] == 4
+
+    def test_l_esatto_ha_la_precedenza(self):
+        g = self._g()
+        assert st.abbina_partita("Juventus - Milan", g)["id"] == 1
+
+
 class TestAbbinaPartita:
     def test_tutte_le_29_scritture_reali_della_giornata_1(self):
         partite_ = partite_g1()

@@ -108,6 +108,16 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 10/10/2026 — Nomi partita senza trattino (incidente Giornata 6)
+
+**Causa.** La notte del 09/10 Gemini ha letto la schedina di GIOVANNI con i nomi partita senza trattino ("Atalanta Venezia", "Como Roma"...). `normalizza_nomi_partite` li normalizzava solo `if "-" in partita`, quindi sono stati salvati grezzi. Conseguenze: in `esegui_calcolo_risultati` il `split('-')` dava `ValueError` e faceva saltare il calcolo dell'**intera giornata per tutti**; lo snapshot marcava le 10 righe come non ufficiali (10 avvisi). Le 10 celle sono state corrette a mano sul foglio.
+
+**Correzione alla radice.** Un solo abbinamento condiviso: `statistiche.abbina_partita_con_ordine(testo, partite_giornata)` -> `(partita, invertito)` (e `abbina_partita`, che ne restituisce solo la partita). Prova tutti i punti di taglio fra le parole, quindi accetta "A - B", "A-B", "A vs B", "A B" senza separatore, maiuscole, suffissi (FC, Calcio, anni), ordine invertito; uguaglianza di forme normalizzate (non sottostringa); partita solo se il candidato e' UNICO, altrimenti `None`. Accetta sia le partite di `partite_della_stagione` sia quelle grezze di Football-Data. Lo usano: `normalizza_nomi_partite` (scrive "shortName casa - shortName ospite" anche senza trattino), `esegui_calcolo_risultati` (con `ordine_invertito`) e `task_controlla_anomalie_partite`. Lo snapshot lo usava gia'.
+- **Riga con partita non riconosciuta nel calcolo**: non fa piu' fallire il calcolo; diventa `ESITO_DA_VERIFICARE` (0 punti, la schedina non si chiude, niente Cassa) e compare nel report all'admin (`da_verificare_dettaglio`). Una riga gia' VINTA/PERSA/ANNULLATA con nome illeggibile resta com'e'. Prima una riga non abbinata veniva saltata in silenzio.
+- Tolleranza del vecchio prefisso mantenuta come RIPIEGO: se l'uguaglianza esatta non trova nessun candidato, vale un prefisso di almeno 4 lettere all'inizio di una parola di name/shortName ("Juve", "Hellas", "Cremo"), sempre e solo con candidato UNICO, e non per un testo che e' gia' il nome esatto di un'altra squadra della giornata ("Milan" non diventa l'Inter di "Internazionale Milano"). Dry-run G1-5 senza differenze.
+
+**Test.** 878 -> 928 (nuovi: formati e ambiguita' in `test_statistiche_nuove.py`, invariante "nome partita illeggibile non ferma le altre righe e finisce DA VERIFICARE" in `test_invarianti.py`; 8 di questi falliscono sul codice vecchio). Dry-run G1-5: 0 differenze su 1600 celle; G6 gira senza eccezioni (40 differenze attese: righe non ancora calcolate -> IN CORSO, nessuna DA VERIFICARE); snapshot locale: 0 avvisi.
+
 ### 04/10/2026 — Sessione 29, Fase 2-4 (Toto-Amici 3.0 rilasciato)
 
 **Sito Streamlit su Render sospeso alle 23:15** (`toto-amici-sito`, Settings → Suspend Web Service; reversibile con Resume). Il bot `toto-amici-bot` resta attivo e pubblica lo snapshot. Da qui in poi un push su `main` ridistribuisce solo il bot. Icona da app e manifest aggiunti al sito nuovo (commit ceb1196).

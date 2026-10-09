@@ -769,24 +769,63 @@ def _forme_squadra(squadra):
     return {f for f in (_forma_squadra(squadra.get("name", "")), _forma_squadra(squadra.get("shortName", ""))) if f}
 
 
+def _squadre_partita(p):
+    """(casa, ospite) sia per le partite di partite_della_stagione ("casa",
+    "ospite") sia per quelle grezze di Football-Data ("homeTeam", "awayTeam"):
+    cosi' lo snapshot e il bot abbinano con LA STESSA funzione."""
+    return (p["casa"], p["ospite"]) if "casa" in p else (p["homeTeam"], p["awayTeam"])
+
+
+def abbina_partita_con_ordine(nome_sheet, partite_giornata):
+    """N6 — Abbina il testo del foglio a UNA delle partite della STESSA
+    giornata. Restituisce (partita, invertito): `invertito` e' True se il testo
+    ha le squadre scambiate rispetto a casa/ospite ufficiali. (None, False) se
+    nessuna partita corrisponde o se ne corrispondono due: non si indovina
+    (§7.3 dello schema).
+
+    Il testo puo' avere qualunque separatore ("Pisa - Cremo", "Pisa-Cremo",
+    "Pisa vs Cremo") o nessuno ("Atalanta Venezia", come ha scritto Gemini il
+    09/10/2026): si provano tutti i punti di taglio fra le parole e basta che
+    le due meta' siano UGUALI (non sottostringa) a una forma di casa e una di
+    ospite (name o shortName, senza FC/Calcio/anni), nell'ordine o scambiate.
+    Se cosi' non si trova niente, ripiego per prefisso (vedi `lato`); anche
+    allora vale solo un candidato UNICO.
+    """
+    parole = _forma_squadra(re.sub(r"\bvs?\b", " ", str(nome_sheet).lower())).split()
+    forme_note = {f for p in partite_giornata for sq in _squadre_partita(p) for f in _forme_squadra(sq)}
+
+    def lato(testo, forme, prefisso):
+        if testo in forme:
+            return True
+        # Ripiego: "Juve", "Hellas", "Cremo". Almeno 4 lettere all'inizio di una parola
+        # di name/shortName, e solo se il testo NON e' gia' il nome esatto di un'altra
+        # squadra della giornata ("Milan" non diventa l'Inter di "Internazionale Milano").
+        return (prefisso and len(testo) >= 4 and testo not in forme_note
+                and any(re.search(r"(?:^| )" + re.escape(testo), f) for f in forme))
+
+    def cerca(prefisso):
+        trovate = {}
+        for i in range(1, len(parole)):
+            a, b = " ".join(parole[:i]), " ".join(parole[i:])
+            for k, p in enumerate(partite_giornata):
+                casa, ospite = (_forme_squadra(sq) for sq in _squadre_partita(p))
+                if lato(a, casa, prefisso) and lato(b, ospite, prefisso):
+                    trovate[k] = False
+                elif lato(a, ospite, prefisso) and lato(b, casa, prefisso):
+                    trovate[k] = True
+        return trovate
+
+    # Prima solo uguaglianza; il ripiego per prefisso scatta solo se non c'e' NESSUN candidato.
+    trovate = cerca(False) or cerca(True)
+    if len(trovate) != 1:
+        return None, False
+    k, invertito = next(iter(trovate.items()))
+    return partite_giornata[k], invertito
+
+
 def abbina_partita(nome_sheet, partite_giornata):
-    """N6 — Abbina il testo del foglio ("Pisa - Cremo") a UNA delle partite
-    della STESSA giornata, per uguaglianza delle forme normalizzate (non per
-    sottostringa) con name e shortName di casa e ospite; prova anche le
-    squadre invertite. None se nessuna partita corrisponde o se ne
-    corrispondono due: il chiamante non indovina (§7.3 dello schema)."""
-    parti = str(nome_sheet).split("-")
-    if len(parti) != 2:
-        return None
-    a, b = _forma_squadra(parti[0]), _forma_squadra(parti[1])
-    if not a or not b:
-        return None
-    trovate = []
-    for p in partite_giornata:
-        casa, ospite = _forme_squadra(p["casa"]), _forme_squadra(p["ospite"])
-        if (a in casa and b in ospite) or (a in ospite and b in casa):
-            trovate.append(p)
-    return trovate[0] if len(trovate) == 1 else None
+    """La sola partita di `abbina_partita_con_ordine`, o None."""
+    return abbina_partita_con_ordine(nome_sheet, partite_giornata)[0]
 
 
 def abbina_righe_a_partite(righe, per_giornata):

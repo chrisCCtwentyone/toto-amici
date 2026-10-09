@@ -11,6 +11,7 @@ fallire subito, invece di lasciarlo esplodere alla Giornata 10 sui dati veri.
 Regola pratica: quando si scopre un bug, oltre al test sul caso specifico
 chiedersi se esiste una *proprietà* più generale da bloccare qui.
 """
+import json
 import os
 import sys
 
@@ -199,6 +200,73 @@ class TestInvariantiScritture:
             assert service.values_obj.cassa_scritta == [], (
                 f"stato {stato} ha generato un pagamento in Cassa"
             )
+
+
+class _ValuesCheRicordaIValori(FakeValues):
+    """Come FakeValues, ma ricorda anche i valori scritti: cella -> valore."""
+
+    def __init__(self, righe):
+        super().__init__(righe)
+        self.valori = {}
+
+    def batchUpdate(self, spreadsheetId, body):
+        for d in body["data"]:
+            self.valori[d["range"]] = d["values"][0][0]
+        return super().batchUpdate(spreadsheetId, body)
+
+
+class TestInvarianteNomePartitaIllegibile:
+    """INVARIANTE: una riga con un nome partita illeggibile non impedisce il
+    calcolo delle altre righe della giornata e finisce DA VERIFICARE (mai vinta,
+    mai persa, mai ignorata). Incidente 09/10/2026: "Atalanta Venezia" senza
+    trattino faceva sollevare ValueError e saltare la giornata di TUTTI."""
+
+    ILLEGGIBILI = ["Boh", "", "Milan - Inter - Roma", "Pippo Pluto", "-", "Milan - Torino"]
+
+    @pytest.mark.parametrize("brutto", ILLEGGIBILI)
+    def test_le_altre_righe_si_calcolano_e_quella_va_da_verificare(self, brutto, monkeypatch):
+        righe = [
+            ["Giornata", "Giocatore", "Partita", "Tipologia", "Pronostico", "Quota", "Esito", "Vincita", "Punti"],
+            ["Giornata 7", "MARIO", "Milan - Inter", "Fisse", "1", "1,50", "", "", ""],
+            ["Giornata 7", "GIOVANNI", brutto, "Fisse", "1", "1,50", "", "", ""],
+            ["Giornata 7", "LUCA", "Milan Inter", "Fisse", "1", "1,50", "", "", ""],   # senza trattino ma leggibile
+        ]
+        service = FakeService(righe)
+        service.values_obj = _ValuesCheRicordaIValori(righe)
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+
+        report = bt.esegui_calcolo_risultati("7", matches_api=[_match(SQUADRE[0], SQUADRE[1], 2, 0)])
+
+        v = service.values_obj.valori
+        assert "VINTA" in v["Giocate!G2"], "la riga leggibile di MARIO non e' stata calcolata"
+        assert "VINTA" in v["Giocate!G4"], "la riga senza trattino di LUCA non e' stata calcolata"
+        assert v["Giocate!G3"] == bt.ESITO_DA_VERIFICARE and v["Giocate!I3"] == 0
+        assert "GIOVANNI" in report and "NON INTERPRETABILI" in report
+        assert "CHIUSA" not in report.split("GIOVANNI")[1].split("\n\n")[0], "schedina con riga da verificare dichiarata chiusa"
+        assert all(c[0] != "Giornata 7" or "GIOVANNI" not in c[1] for c in service.values_obj.cassa_scritta)
+
+    def test_riga_gia_chiusa_con_nome_illeggibile_resta_com_e(self, monkeypatch):
+        righe = [
+            ["Giornata", "Giocatore", "Partita", "Tipologia", "Pronostico", "Quota", "Esito", "Vincita", "Punti"],
+            ["Giornata 7", "MARIO", "Boh", "Fisse", "1", "1,50", "✅ VINTA", "", "3"],
+        ]
+        service = FakeService(righe)
+        service.values_obj = _ValuesCheRicordaIValori(righe)
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+        bt.esegui_calcolo_risultati("7", matches_api=[_match(SQUADRE[0], SQUADRE[1], 0, 2)])
+        assert service.values_obj.valori == {}, "una riga gia' chiusa non va riscritta"
+
+    def test_normalizza_nomi_partite_senza_trattino(self, monkeypatch):
+        class _R:
+            def json(self):
+                return {"matches": [{"homeTeam": {"name": "AC Milan", "shortName": "Milan"},
+                                     "awayTeam": {"name": "FC Internazionale Milano", "shortName": "Inter"}}]}
+        monkeypatch.setattr(bt, "richiedi_con_retry", lambda *a, **k: _R())
+        evento = lambda p: {"partita": p, "pronostico": "1", "quota": 1.5}
+        dati_ia = {"eventi": {"Fisse": [evento("Milan Inter"), evento("inter-milan"), evento("MILAN vs INTER"),
+                                         evento("Pippo Pluto")], "Combo": [], "Doppie Chance": [], "Variabili": []}}
+        fuori = json.loads(bt.normalizza_nomi_partite(json.dumps(dati_ia), 7))
+        assert [e["partita"] for e in fuori["eventi"]["Fisse"]] == ["Milan - Inter"] * 3 + ["Pippo Pluto"]
 
 
 class _ValuesConClassifica(FakeValues):

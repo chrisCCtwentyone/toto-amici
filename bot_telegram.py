@@ -12,7 +12,7 @@ import resource
 import asyncio
 import requests
 from api_utils import richiedi_con_retry
-from statistiche import (e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro,
+from statistiche import (abbina_partita, abbina_partita_con_ordine, e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro,
                          costruisci_snapshot_con_avvisi, costruisci_segnale, impronta_snapshot)
 from datetime import time as dt_time, datetime, timedelta
 import pytz
@@ -819,15 +819,13 @@ def normalizza_nomi_partite(dati_json, giornata_num):
         eventi_per_categoria = estrai_eventi_per_categoria(dati)
         for cat in CATEGORIE_SCHEDINA:
             for ev in eventi_per_categoria.get(cat, []):
-                partita = ev.get("partita", "")
-                if "-" in partita:
-                    c_sh, o_sh = [s.strip()[:5].lower() for s in partita.split('-')]
-                    for m in matches:
-                        ac, ao = str(m["homeTeam"]["name"]).lower(), str(m["awayTeam"]["name"]).lower()
-                        sc, so = str(m["homeTeam"].get("shortName","")).lower(), str(m["awayTeam"].get("shortName","")).lower()
-                        if ((c_sh in ac or c_sh in sc) and (o_sh in ao or o_sh in so)) or ((c_sh in ao or c_sh in so) and (o_sh in ac or o_sh in sc)):
-                            ev["partita"] = f"{m['homeTeam'].get('shortName', m['homeTeam']['name'])} - {m['awayTeam'].get('shortName', m['awayTeam']['name'])}"
-                            break
+                # Qualunque forma ("A - B", "A-B", "A vs B", "A B" senza separatore:
+                # Gemini ha omesso il trattino il 09/10/2026) si riconduce alla partita
+                # ufficiale; se non e' UNA sola il testo resta com'e' e il calcolo
+                # la segnalera' DA VERIFICARE.
+                m = abbina_partita(ev.get("partita", ""), matches)
+                if m:
+                    ev["partita"] = f"{m['homeTeam'].get('shortName') or m['homeTeam']['name']} - {m['awayTeam'].get('shortName') or m['awayTeam']['name']}"
         return json.dumps(dati)
     except: return dati_json
 
@@ -1282,6 +1280,10 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
     colore_giallo = {"red":1.0,"green":0.95,"blue":0.70}
     sheet_id_giocate = id_foglio_giocate(service)
 
+    def segna_riga(idx, testo_esito, punti_partita, col):
+        aggiornamenti_testo.extend([{'range': f"Giocate!G{idx+1}", 'values': [[testo_esito]]}, {'range': f"Giocate!I{idx+1}", 'values': [[punti_partita]]}])
+        richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
+
     for idx, riga in enumerate(righe_giocate):
         if len(riga) < 6 or not riga_e_della_giornata(riga[0], giornata): continue
         gio, partita, pron, quota = str(riga[1]).strip(), str(riga[2]).strip(), str(riga[4]).strip().upper(), estrai_numero(riga[5])
@@ -1291,56 +1293,54 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         if gio not in classifica: classifica[gio] = {"punti": 0, "vinte": 0, "perse": 0, "in_corso": 0, "da_verificare": 0, "rinviate": 0, "cassa": vincita}
         elif vincita > 0: classifica[gio]["cassa"] = vincita
 
-        casa_sh, ospite_sh = [s.strip()[:5] for s in partita.lower().split('-')]
-        match = next((m for m in matches_api if (casa_sh in str(m["homeTeam"]["name"]).lower() or casa_sh in str(m.get("homeTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["awayTeam"]["name"]).lower() or ospite_sh in str(m.get("awayTeam",{}).get("shortName","")).lower())), None)
-        ordine_invertito = False
+        match, ordine_invertito = abbina_partita_con_ordine(partita, matches_api)
+        # Se l'esito era gia stato finalizzato (VINTA/PERSA/ANNULLATA) in un run precedente
+        # e l'API ora dice che la partita non e' FINISHED, non ci si fida del regresso:
+        # l'API a volte torna indietro su partite gia concluse (visto il 30/08/2026 su
+        # Giornata 2, football-data.org). Si mantiene il dato gia salvato e non si riscrive nulla.
+        gia_finalizzato = any(tag in esito_salvato for tag in ("VINTA", "PERSA", "ANNULLATA"))
+
+        if gia_finalizzato and (not match or match["status"] != "FINISHED"):
+            punti_partita = int(estrai_numero(riga[8])) if len(riga) > 8 else 0
+            if "VINTA" in esito_salvato: classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
+            elif "PERSA" in esito_salvato: classifica[gio]["perse"] += 1
+            continue  # nessuna scrittura su Sheets: la riga resta com'era
+
         if not match:
-            # La partita in bolletta potrebbe essere stata scritta con le squadre invertite
-            # rispetto all'ordine ufficiale casa/trasferta (es. normalizzazione fallita
-            # all'upload). Si ritenta con l'ordine scambiato invece di lasciare la riga
-            # bloccata su IN CORSO per sempre senza nessun avviso.
-            match = next((m for m in matches_api if (casa_sh in str(m["awayTeam"]["name"]).lower() or casa_sh in str(m.get("awayTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["homeTeam"]["name"]).lower() or ospite_sh in str(m.get("homeTeam",{}).get("shortName","")).lower())), None)
-            ordine_invertito = True
+            # Nome partita illeggibile o ambiguo (es. "Atalanta Venezia" senza trattino,
+            # 09/10/2026): MAI far saltare le altre righe e MAI indovinare. Come un
+            # pronostico non interpretabile: DA VERIFICARE, 0 punti, la schedina non si
+            # chiude e l'admin riceve l'avviso nel report.
+            classifica[gio]["da_verificare"] += 1
+            da_verificare_dettaglio.append(f"{gio.upper()} · {escape_markdown(partita) or '(vuota)'} · partita non riconosciuta tra quelle della giornata")
+            segna_riga(idx, ESITO_DA_VERIFICARE, 0, colore_giallo)
+            continue
 
         punti_partita = 0
-        if match:
-            # Se l'esito era gia stato finalizzato (VINTA/PERSA/ANNULLATA) in un run precedente
-            # e l'API ora dice che la partita non e' FINISHED, non ci si fida del regresso:
-            # l'API a volte torna indietro su partite gia concluse (visto il 30/08/2026 su
-            # Giornata 2, football-data.org). Si mantiene il dato gia salvato e non si riscrive nulla.
-            gia_finalizzato = any(tag in esito_salvato for tag in ("VINTA", "PERSA", "ANNULLATA"))
+        if match["status"] in STATI_PARTITA_RINVIATA:
+            # Regolamento: "per i punti si aspetta il recupero". Distinta da
+            # IN CORSO perche' l'attesa puo' durare settimane: se restasse
+            # IN CORSO, il riepilogo di fine giornata non partirebbe mai.
+            testo_esito, col = ESITO_RINVIATA, colore_grigio
+            classifica[gio]["rinviate"] += 1
+        elif match["status"] != "FINISHED":
+            testo_esito, col = "⏳ IN CORSO", colore_grigio
+            classifica[gio]["in_corso"] += 1
+        else:
+            gol_home, gol_away = match["score"]["fullTime"]["home"], match["score"]["fullTime"]["away"]
+            gol_casa_riga, gol_ospite_riga = (gol_away, gol_home) if ordine_invertito else (gol_home, gol_away)
+            testo_esito = controlla_esito(pron, gol_casa_riga, gol_ospite_riga)
+            if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
+            elif "ANNULLATA" in testo_esito: col = colore_grigio
+            elif testo_esito == ESITO_DA_VERIFICARE:
+                # Pronostico non interpretabile: 0 punti, e NON conta come persa
+                # (altrimenti marcherebbe la schedina come "bruciata" senza motivo).
+                col = colore_giallo
+                classifica[gio]["da_verificare"] += 1
+                da_verificare_dettaglio.append(f"{gio.upper()} · {partita} · pronostico: `{pron or '(vuoto)'}`")
+            else: col = colore_rosso; classifica[gio]["perse"] += 1
 
-            if match["status"] != "FINISHED" and gia_finalizzato:
-                punti_partita = int(estrai_numero(riga[8])) if len(riga) > 8 else 0
-                if "VINTA" in esito_salvato: classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
-                elif "PERSA" in esito_salvato: classifica[gio]["perse"] += 1
-                continue  # nessuna scrittura su Sheets: la riga resta com'era
-
-            if match["status"] in STATI_PARTITA_RINVIATA:
-                # Regolamento: "per i punti si aspetta il recupero". Distinta da
-                # IN CORSO perche' l'attesa puo' durare settimane: se restasse
-                # IN CORSO, il riepilogo di fine giornata non partirebbe mai.
-                testo_esito, col = ESITO_RINVIATA, colore_grigio
-                classifica[gio]["rinviate"] += 1
-            elif match["status"] != "FINISHED":
-                testo_esito, col = "⏳ IN CORSO", colore_grigio
-                classifica[gio]["in_corso"] += 1
-            else:
-                gol_home, gol_away = match["score"]["fullTime"]["home"], match["score"]["fullTime"]["away"]
-                gol_casa_riga, gol_ospite_riga = (gol_away, gol_home) if ordine_invertito else (gol_home, gol_away)
-                testo_esito = controlla_esito(pron, gol_casa_riga, gol_ospite_riga)
-                if "VINTA" in testo_esito: col, punti_partita = colore_verde, calcola_punteggio_partita(pron, quota); classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
-                elif "ANNULLATA" in testo_esito: col = colore_grigio
-                elif testo_esito == ESITO_DA_VERIFICARE:
-                    # Pronostico non interpretabile: 0 punti, e NON conta come persa
-                    # (altrimenti marcherebbe la schedina come "bruciata" senza motivo).
-                    col = colore_giallo
-                    classifica[gio]["da_verificare"] += 1
-                    da_verificare_dettaglio.append(f"{gio.upper()} · {partita} · pronostico: `{pron or '(vuoto)'}`")
-                else: col = colore_rosso; classifica[gio]["perse"] += 1
-
-            aggiornamenti_testo.extend([{'range': f"Giocate!G{idx+1}", 'values': [[testo_esito]]}, {'range': f"Giocate!I{idx+1}", 'values': [[punti_partita]]}])
-            richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
+        segna_riga(idx, testo_esito, punti_partita, col)
 
     if aggiornamenti_testo:
         service.spreadsheets().values().batchUpdate(spreadsheetId=SPREADSHEET_ID, body={'valueInputOption': 'USER_ENTERED', 'data': aggiornamenti_testo}).execute(num_retries=3)
@@ -1362,9 +1362,9 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         report += f"👤 *{gio.upper()}* - {dati['punti']} Pt\n({dati['vinte']} V | {dati['perse']} P | {dati['in_corso']} C) -> {stato}\n\n"
 
     if da_verificare_dettaglio:
-        report += "\n⚠️ *PRONOSTICI NON INTERPRETABILI — nessun punto assegnato:*\n"
+        report += "\n⚠️ *PRONOSTICI O PARTITE NON INTERPRETABILI — nessun punto assegnato:*\n"
         report += "\n".join(f"- {d}" for d in da_verificare_dettaglio)
-        report += "\n\nIl bot non sa interpretare questi pronostici, quindi non ha assegnato nulla. Correggili sul foglio Giocate (colonna Pronostico) e poi rilancia *Aggiorna Risultati*.\n"
+        report += "\n\nIl bot non sa interpretare queste righe, quindi non ha assegnato nulla. Correggile sul foglio Giocate (colonna Pronostico, oppure Partita nel formato \"Casa - Ospite\") e poi rilancia *Aggiorna Risultati*.\n"
 
     righe_class = service.spreadsheets().values().get(spreadsheetId=SPREADSHEET_ID, range="Classifica").execute(num_retries=3).get('values', [["Giocatore", "Punti Totali"]])
     col_g = f"Giornata {giornata}"
@@ -2327,9 +2327,9 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
        (visto il 30/08/2026 su Giornata 2).
     2) Righe di Giocate ancora IN CORSO la cui Partita non trova corrispondenza
        in nessuna partita ufficiale della giornata — probabile nome squadra
-       scritto in modo insolito o ordine invertito: a differenza del caso (1),
-       questa non si risolve da sola nemmeno quando l'API torna a funzionare,
-       perché esegui_calcolo_risultati non ritenta con l'ordine invertito.
+       scritto in modo insolito: a differenza del caso (1),
+       questa non si risolve da sola nemmeno quando l'API torna a funzionare
+       (stesso abbinamento di esegui_calcolo_risultati: statistiche.abbina_partita).
     """
     try:
         giornata = await asyncio.to_thread(ottieni_giornata_corrente)
@@ -2373,12 +2373,7 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             if "CORSO" not in esito:
                 continue
             partita = str(riga[2]).strip()
-            if partita.count('-') != 1:
-                non_riconosciute.add(partita)
-                continue
-            casa_sh, ospite_sh = [s.strip()[:5].lower() for s in partita.split('-')]
-            match = next((m for m in matches if (casa_sh in str(m["homeTeam"]["name"]).lower() or casa_sh in str(m.get("homeTeam",{}).get("shortName","")).lower()) and (ospite_sh in str(m["awayTeam"]["name"]).lower() or ospite_sh in str(m.get("awayTeam",{}).get("shortName","")).lower())), None)
-            if not match:
+            if not abbina_partita(partita, matches):
                 non_riconosciute.add(partita)
 
         global ultime_anomalie_segnalate
@@ -2400,8 +2395,8 @@ async def task_controlla_anomalie_partite(context: ContextTypes.DEFAULT_TYPE):
             msg += "\n\nPotrebbe essere lo stesso problema del 30/08 — controlla prima di lanciare Aggiorna Risultati.\n\n"
         if non_riconosciute:
             msg += "⚠️ *Partite in bolletta non riconosciute tra quelle ufficiali della giornata:*\n"
-            msg += "\n".join(f"- {p}" for p in non_riconosciute)
-            msg += "\n\nProbabile nome squadra insolito o ordine invertito — non verranno segnate automaticamente finché non le correggi a mano."
+            msg += "\n".join(f"- {escape_markdown(p)}" for p in non_riconosciute)
+            msg += "\n\nProbabile nome squadra insolito o scritto male — non verranno segnate automaticamente finché non le correggi a mano."
         msg += "\n\n_(Non ripeterò questo stesso avviso finché la situazione non cambia.)_"
 
         await avvisa_admin(context, msg)
