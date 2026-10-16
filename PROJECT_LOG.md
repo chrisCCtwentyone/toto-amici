@@ -108,6 +108,12 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 16/10/2026 — Gemini: quota esaurita distinta dal sovraccarico
+- **Problema**: la scansione foto falliva in pochi secondi con "tutti i modelli sovraccarichi". `/diagnostica`: `gemini-3.5-flash` dava 429 RESOURCE_EXHAUSTED (quota gratuita della chiave finita), non un sovraccarico; il bot trattava il 429 come un 503 e bruciava i 2 tentativi a 2 s.
+- **Fix** (`bot_telegram.py`, `chiama_gemini_con_fallback`): sul 429 si legge il `retryDelay` di Google; se e' <= 45 s si aspetta UNA volta e si riprova lo stesso modello, altrimenti (quota giornaliera) si passa subito al successivo. Attese di quota sommate <= 90 s; nessuna nuova chiamata parte se non puo' finire entro 180 s. 503/500/timeout/404/chiave non valida invariati. Se un modello ha dato 429 l'eccezione e' `GeminiQuotaEsaurita` (sottoclasse di `GeminiSovraccarico`, con `attesa_suggerita`, `limiti`) e l'admin legge "Quota Gemini esaurita sulla chiave" invece di "sovraccarico".
+- **Quale limite**: `descrivi_quota()` estrae `quotaId`/`quotaMetric`/`quotaValue` e li traduce (es. "richieste al giorno, limite 20, si azzera alle 09:00 italiane" / "token al minuto"); compare nel messaggio all'admin, in `/diagnostica` e nel log. Serve a decidere come risparmiare quota senza pagare. Se i campi mancano non succede nulla.
+- `/diagnostica` mostra "quota esaurita (riprova fra Xs): ..." e avverte che consuma la stessa quota. Test: `tests/test_robustezza_ia.py` (classi `TestQuotaEsaurita`, `TestDescriviQuota`).
+
 ### 10/10/2026 — Nomi partita senza trattino (incidente Giornata 6)
 
 **Causa.** La notte del 09/10 Gemini ha letto la schedina di GIOVANNI con i nomi partita senza trattino ("Atalanta Venezia", "Como Roma"...). `normalizza_nomi_partite` li normalizzava solo `if "-" in partita`, quindi sono stati salvati grezzi. Conseguenze: in `esegui_calcolo_risultati` il `split('-')` dava `ValueError` e faceva saltare il calcolo dell'**intera giornata per tutti**; lo snapshot marcava le 10 righe come non ufficiali (10 avvisi). Le 10 celle sono state corrette a mano sul foglio.

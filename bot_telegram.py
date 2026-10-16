@@ -695,6 +695,78 @@ class GeminiSovraccarico(Exception):
     poter mostrare all'admin un messaggio utile invece del JSON grezzo del 503."""
 
 
+class GeminiQuotaEsaurita(GeminiSovraccarico):
+    """Almeno un modello ha risposto 429 RESOURCE_EXHAUSTED: la QUOTA della chiave
+    (limite gratuito di Google) e' finita, non i server congestionati. Sottoclasse
+    di GeminiSovraccarico cosi' i chiamanti esistenti restano validi.
+    `attesa_suggerita` = secondi indicati da Google (None se non indicati)."""
+
+    def __init__(self, messaggio, attesa_suggerita=None, anche_sovraccarico=False, limiti=None):
+        super().__init__(messaggio)
+        self.attesa_suggerita = attesa_suggerita
+        self.anche_sovraccarico = anche_sovraccarico
+        self.limiti = limiti or {}  # modello -> limite colpito, a parole (puo' mancare)
+
+
+# Quota esaurita (429) e sovraccarico (503) NON sono la stessa cosa: il 503 passa
+# da solo in minuti e un secondo tentativo dopo 2s ha senso; il 429 dice quando
+# riprovare (retryDelay) e prima di allora ogni tentativo e' sprecato. Il
+# 16/10/2026 la quota di gemini-3.5-flash era finita e il bot bruciava tutti i
+# tentativi in pochi secondi dichiarando "sovraccarichi".
+MAX_ATTESA_QUOTA_S = 45         # oltre, e' la quota giornaliera: inutile aspettare
+MAX_ATTESA_QUOTA_TOTALE_S = 90  # tetto alle attese di quota sommate su tutta la catena
+TEMPO_MAX_SCANSIONE_S = 180     # nessuna nuova chiamata parte se non puo' finire entro qui
+# Conto del tempo massimo: una chiamata dura al piu' TIMEOUT_GEMINI_MS (60s) e
+# parte solo se (tempo trascorso + 60s) <= 180s, quindi la scansione finisce
+# sempre entro 180s. Nel caso reale (429/503 = risposte in <1s) pesano solo le
+# attese: <= 90s di quota + 4 modelli x 2s di backoff 503 = ~100s.
+
+
+def e_quota_esaurita(testo):
+    t = str(testo).upper()
+    return "RESOURCE_EXHAUSTED" in t or re.search(r"\b429\b", t) is not None
+
+
+def ritardo_quota_secondi(testo):
+    """Secondi di attesa suggeriti da Google in un 429 ("retryDelay": "37s" oppure
+    "Please retry in 37.2s"), o None se non ci sono (tipico della quota giornaliera)."""
+    m = (re.search(r"retryDelay\W+(\d+(?:\.\d+)?)s", str(testo))
+         or re.search(r"retry in (\d+(?:\.\d+)?)s", str(testo), re.IGNORECASE))
+    return float(m.group(1)) if m else None
+
+
+def ora_azzeramento_quota_giornaliera(adesso=None):
+    """Ora italiana (HH:MM) della prossima mezzanotte del Pacifico, quando Google
+    azzera le quote giornaliere (09:00 in Italia con entrambi gli orari legali)."""
+    pacifico = pytz.timezone("America/Los_Angeles")
+    adesso = (adesso or datetime.now(pytz.utc)).astimezone(pacifico)
+    domani = pacifico.localize(datetime.combine(adesso.date() + timedelta(days=1), dt_time(0, 0)))
+    return domani.astimezone(TZ_ROMA).strftime("%H:%M")
+
+
+def descrivi_quota(testo):
+    """Quale limite e' stato colpito, a parole, leggendo i campi quotaId /
+    quotaMetric / quotaValue del 429 (es. 'GenerateRequestsPerDayPerProjectPerModel-FreeTier').
+    Stringa vuota se i campi mancano: serve solo a informare, non deve mai rompere niente."""
+    try:
+        testo = str(testo)
+        campo = lambda nome: re.findall(nome + r"""\W+([^'",}\s]+)""", testo)
+        ids, metriche, valori = campo("quotaId"), campo("quotaMetric"), campo("quotaValue")
+        parti = []
+        for i in range(max(len(ids), len(metriche))):
+            chiave = ((ids[i] if i < len(ids) else "") + " " + (metriche[i] if i < len(metriche) else "")).lower()
+            cosa = "token" if "token" in chiave else ("richieste" if "request" in chiave else "quota")
+            quando = "al giorno" if ("perday" in chiave or "per_day" in chiave) else (
+                "al minuto" if ("perminute" in chiave or "per_minute" in chiave) else "")
+            extra = [f"limite {valori[i]}"] if i < len(valori) else []
+            if quando == "al giorno":
+                extra.append(f"si azzera alle {ora_azzeramento_quota_giornaliera()} italiane")
+            parti.append(" ".join(x for x in (cosa, quando) if x) + (", " + ", ".join(extra) if extra else ""))
+        return "; ".join(dict.fromkeys(parti))
+    except Exception:
+        return ""
+
+
 def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_modello=2, backoff_base=2.0):
     """Esegue `chiamata(modello)` scorrendo la catena finche' uno risponde.
 
@@ -703,12 +775,15 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
     diverso, stessa identica situazione di googleapiclient per Sheets (vedi
     la regola su num_retries=3 in CLAUDE.md).
 
-    Tre comportamenti distinti, perche' non tutti gli errori vanno trattati
+    Quattro comportamenti distinti, perche' non tutti gli errori vanno trattati
     allo stesso modo:
-    - transitorio (503/429/500/timeout): riprova sullo stesso modello, poi
+    - sovraccarico (503/500/timeout): riprova sullo stesso modello, poi
       passa al successivo. Riprovare *lo stesso* modello saturo non basta:
       la prima versione di questo retry (3 tentativi in 6 secondi) non ha
       risolto niente, perche' la saturazione dura minuti, non secondi.
+    - quota esaurita (429): se Google indica un retryDelay <= MAX_ATTESA_QUOTA_S
+      si aspetta quel tempo UNA volta e si riprova; altrimenti (quota
+      giornaliera) si passa subito al modello dopo, senza dormire.
     - modello non disponibile (404): passa subito al successivo senza
       riprovare. I modelli vengono ritirati (gemini-2.5-flash e' gia'
       "no longer available"): la catena non deve morire per questo.
@@ -717,7 +792,15 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
     """
     ultimo_errore = None
     inizio = time.time()
+    quota_vista = False
+    attese_viste = []
+    limiti = {}
+    attesa_residua = MAX_ATTESA_QUOTA_TOTALE_S
     for modello in modelli:
+        if time.time() - inizio + TIMEOUT_GEMINI_MS / 1000 > TEMPO_MAX_SCANSIONE_S:
+            logging.warning(f"Gemini: tempo massimo di scansione raggiunto, salto '{modello}' e i successivi")
+            break
+        aspettato = False
         for tentativo in range(1, tentativi_per_modello + 1):
             try:
                 risposta = chiamata(modello)
@@ -735,11 +818,37 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
                 if not any(codice in testo_errore for codice in ERRORI_GEMINI_TRANSITORI):
                     raise
                 logging.warning(f"Gemini: '{modello}' non disponibile (tentativo {tentativo}/{tentativi_per_modello}): {str(e)[:120]}")
+                if e_quota_esaurita(e):
+                    quota_vista = True
+                    ritardo = ritardo_quota_secondi(e)
+                    if ritardo is not None:
+                        attese_viste.append(ritardo)
+                    limite = descrivi_quota(e)
+                    if limite:
+                        limiti[modello] = limite
+                        logging.warning(f"Gemini: limite di quota colpito da '{modello}': {limite}")
+                    if (ritardo is not None and ritardo <= MAX_ATTESA_QUOTA_S
+                            and ritardo <= attesa_residua and not aspettato
+                            and tentativo < tentativi_per_modello):
+                        aspettato = True
+                        attesa_residua -= ritardo
+                        logging.warning(f"Gemini: quota di '{modello}' esaurita, aspetto {ritardo:.0f}s come indicato da Google")
+                        time.sleep(ritardo + 1)
+                        continue
+                    logging.warning(f"Gemini: quota di '{modello}' esaurita (attesa {ritardo}s), passo al successivo")
+                    break
                 if any(codice in testo_errore for codice in ERRORI_SENZA_SECONDO_TENTATIVO):
                     logging.warning(f"Gemini: '{modello}' ha superato il tempo massimo, passo al successivo senza riprovarlo")
                     break
                 if tentativo < tentativi_per_modello:
                     time.sleep(backoff_base ** tentativo)
+    if quota_vista:
+        raise GeminiQuotaEsaurita(
+            f"Quota Gemini esaurita sulla chiave ({', '.join(modelli)}). Ultimo errore: {ultimo_errore}",
+            attesa_suggerita=min(attese_viste) if attese_viste else None,
+            anche_sovraccarico=not e_quota_esaurita(ultimo_errore),
+            limiti=limiti,
+        )
     raise GeminiSovraccarico(
         f"Tutti i modelli Gemini provati sono sovraccarichi ({', '.join(modelli)}). "
         f"Ultimo errore: {ultimo_errore}"
@@ -1462,7 +1571,14 @@ def _prova_un_modello(modello):
         return (modello, time.time() - inizio, None)
     except Exception as e:
         testo = str(e)
-        if "503" in testo or "UNAVAILABLE" in testo.upper():
+        if e_quota_esaurita(testo):
+            ritardo = ritardo_quota_secondi(testo)
+            motivo = f"quota esaurita (riprova fra {ritardo:.0f}s)" if ritardo is not None else "quota esaurita"
+            limite = descrivi_quota(testo)
+            if limite:
+                motivo += f": {limite}"
+                logging.warning(f"Diagnostica: limite di quota colpito da '{modello}': {limite}")
+        elif "503" in testo or "UNAVAILABLE" in testo.upper():
             motivo = "sovraccarico"
         elif "404" in testo or "NOT_FOUND" in testo.upper():
             motivo = "non piu' disponibile"
@@ -1549,6 +1665,7 @@ async def diagnostica_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             righe.append(f"🔴 `{modello}` — {escape_markdown(problema)}")
 
+    righe.append("_Nota: ogni /diagnostica consuma un po' della stessa quota Gemini del caricamento schedine._")
     funzionanti = [e for e in esiti if e[2] is None]
     if not funzionanti:
         # "Fallirebbe" sarebbe troppo netto: il caricamento vero concede 60s,
@@ -1966,6 +2083,27 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             testo_semplice = msg_riepilogo.replace("**", "").replace("\\", "")
             await query.edit_message_text(testo_semplice, reply_markup=InlineKeyboardMarkup(kb))
         return CONFERMA_LETTURA_IA
+
+    except GeminiQuotaEsaurita as e:
+        # Quota della chiave finita (429), non server congestionati: dirlo
+        # con le parole giuste, altrimenti l'admin riprova a vuoto.
+        logging.warning(f"Lettura schedina non riuscita: quota Gemini esaurita (attesa suggerita {e.attesa_suggerita})")
+        quando = (f"Google indica di riprovare fra circa {e.attesa_suggerita:.0f} secondi."
+                  if e.attesa_suggerita is not None else
+                  "Se è il limite giornaliero può servire molto di più (si azzera col nuovo giorno di Google).")
+        extra = "\nAlcuni modelli erano anche sovraccarichi." if e.anche_sovraccarico else ""
+        if e.limiti:
+            extra += "\n\nLimite colpito:\n" + "\n".join(
+                f"• {escape_markdown(m)}: {escape_markdown(l)}" for m, l in e.limiti.items())
+        testo_quota = ("⏳ *Quota Gemini esaurita sulla chiave* (limite gratuito di Google).\n\n"
+                       "Non è un problema del bot né delle tue foto. " + quando + extra +
+                       "\n\nRiprova più tardi con /start.")
+        try:
+            await query.edit_message_text(testo_quota, parse_mode="Markdown")
+        except Exception:
+            await query.edit_message_text(testo_quota.replace("*", ""))
+        await pulisci_dati(context)
+        return ConversationHandler.END
 
     except GeminiSovraccarico:
         # Non e' un guasto del bot: sono i server di Google congestionati.

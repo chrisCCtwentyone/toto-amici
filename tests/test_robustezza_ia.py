@@ -130,7 +130,7 @@ class TestChiamaGeminiConFallback:
         assert bt.chiama_gemini_con_fallback(chiamata) == "ok"
         assert usati.count(bt.MODELLI_GEMINI[0]) == 1, "su un 404 non ha senso riprovare lo stesso modello"
 
-    @pytest.mark.parametrize("errore", ["503 UNAVAILABLE", "429 RESOURCE_EXHAUSTED", "500 INTERNAL"])
+    @pytest.mark.parametrize("errore", ["503 UNAVAILABLE", "500 INTERNAL"])
     def test_considera_transitori_i_codici_giusti(self, errore):
         usati = []
 
@@ -181,6 +181,200 @@ class TestChiamaGeminiConFallback:
         assert len(bt.MODELLI_GEMINI) >= 2
         assert len(set(bt.MODELLI_GEMINI)) == len(bt.MODELLI_GEMINI), "modelli duplicati nella catena"
 
+
+QUOTA_BREVE = ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota', "
+               "'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', "
+               "'retryDelay': '37s'}]}}")
+QUOTA_GIORNALIERA = "429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Quota exceeded for metric per day'}}"
+
+
+class TestQuotaEsaurita:
+    """16/10/2026: gemini-3.5-flash dava 429 (quota finita) e il bot, trattandolo
+    come sovraccarico, bruciava tutti i tentativi in pochi secondi."""
+
+    @pytest.fixture
+    def attese(self, monkeypatch):
+        """Orologio finto: sleep registra la durata e fa avanzare il tempo."""
+        orologio = {"t": 0.0}
+        registro = []
+
+        def dormi(secondi):
+            registro.append(secondi)
+            orologio["t"] += secondi
+
+        monkeypatch.setattr(bt, "time", type("T", (), {"time": staticmethod(lambda: orologio["t"]), "sleep": staticmethod(dormi)}))
+        return registro
+
+    @pytest.mark.parametrize("testo, atteso", [
+        ("'retryDelay': '37s'", 37.0),
+        ('"retryDelay": "37.5s"', 37.5),
+        ("Please retry in 37.2s.", 37.2),
+        ("429 RESOURCE_EXHAUSTED", None),
+    ])
+    def test_legge_il_ritardo_suggerito(self, testo, atteso):
+        assert bt.ritardo_quota_secondi(testo) == atteso
+
+    def test_429_con_ritardo_breve_aspetta_e_riesce(self, attese):
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            if len(usati) == 1:
+                raise Exception(QUOTA_BREVE)
+            return "letta"
+
+        assert bt.chiama_gemini_con_fallback(chiamata) == "letta"
+        assert usati == [bt.MODELLI_GEMINI[0]] * 2, "doveva riprovare lo STESSO modello dopo l'attesa"
+        assert attese == [38.0], "37s suggeriti + 1s di margine"
+
+    def test_429_senza_ritardo_passa_subito_al_successivo(self, attese):
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            if modello == bt.MODELLI_GEMINI[0]:
+                raise Exception(QUOTA_GIORNALIERA)
+            return "ok"
+
+        assert bt.chiama_gemini_con_fallback(chiamata) == "ok"
+        assert usati == [bt.MODELLI_GEMINI[0], bt.MODELLI_GEMINI[1]]
+        assert attese == [], "quota giornaliera: aspettare non serve"
+
+    def test_429_con_ritardo_troppo_lungo_non_aspetta(self, attese):
+        with pytest.raises(bt.GeminiQuotaEsaurita):
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception("429 RESOURCE_EXHAUSTED retryDelay: '300s'")))
+        assert attese == []
+
+    def test_tutti_429_solleva_quota_con_messaggio_giusto(self, attese):
+        with pytest.raises(bt.GeminiQuotaEsaurita) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception(QUOTA_GIORNALIERA)))
+        assert isinstance(errore.value, bt.GeminiSovraccarico), "i chiamanti esistenti devono continuare a funzionare"
+        assert "Quota" in str(errore.value) and "sovraccaric" not in str(errore.value)
+        assert errore.value.attesa_suggerita is None
+
+    def test_attesa_totale_ha_un_tetto(self, attese):
+        """4 modelli con 40s di ritardo ciascuno: si aspetta solo finche' c'e' budget."""
+        quota_40 = "429 RESOURCE_EXHAUSTED retryDelay: '40s'"
+        with pytest.raises(bt.GeminiQuotaEsaurita) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception(quota_40)))
+        assert sum(attese) <= bt.MAX_ATTESA_QUOTA_TOTALE_S + len(attese)  # +1s di margine per attesa
+        assert errore.value.attesa_suggerita == 40.0
+
+    def test_quota_e_sovraccarico_misti(self, attese):
+        errori = {bt.MODELLI_GEMINI[0]: QUOTA_GIORNALIERA}
+        with pytest.raises(bt.GeminiQuotaEsaurita) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception(errori.get(m, SOVRACCARICO))))
+        assert errore.value.anche_sovraccarico is True
+
+    def test_503_resta_come_prima(self, attese):
+        usati = []
+        with pytest.raises(bt.GeminiSovraccarico) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: usati.append(m) or (_ for _ in ()).throw(Exception(SOVRACCARICO)))
+        assert not isinstance(errore.value, bt.GeminiQuotaEsaurita)
+        assert len(usati) == len(bt.MODELLI_GEMINI) * 2
+        assert attese == [2.0] * len(bt.MODELLI_GEMINI), "backoff di 2s tra i due tentativi, come prima"
+
+    def test_404_passa_al_successivo(self, attese):
+        usati = []
+
+        def chiamata(modello):
+            usati.append(modello)
+            if modello == bt.MODELLI_GEMINI[0]:
+                raise Exception("404 NOT_FOUND")
+            return "ok"
+
+        assert bt.chiama_gemini_con_fallback(chiamata) == "ok"
+        assert usati == [bt.MODELLI_GEMINI[0], bt.MODELLI_GEMINI[1]] and attese == []
+
+    def test_chiave_non_valida_rilanciata_subito(self, attese):
+        usati = []
+        with pytest.raises(Exception, match="API key not valid"):
+            bt.chiama_gemini_con_fallback(lambda m: usati.append(m) or (_ for _ in ()).throw(Exception("400 INVALID_ARGUMENT: API key not valid")))
+        assert len(usati) == 1 and attese == []
+
+    def test_tempo_massimo_di_scansione(self, attese, monkeypatch):
+        """Ogni chiamata 'dura' 60s (timeout): ne partono 3 su 4 dentro i 180s."""
+        usati = []
+        orologio = bt.time
+
+        def chiamata(modello):
+            usati.append(modello)
+            orologio.sleep(60)
+            raise Exception("504 DEADLINE_EXCEEDED")
+
+        with pytest.raises(bt.GeminiSovraccarico):
+            bt.chiama_gemini_con_fallback(chiamata)
+        assert sum(attese) <= bt.TEMPO_MAX_SCANSIONE_S
+        assert len(usati) == 3, "il quarto modello non parte: finirebbe oltre i 180s"
+
+def _quota_reale(quota_id, metrica, valore, modello="gemini-3.5-flash", ritardo="37s"):
+    """Forma realistica del 429 di Gemini (repr Python, come lo stampa l'SDK)."""
+    return ("429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, "
+            "please check your plan and billing details.', 'status': 'RESOURCE_EXHAUSTED', 'details': ["
+            "{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, "
+            "{'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{"
+            f"'quotaMetric': '{metrica}', 'quotaId': '{quota_id}', "
+            f"'quotaDimensions': {{'location': 'global', 'model': '{modello}'}}, 'quotaValue': '{valore}'}}]}}, "
+            f"{{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '{ritardo}'}}]}}}}")
+
+
+QUOTA_AL_GIORNO = _quota_reale("GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+                               "generativelanguage.googleapis.com/generate_content_free_tier_requests", 20, ritardo="3600s")
+QUOTA_AL_MINUTO_TOKEN = _quota_reale("GenerateContentInputTokensPerModelPerMinute-FreeTier",
+                                     "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count", 250000)
+
+
+class TestDescriviQuota:
+    """Serve a decidere come risparmiare quota senza pagare: sapere QUALE limite
+    (giorno/minuto, richieste/token) e' stato colpito."""
+
+    def test_richieste_al_giorno_con_limite_e_orario_di_reset(self):
+        d = bt.descrivi_quota(QUOTA_AL_GIORNO)
+        assert d.startswith("richieste al giorno, limite 20")
+        assert f"alle {bt.ora_azzeramento_quota_giornaliera()} italiane" in d
+
+    def test_token_al_minuto(self):
+        assert bt.descrivi_quota(QUOTA_AL_MINUTO_TOKEN) == "token al minuto, limite 250000"
+
+    def test_campi_assenti_non_rompono_niente(self):
+        for testo in ("429 RESOURCE_EXHAUSTED", "", None, "quotaId", "quotaId: ,}"):
+            assert bt.descrivi_quota(testo) in ("", "quota")
+
+    def test_json_con_virgolette_doppie(self):
+        assert "al minuto" in bt.descrivi_quota(QUOTA_AL_MINUTO_TOKEN.replace("'", '"'))
+
+    def test_reset_di_mezzanotte_pacifico_e_alle_9_italiane_in_ottobre(self):
+        from datetime import datetime, timezone
+        assert bt.ora_azzeramento_quota_giornaliera(datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)) == "09:00"
+
+    def test_l_eccezione_porta_il_limite_per_modello(self, monkeypatch):
+        monkeypatch.setattr(bt.time, "sleep", lambda _: None)
+        with pytest.raises(bt.GeminiQuotaEsaurita) as errore:
+            bt.chiama_gemini_con_fallback(lambda m: (_ for _ in ()).throw(Exception(QUOTA_AL_GIORNO)))
+        assert set(errore.value.limiti) == set(bt.MODELLI_GEMINI)
+        assert "richieste al giorno" in errore.value.limiti[bt.MODELLI_GEMINI[0]]
+
+    def test_diagnostica_mostra_quota_e_limite_non_il_json_grezzo(self, monkeypatch):
+        class Finto:
+            class models:
+                @staticmethod
+                def generate_content(**kw):
+                    raise Exception(QUOTA_AL_GIORNO)
+
+        monkeypatch.setattr(bt, "get_gemini_client", lambda: Finto())
+        modello, _, motivo = bt._prova_un_modello("gemini-3.5-flash")
+        assert motivo.startswith("quota esaurita (riprova fra 3600s): richieste al giorno, limite 20")
+        assert "{" not in motivo and "sovraccarico" not in motivo
+
+    def test_diagnostica_503_resta_sovraccarico(self, monkeypatch):
+        class Finto:
+            class models:
+                @staticmethod
+                def generate_content(**kw):
+                    raise Exception(SOVRACCARICO)
+
+        monkeypatch.setattr(bt, "get_gemini_client", lambda: Finto())
+        assert bt._prova_un_modello("x")[2] == "sovraccarico"
 
 
 class TestEstraiEventiPerCategoria:
