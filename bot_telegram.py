@@ -599,7 +599,10 @@ ERRORI_SENZA_SECONDO_TENTATIVO = ("504", "DEADLINE", "TIMED OUT", "TIMEOUT")
 # La congestione SI SPOSTA da un modello all'altro nel giro di minuti: nessun
 # singolo modello e' affidabile da solo, per questo serve una catena e non
 # semplicemente un modello diverso (Sessione 15).
-MODELLI_GEMINI = ("gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash")
+MODELLI_GEMINI = ("gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.8-flash",
+                  # I "lite" hanno una quota gratuita separata (il 16/10 i flash erano a 20/giorno ciascuno)
+                  # e alla prova sulle schedine vere hanno letto 20/20, compresa una bet365 a parole.
+                  "gemini-flash-lite-latest", "gemini-3.5-flash-lite")
 
 # Il minimo accettato dall'API e' 10s. Senza un tetto, un modello congestionato
 # tiene occupato il bot per oltre un minuto e mezzo (96s misurati) mentre
