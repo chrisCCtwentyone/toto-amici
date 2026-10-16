@@ -3546,7 +3546,11 @@ def main():
                 CallbackQueryHandler(esegui_conferma_risultato_manuale, pattern="^confermamanuale_")
             ]
         },
-        fallbacks=[CommandHandler("cancel", annulla_tutto)]
+        fallbacks=[CommandHandler("cancel", annulla_tutto)],
+        # /start deve funzionare SEMPRE: senza allow_reentry una lettura lasciata a
+        # meta' (ne' salvata ne' annullata) teneva la conversazione ferma e /start
+        # veniva ignorato in silenzio (16/10/2026, "premo /start e non ricevo nulla").
+        allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("setkey", set_api_key_command))
