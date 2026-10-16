@@ -554,3 +554,27 @@ class TestInvariantePubblicazione:
         _, _, fine, scritture_stato = self._calcolo(monkeypatch, pubblicazione_rotta=True)
         # Celle e Cassa: solo quelle del calcolo (nessun'altra scrittura). Lo Stato, se toccato, e' solo la chiave di deduplica.
         assert set(scritture_stato) <= {bt.CHIAVE_AVVISI_SNAPSHOT}
+
+
+class TestCategoriaSalvataDalRegolamento:
+    """Invariante: la categoria salvata (colonna Tipologia) di un pronostico
+    riconosciuto e' sempre quella del regolamento, qualunque categoria dica il modello."""
+
+    ATTESE = {"1": "Fisse", "X": "Fisse", "2": "Fisse", "1X": "Doppie Chance", "X2": "Doppie Chance",
+              "12": "Doppie Chance", "OVER_2.5": "Variabili", "UNDER_2.5": "Variabili", "GOAL": "Variabili",
+              "NOGOAL": "Variabili", "PARI": "Variabili", "DISPARI": "Variabili",
+              "1+OVER_2.5": "Combo", "X+GOAL": "Combo", "GG": "Variabili", "2X": "Doppie Chance"}
+
+    @pytest.mark.parametrize("categoria_modello", bt.CATEGORIE_SCHEDINA)
+    def test_tipologia_scritta_indipendente_dal_modello(self, monkeypatch, categoria_modello):
+        servizio = FakeService([])
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: servizio)
+        pronostici = list(self.ATTESE)
+        eventi = {c: [] for c in bt.CATEGORIE_SCHEDINA}
+        eventi[categoria_modello] = [{"partita": f"P{i}-Q{i}", "pronostico": p, "quota": "1,50"}
+                                     for i, p in enumerate(pronostici)]
+        bt.scrivi_su_sheets_con_regole("Mario", 7, json.dumps({"vincita_potenziale": "10", "eventi": eventi}))
+        scritte = servizio.values_obj.cassa_scritta
+        assert len(scritte) == len(pronostici)
+        for riga, p in zip(sorted(scritte, key=lambda r: int(r[2].split("-")[0][1:])), pronostici):
+            assert riga[3] == self.ATTESE[p], f"{p}: scritto in {riga[3]}"

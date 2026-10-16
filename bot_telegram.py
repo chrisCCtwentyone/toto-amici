@@ -1178,6 +1178,52 @@ def normalizza_pronostico(pronostico_raw):
 
     return p
 
+_CATEGORIA_PER_PRONOSTICO = {
+    "1": "Fisse", "X": "Fisse", "2": "Fisse",
+    "1X": "Doppie Chance", "X2": "Doppie Chance", "12": "Doppie Chance",
+    "OVER_2.5": "Variabili", "UNDER_2.5": "Variabili", "GOAL": "Variabili",
+    "NOGOAL": "Variabili", "PARI": "Variabili", "DISPARI": "Variabili",
+}
+
+
+def categoria_da_pronostico(pronostico_normalizzato):
+    """Categoria prevista dal regolamento per un pronostico GIA' normalizzato, o
+    None se non lo riconosce (in quel caso vale la categoria data dal modello: il
+    calcolo lo segnalera' DA VERIFICARE, mai indovinare). La categoria non la
+    decide l'IA: gemini-flash-lite-latest metteva GOAL in "Fisse" (16/10/2026)."""
+    p = str(pronostico_normalizzato).strip()
+    if "+" in p:
+        return "Combo"
+    return _CATEGORIA_PER_PRONOSTICO.get(p)
+
+
+def riclassifica_eventi(eventi_per_categoria, modello=None):
+    """Sposta ogni evento nella categoria del regolamento, conservando l'ordine
+    di lettura. Gli eventi non riconosciuti restano dove li ha messi il modello.
+    Va chiamata sull'output di estrai_eventi_per_categoria."""
+    risultato = {c: [] for c in CATEGORIE_SCHEDINA}
+    for categoria in CATEGORIE_SCHEDINA:
+        for ev in eventi_per_categoria.get(categoria, []):
+            giusta = categoria_da_pronostico(normalizza_pronostico(ev.get("pronostico", ""))) or categoria
+            if giusta != categoria:
+                logging.info(f"Riclassificato ({modello or 'modello sconosciuto'}): "
+                             f"{ev.get('partita', '???')} {ev.get('pronostico', '')}: {categoria} -> {giusta}")
+            risultato[giusta].append(ev)
+    return risultato
+
+
+def riclassifica_json(dati_json, modello=None):
+    """Come riclassifica_eventi, ma da JSON-stringa a JSON-stringa nella forma dello schema.
+    Se qualcosa va storto restituisce l'originale: la riclassifica non deve mai far perdere una lettura."""
+    try:
+        dati = json.loads(dati_json)
+        return json.dumps({"vincita_potenziale": dati.get("vincita_potenziale", "0"),
+                           "eventi": riclassifica_eventi(estrai_eventi_per_categoria(dati), modello)})
+    except Exception:
+        logging.exception("riclassifica_json fallita, tengo le categorie del modello")
+        return dati_json
+
+
 class SchedinaGiaPresente(Exception):
     """Quel giocatore ha gia' righe in Giocate per quella giornata.
 
@@ -1233,7 +1279,7 @@ def scrivi_su_sheets_con_regole(nome_giocatore, giornata_num, json_data):
         vincita = f"{float(vincita_raw):.2f}".replace('.', ',')
     except: vincita = "0,00"
 
-    eventi = estrai_eventi_per_categoria(dati)
+    eventi = riclassifica_eventi(estrai_eventi_per_categoria(dati))
     righe_da_inserire = []
     prima_riga = True
     
@@ -2183,6 +2229,7 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         risultato_json_raw = await asyncio.to_thread(analizza_schedine_multiple, foto_lista)
         risultato_json = await asyncio.to_thread(normalizza_nomi_partite, risultato_json_raw, giorn)
+        risultato_json = riclassifica_json(risultato_json, ultima_lettura_ia.get('modello'))
         
         # Salva in sessione per dopo
         context.user_data['risultato_json'] = risultato_json

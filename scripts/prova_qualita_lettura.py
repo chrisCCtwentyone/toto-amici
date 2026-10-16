@@ -96,7 +96,7 @@ def confronta(letti, verita, partite, abbina, normalizza, numero):
         return m["id"] if m else "?" + re.sub(r"\W", "", str(e.get("partita", "")).lower())
 
     liberi = [(chiave(e), e) for e in letti]
-    esatti = quote_esatte = mancanti = 0
+    esatti = quote_esatte = categorie_esatte = mancanti = 0
     for v in verita:
         k = chiave(v)
         candidati = [i for i, (kk, _) in enumerate(liberi) if kk == k]
@@ -110,8 +110,11 @@ def confronta(letti, verita, partite, abbina, normalizza, numero):
             esatti += 1
         if tolleranza_uguali(numero(letto.get("quota", "")), numero(v["quota"])):
             quote_esatte += 1
+        # Categoria (Tipologia) cosi' come la dava il lettore, prima della riclassifica del bot.
+        if str(letto.get("categoria", "")).strip().lower() == str(v.get("categoria", "")).strip().lower():
+            categorie_esatte += 1
     return {"veri": len(verita), "letti": len(letti), "esatti": esatti,
-            "quote_esatte": quote_esatte, "mancanti": mancanti, "inventati": len(liberi)}
+            "quote_esatte": quote_esatte, "categorie_esatte": categorie_esatte, "mancanti": mancanti, "inventati": len(liberi)}
 
 
 def righe_vere(griglia, giornata, giocatore, riga_e_della_giornata):
@@ -138,6 +141,8 @@ def tabella(titolo, risultati, errori, tempi, token):
     print(f"  eventi veri / letti:    {veri} / {sum(r['letti'] for r in risultati)}")
     print(f"  pronostici esatti:      {es}/{veri}  = {pc(es)}")
     print(f"  quote esatte:           {qe}/{veri}  = {pc(qe)}")
+    ce = sum(r["categorie_esatte"] for r in risultati)
+    print(f"  categorie esatte:       {ce}/{veri}  = {pc(ce)}  (come le dava il lettore; il bot poi le riclassifica)")
     print(f"  eventi mancanti:        {sum(r['mancanti'] for r in risultati)}")
     print(f"  eventi inventati:       {sum(r['inventati'] for r in risultati)}")
     print(f"  vincita potenziale ok:  {sum(1 for r in risultati if r.get('vincita_ok'))}/{len(risultati)}")
@@ -212,7 +217,7 @@ def main(argv=None):
                 testo, modello_usato = bt.leggi_con_cloudflare(bt.PROMPT_LETTURA_SCHEDINA, imgs, modelli=((modello, formato),))
             dati = json.loads(testo)
             ev = bt.estrai_eventi_per_categoria(dati)
-            letti = [e for c in bt.CATEGORIE_SCHEDINA for e in ev[c]]
+            letti = [dict(e, categoria=c) for c in bt.CATEGORIE_SCHEDINA for e in ev[c]]
         except Exception as e:
             errori += 1
             print(f"- {g}: ERRORE {type(e).__name__}: {str(e)[:200]}")
@@ -223,7 +228,7 @@ def main(argv=None):
         r["vincita_ok"] = vincita_vera is not None and tolleranza_uguali(
             estrai_numero(dati.get("vincita_potenziale", "0")), estrai_numero(vincita_vera))
         risultati.append(r)
-        print(f"- {g}: {r['esatti']}/{r['veri']} pronostici, {r['quote_esatte']}/{r['veri']} quote, "
+        print(f"- {g}: {r['esatti']}/{r['veri']} pronostici, {r['quote_esatte']}/{r['veri']} quote, {r['categorie_esatte']}/{r['veri']} categorie, "
               f"mancanti {r['mancanti']}, inventati {r['inventati']}, vincita {'ok' if r['vincita_ok'] else 'DIVERSA'}, "
               f"{secondi:.1f}s [{modello_usato}]")
 
