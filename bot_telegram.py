@@ -7,6 +7,8 @@ import json
 import logging
 import random
 import re
+import io
+import base64
 import time
 import resource
 import asyncio
@@ -607,7 +609,41 @@ TIMEOUT_GEMINI_MS = 60000
 # Risoluzione a cui vengono ridotte le foto delle schedine prima di mandarle
 # all'IA. Oltre questa soglia non si guadagna in accuratezza di lettura, ma si
 # paga molta memoria (vedi il commento in analizza_schedine_multiple).
-DIMENSIONE_MAX_FOTO = (1000, 1000)
+# Configurabile (16/10/2026, quota Gemini gratuita che finiva presto): variabile
+# d'ambiente DIMENSIONE_MAX_FOTO_PX (lato massimo in pixel, 200-4000). Il default
+# NON cambia finche' scripts/prova_qualita_lettura.py non dimostra che si puo'
+# scendere senza perdere pronostici o quote.
+def dimensione_foto_da_ambiente(valore, predefinita=1000):
+    try:
+        px = int(str(valore).strip())
+    except (TypeError, ValueError):
+        return (predefinita, predefinita)
+    return (px, px) if 200 <= px <= 4000 else (predefinita, predefinita)
+
+
+DIMENSIONE_MAX_FOTO = dimensione_foto_da_ambiente(os.environ.get("DIMENSIONE_MAX_FOTO_PX"))
+
+
+def media_resolution_da_nome(nome):
+    """'low' / 'MEDIUM' / 'MEDIA_RESOLUTION_HIGH' -> types.MediaResolution; None se
+    vuoto o non valido (nel qual caso NON si passa niente a Gemini: comportamento di sempre).
+    Controlla quanti token costa ogni immagine: LOW e' la piu' economica."""
+    nome = str(nome or "").strip().upper()
+    if not nome:
+        return None
+    if not nome.startswith("MEDIA_RESOLUTION_"):
+        nome = "MEDIA_RESOLUTION_" + nome
+    valore = getattr(types.MediaResolution, nome, None)
+    if valore is None or valore == types.MediaResolution.MEDIA_RESOLUTION_UNSPECIFIED:
+        if nome != "MEDIA_RESOLUTION_UNSPECIFIED":
+            logging.warning("GEMINI_MEDIA_RESOLUTION non valida (%s): ignorata", nome)
+        return None
+    return valore
+
+
+# Variabile d'ambiente GEMINI_MEDIA_RESOLUTION = LOW | MEDIUM | HIGH. Vuota = non
+# si passa nulla (default invariato).
+MEDIA_RESOLUTION_GEMINI = media_resolution_da_nome(os.environ.get("GEMINI_MEDIA_RESOLUTION"))
 
 
 def memoria_picco_mb():
@@ -686,7 +722,7 @@ def libera_memoria_al_sistema_operativo():
 
 # Ultimo modello che ha risposto e quanto ci ha messo: serve a dire all'admin
 # "l'IA ha faticato" nel riepilogo, invece di lasciarlo solo nei log di Render.
-ultima_lettura_ia = {"modello": None, "secondi": 0.0, "di_riserva": False}
+ultima_lettura_ia = {"modello": None, "secondi": 0.0, "di_riserva": False, "cloudflare": False, "token_ingresso": None}
 
 
 class GeminiSovraccarico(Exception):
@@ -805,7 +841,7 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
             try:
                 risposta = chiamata(modello)
                 di_riserva = modello != modelli[0]
-                ultima_lettura_ia.update(modello=modello, secondi=time.time() - inizio, di_riserva=di_riserva)
+                ultima_lettura_ia.update(modello=modello, secondi=time.time() - inizio, di_riserva=di_riserva, cloudflare=False)
                 if di_riserva:
                     logging.warning(f"Gemini: risposta ottenuta dal modello di riserva '{modello}'")
                 return risposta
@@ -855,27 +891,7 @@ def chiama_gemini_con_fallback(chiamata, modelli=MODELLI_GEMINI, tentativi_per_m
     )
 
 
-def analizza_schedine_multiple(lista_percorsi_foto):
-    client = get_gemini_client()
-    if not client: raise Exception("Chiave API Gemini non configurata o vuota!")
-
-    immagini_ottimizzate = []
-    for percorso in lista_percorsi_foto:
-        with Image.open(percorso) as originale:
-            # draft() dice al decoder JPEG di produrre GIA' l'immagine ridotta,
-            # invece di decodificarla a piena risoluzione per poi rimpicciolirla.
-            # Misurato il 04/09/2026: una foto 4032x3024 (inviata come "file"
-            # invece che come "foto" compressa da Telegram) costa 46,7 MB di
-            # picco senza draft() e ~0 MB con draft(). Con tre foto sono oltre
-            # 140 MB su un piano Render da 512 — molto piu' di tutti i dati
-            # della stagione messi insieme, che pesano 1,6 MB (Sessione 16).
-            originale.draft('RGB', DIMENSIONE_MAX_FOTO)
-            img = originale.convert('RGB')
-        img.thumbnail(DIMENSIONE_MAX_FOTO)
-        immagini_ottimizzate.append(img)
-
-
-    prompt = """
+PROMPT_LETTURA_SCHEDINA = """
     Sei un assistente esperto nell'analisi di schedine di scommesse sportive. Analizza queste immagini con estrema attenzione (potrebbero essere più schermate della stessa bolletta).
 
     1. **VINCITA POTENZIALE ("vincita_potenziale"):**
@@ -895,16 +911,185 @@ def analizza_schedine_multiple(lista_percorsi_foto):
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
        - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
-    logging.info(f"Analisi schedina: {len(immagini_ottimizzate)} foto pronte, memoria {memoria_mb():.0f} MB (picco {memoria_picco_mb():.0f})")
+
+
+class LetturaRiservaFallita(Exception):
+    """La lettura di riserva (Cloudflare Workers AI) non ha prodotto una schedina
+    valida. Mai trasformata in una schedina vuota: chi la riceve segnala l'errore."""
+
+
+# Piano B GRATUITO quando l'intera catena Gemini fallisce per quota/sovraccarico
+# (16/10/2026). Cloudflare Workers AI: 10.000 neuron/giorno gratis, reset 00:00 UTC
+# (developers.cloudflare.com/workers-ai/platform/pricing/). Modelli scelti dalla
+# documentazione ufficiale (schemi JSON dei modelli, repo cloudflare-docs): entrambi
+# accettano immagini come messages[].content[].image_url.url in data URI base64
+# ("HTTP URL will not be accepted"); Scout supporta response_format json_schema,
+# Mistral Small 3.1 il solo guided_json. Llama 3.2 Vision e' escluso: niente JSON
+# mode e richiede di accettare la licenza Meta con una richiesta "agree".
+MODELLI_CLOUDFLARE_AI = (
+    ("@cf/meta/llama-4-scout-17b-16e-instruct", "response_format"),
+    ("@cf/mistralai/mistral-small-3.1-24b-instruct", "guided_json"),
+)
+TIMEOUT_CLOUDFLARE_AI_S = 40
+MAX_TOKEN_CLOUDFLARE_AI = 2048  # il default di Workers AI e' 256: tronca un JSON da 10 eventi
+
+
+def lettura_riserva_attiva():
+    """Interruttore LETTURA_RISERVA_CLOUDFLARE (default spento) + credenziali presenti."""
+    acceso = os.environ.get("LETTURA_RISERVA_CLOUDFLARE", "").strip().lower() in ("1", "true", "si", "sì", "on", "yes")
+    return bool(acceso and os.environ.get("CLOUDFLARE_AI_TOKEN", "").strip()
+                and os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip())
+
+
+def _senza_segreti_ai(testo):
+    """Toglie token e account id Cloudflare da un messaggio d'errore (l'URL di requests li contiene)."""
+    testo = str(testo)
+    for riservato in (os.environ.get("CLOUDFLARE_AI_TOKEN", "").strip(), os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()):
+        if riservato:
+            testo = testo.replace(riservato, "***")
+    return testo[:300]
+
+
+def immagine_a_data_uri(img):
+    buffer = io.BytesIO()
+    img.save(buffer, format="JPEG", quality=85)
+    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
+
+
+def valida_lettura_riserva(grezzo):
+    """Dal testo (o oggetto) del modello di riserva al JSON-stringa che il resto del
+    bot si aspetta. Solleva LetturaRiservaFallita se non e' una schedina credibile:
+    vuota, malformata o con righe senza partita/pronostico/quota. Un risultato vuoto
+    dall'IA e' un fallimento da segnalare, mai un dato da confermare (CLAUDE.md)."""
+    dati = grezzo
+    if isinstance(grezzo, str):
+        testo = re.sub(r"^```(?:json)?\s*|\s*```$", "", grezzo.strip())
+        try:
+            dati = json.loads(testo)
+        except ValueError:
+            raise LetturaRiservaFallita("risposta non in formato JSON")
+    if not isinstance(dati, dict):
+        raise LetturaRiservaFallita("JSON non e' un oggetto")
+    eventi = estrai_eventi_per_categoria(dati)
+    tutti = [ev for c in CATEGORIE_SCHEDINA for ev in eventi[c]]
+    if not tutti:
+        raise LetturaRiservaFallita("nessun evento riconosciuto")
+    for ev in tutti:
+        if not all(str(ev.get(k, "")).strip() for k in ("partita", "pronostico", "quota")):
+            raise LetturaRiservaFallita("evento senza partita, pronostico o quota")
+    return json.dumps(dati)
+
+
+def chiama_cloudflare_ai(modello, formato, prompt, immagini):
+    """Una richiesta a Workers AI. Restituisce il contenuto grezzo della risposta (str o dict)."""
+    token = os.environ.get("CLOUDFLARE_AI_TOKEN", "").strip()
+    account = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    contenuto = [{"type": "text", "text": prompt}] + [
+        {"type": "image_url", "image_url": {"url": immagine_a_data_uri(i)}} for i in immagini]
+    corpo = {"messages": [{"role": "user", "content": contenuto}],
+             "max_tokens": MAX_TOKEN_CLOUDFLARE_AI, "temperature": 0}
+    if formato == "response_format":
+        corpo["response_format"] = {"type": "json_schema", "json_schema": SCHEMA_SCHEDINA}
+    else:
+        corpo["guided_json"] = SCHEMA_SCHEDINA
+    r = richiedi_con_retry(
+        f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{modello}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        timeout=TIMEOUT_CLOUDFLARE_AI_S, tentativi=2, metodo="POST", dati=json.dumps(corpo))
+    j = r.json()
+    if not isinstance(j, dict) or j.get("success") is False:
+        raise LetturaRiservaFallita("risposta Cloudflare con success=false")
+    risultato = j.get("result") or {}
+    if isinstance(risultato, dict):
+        if risultato.get("response") is not None:
+            return risultato["response"]
+        scelte = risultato.get("choices") or []
+        if scelte and isinstance(scelte[0], dict):
+            return (scelte[0].get("message") or {}).get("content")
+    return None
+
+
+def leggi_con_cloudflare(prompt, immagini, modelli=None):
+    """Prova i modelli Workers AI in ordine. Restituisce (json_str, modello); se nessuno
+    da' una schedina valida solleva LetturaRiservaFallita. Ogni errore e' loggato senza segreti."""
+    inizio = time.time()
+    problemi = []
+    for modello, formato in (modelli or MODELLI_CLOUDFLARE_AI):
+        try:
+            testo = valida_lettura_riserva(chiama_cloudflare_ai(modello, formato, prompt, immagini))
+            ultima_lettura_ia.update(modello=modello, secondi=time.time() - inizio, di_riserva=True, cloudflare=True)
+            logging.warning(f"Lettura di riserva Cloudflare riuscita con '{modello}'")
+            return testo, modello
+        except Exception as e:
+            problemi.append(f"{modello}: {_senza_segreti_ai(e)}")
+            logging.warning(f"Lettura di riserva Cloudflare: '{modello}' non riuscita: {_senza_segreti_ai(e)}")
+    raise LetturaRiservaFallita("; ".join(problemi))
+
+
+def prepara_foto(lista_percorsi_foto, dimensione=None):
+    """Foto aperte e ridotte (draft + thumbnail: vedi il commento sulla memoria)."""
+    dimensione = dimensione or DIMENSIONE_MAX_FOTO
+    immagini = []
+    for percorso in lista_percorsi_foto:
+        with Image.open(percorso) as originale:
+            # draft() dice al decoder JPEG di produrre GIA' l'immagine ridotta,
+            # invece di decodificarla a piena risoluzione per poi rimpicciolirla.
+            # Misurato il 04/09/2026: una foto 4032x3024 (inviata come "file"
+            # invece che come "foto" compressa da Telegram) costa 46,7 MB di
+            # picco senza draft() e ~0 MB con draft(). Con tre foto sono oltre
+            # 140 MB su un piano Render da 512 — molto piu' di tutti i dati
+            # della stagione messi insieme, che pesano 1,6 MB (Sessione 16).
+            originale.draft('RGB', dimensione)
+            img = originale.convert('RGB')
+        img.thumbnail(dimensione)
+        immagini.append(img)
+    return immagini
+
+
+def config_lettura_gemini(media_resolution=None):
+    """GenerateContentConfig della lettura schedine. `media_resolution` None = quella
+    configurata (GEMINI_MEDIA_RESOLUTION); se non c'e' nulla non si passa, come sempre."""
+    mr = media_resolution if media_resolution is not None else MEDIA_RESOLUTION_GEMINI
+    extra = {} if mr in (None, types.MediaResolution.MEDIA_RESOLUTION_UNSPECIFIED) else {"media_resolution": mr}
+    return types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=SCHEMA_SCHEDINA,
+        http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI_MS),
+        **extra,
+    )
+
+
+def leggi_con_gemini(client, immagini, media_resolution=None, modelli=None):
+    config = config_lettura_gemini(media_resolution)
+    kwargs = {"modelli": modelli} if modelli else {}
     response = chiama_gemini_con_fallback(lambda modello: client.models.generate_content(
-        model=modello,
-        contents=[prompt] + immagini_ottimizzate,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=SCHEMA_SCHEDINA,
-            http_options=types.HttpOptions(timeout=TIMEOUT_GEMINI_MS),
-        )
-    ))
+        model=modello, contents=[PROMPT_LETTURA_SCHEDINA] + immagini, config=config), **kwargs)
+    # Token in ingresso della chiamata: serve a misurare il risparmio di foto piu' piccole.
+    ultima_lettura_ia["token_ingresso"] = getattr(getattr(response, "usage_metadata", None), "prompt_token_count", None)
+    return response.text
+
+
+def analizza_schedine_multiple(lista_percorsi_foto):
+    client = get_gemini_client()
+    if not client: raise Exception("Chiave API Gemini non configurata o vuota!")
+
+    immagini_ottimizzate = prepara_foto(lista_percorsi_foto)
+
+    logging.info(f"Analisi schedina: {len(immagini_ottimizzate)} foto pronte, memoria {memoria_mb():.0f} MB (picco {memoria_picco_mb():.0f})")
+    try:
+        testo = leggi_con_gemini(client, immagini_ottimizzate)
+    except GeminiSovraccarico as errore_gemini:
+        # Quota o sovraccarico su TUTTA la catena: se l'interruttore e' acceso si
+        # prova il piano B gratuito. Senza interruttore/token il comportamento e'
+        # quello di sempre (l'eccezione sale al chiamante).
+        if not lettura_riserva_attiva():
+            raise
+        logging.warning("Gemini non disponibile, provo la lettura di riserva Cloudflare")
+        try:
+            testo, _ = leggi_con_cloudflare(PROMPT_LETTURA_SCHEDINA, immagini_ottimizzate)
+        except LetturaRiservaFallita:
+            errore_gemini.riserva_fallita = True  # il chiamante lo dice all'admin
+            raise errore_gemini
     # Le immagini decodificate non servono piu': e' il punto giusto per
     # restituire la memoria all'OS invece di lasciarla intrappolata nell'arena
     # del thread che ha appena fatto il lavoro pesante (vedi il commento di
@@ -914,7 +1099,7 @@ def analizza_schedine_multiple(lista_percorsi_foto):
     prima = memoria_mb()
     libera_memoria_al_sistema_operativo()
     logging.info(f"Analisi schedina completata: memoria {prima:.0f} MB -> {memoria_mb():.0f} MB dopo il rilascio")
-    return response.text
+    return testo
 
 def normalizza_nomi_partite(dati_json, giornata_num):
     try:
@@ -2061,7 +2246,11 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Se l'IA ha faticato l'admin deve saperlo qui, non nei log di Render:
         # e' il primo segnale che i modelli stanno peggiorando, e spiega anche
         # perche' la lettura ha richiesto piu' tempo del solito (Sessione 16).
-        if ultima_lettura_ia["di_riserva"]:
+        if ultima_lettura_ia.get("cloudflare"):
+            msg_riepilogo += (f"\n⚠️ _Letta con il modello di riserva Cloudflare "
+                              f"({escape_markdown(ultima_lettura_ia['modello'])}): Gemini non era disponibile. "
+                              f"Controlla con attenzione ogni riga prima di salvare._\n")
+        elif ultima_lettura_ia["di_riserva"]:
             msg_riepilogo += (f"\n🐢 _Letta dal modello di riserva "
                               f"{escape_markdown(ultima_lettura_ia['modello'])} "
                               f"in {ultima_lettura_ia['secondi']:.0f}s — i modelli principali erano occupati._\n")
@@ -2092,6 +2281,8 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   if e.attesa_suggerita is not None else
                   "Se è il limite giornaliero può servire molto di più (si azzera col nuovo giorno di Google).")
         extra = "\nAlcuni modelli erano anche sovraccarichi." if e.anche_sovraccarico else ""
+        if getattr(e, "riserva_fallita", False):
+            extra += "\nHo provato anche il modello di riserva Cloudflare: non è riuscito (dettagli nei log)."
         if e.limiti:
             extra += "\n\nLimite colpito:\n" + "\n".join(
                 f"• {escape_markdown(m)}: {escape_markdown(l)}" for m, l in e.limiti.items())
@@ -2105,7 +2296,7 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await pulisci_dati(context)
         return ConversationHandler.END
 
-    except GeminiSovraccarico:
+    except GeminiSovraccarico as e_ia:
         # Non e' un guasto del bot: sono i server di Google congestionati.
         # L'admin deve sapere che basta riprovare, non che c'e' da riparare qualcosa.
         logging.warning("Lettura schedina non riuscita: tutti i modelli Gemini sovraccarichi")
@@ -2113,7 +2304,8 @@ async def esegui_conferma(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏳ *Gemini è sovraccarico in questo momento.*\n\n"
             "Ho provato tutti i modelli disponibili, sono tutti congestionati lato Google — "
             "non è un problema del bot né delle tue foto.\n\n"
-            "Riprova tra qualche minuto con /start: di solito rientra da solo.",
+            "Riprova tra qualche minuto con /start: di solito rientra da solo."
+            + ("\n\nHo provato anche il modello di riserva Cloudflare: non è riuscito." if getattr(e_ia, "riserva_fallita", False) else ""),
             parse_mode="Markdown"
         )
         await pulisci_dati(context)
