@@ -930,7 +930,7 @@ MODELLI_CLOUDFLARE_AI = (
     ("@cf/meta/llama-4-scout-17b-16e-instruct", "response_format"),
     ("@cf/mistralai/mistral-small-3.1-24b-instruct", "guided_json"),
 )
-TIMEOUT_CLOUDFLARE_AI_S = 40
+TIMEOUT_CLOUDFLARE_AI_S = 90  # misurato il 16/10: Llama 4 Scout legge una schedina in 60-80 s
 MAX_TOKEN_CLOUDFLARE_AI = 2048  # il default di Workers AI e' 256: tronca un JSON da 10 eventi
 
 
@@ -995,7 +995,7 @@ def chiama_cloudflare_ai(modello, formato, prompt, immagini):
     r = richiedi_con_retry(
         f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/{modello}",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        timeout=TIMEOUT_CLOUDFLARE_AI_S, tentativi=2, metodo="POST", dati=json.dumps(corpo))
+        timeout=TIMEOUT_CLOUDFLARE_AI_S, tentativi=1, metodo="POST", dati=json.dumps(corpo))
     j = r.json()
     if not isinstance(j, dict) or j.get("success") is False:
         raise LetturaRiservaFallita("risposta Cloudflare con success=false")
