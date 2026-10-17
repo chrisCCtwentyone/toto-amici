@@ -114,6 +114,8 @@ Toto_Amici_Progetto/
 - **Confronto Giocate**: riga «Punti fatti» in fondo alla tabella, per giocatore.
 - **Schedine Live**: riquadro «Punti fatti» sotto Vinte/Perse/In corso.
 - Entrambi sommano `righe[].punti` (i «Punti Partita» del bot) con `puntiSchedina()` in `live-confronto/dati.ts`: nessun calcolo di dominio nel sito, quindi i punti salgono quando il bot ricalcola, come il contatore «Vinte». Verificato sullo snapshot di produzione: la somma coincide con `punti_per_giornata` in 111 schedine su 112; l'unica differenza e' PAOLO G1 (30 dalle righe, 40 in Classifica), da controllare nel foglio.
+- **Sito fuori dai motori di ricerca** (verifica conformita' 17/10, problema medio): `public/robots.txt` con `Disallow: /` + `X-Robots-Tag: noindex, nofollow` in `_headers` e nel Worker. Se un giorno il sito risultasse indicizzato, togliere temporaneamente il `Disallow` (altrimenti Google non legge il `noindex`).
+- Nuovo `scripts/pubblica.sh` (typecheck, test, build, `wrangler deploy`): e' l'unico modo di pubblicare il sito ammesso dal controllo `custode`.
 
 ### 16/10/2026 — Quota Gemini: modelli lite e categoria dedotta dal pronostico
 

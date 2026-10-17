@@ -14,6 +14,10 @@ Dati: reali (nomi dei giocatori del torneo, pronostici, importi della cassa)
 - **Esito dei problemi del 04/10:** font di Google e intestazioni mancanti → corretti e confermati sul sito vero. Token Telegram nella storia git → chiuso (rigenerato, confermato dall'utente: `PROJECT_LOG.md:152`). Tetto alle chiamate a Football-Data → rischio residuo accettato dall'utente (`PROJECT_LOG.md:152`). Nota privacy → l'utente ha deciso di non metterla (`PROJECT_LOG.md:152`); qui sotto è ripresa solo come promemoria.
 - **Nuovo:** il sito non dice ai motori di ricerca di non indicizzarlo (problema 1); un dettaglio di leggibilità nella modifica nuova (problema 3).
 
+## Aggiornamento 17/10/2026, dopo la verifica
+- Problema 1 (indicizzazione) corretto: `frontend/public/robots.txt` (`Disallow: /`), `X-Robots-Tag: noindex, nofollow` in `frontend/public/_headers` e nel Worker (`SICUREZZA`, `frontend/worker/index.ts`). Test del progetto passati (Python 1006, sito 51). Sul sito vero: `curl -s $SITO/robots.txt` → `User-agent: * / Disallow: /`; `curl -sI $SITO/` e `curl -sI $SITO/api/segnale` → `x-robots-tag: noindex, nofollow`.
+- La modifica 5375957 è stata pubblicata: console senza errori su Confronto Giocate e Schedine Live del sito vero.
+
 ## In breve
 Sì, la modifica è pubblicabile: non ci sono problemi critici né alti, e i cambiamenti di questa versione sono solo di presentazione. Il sito pubblicato fa quello che deve: nessun cookie, nessuna richiesta ad altri siti, tutte le intestazioni di sicurezza presenti, nessuna chiave nel codice del browser. La cosa da fare per prima è dire ai motori di ricerca di non indicizzare il sito, così nomi e importi degli amici non finiscono su Google (10 minuti). Poi, con calma, un ritocco al contrasto dei giocatori «attenuati» e l'aggiornamento degli strumenti di sviluppo.
 
