@@ -60,7 +60,7 @@ La shell monta la tua scheda **solo a dati pronti**: dentro la scheda lo snapsho
 |---|---|---|
 | `ClassificaCassa.tsx` | podio, classifica con tendenza, ritirati, storico per giornata; Fondo Cassa, barra, grafico versamenti, movimenti | §5 `classifica`, §6 `cassa`; il titolo/stagione è già in shell |
 | `SchedineLive.tsx` | selettori giornata e giocatore; riepilogo esiti, vincita potenziale; carte per partita con pronostico, quota, esito, punti; **risultato in diretta** | §7 `giornata_corrente`, `giocatori`, `schedine`, `partite`; live dal Worker (`useLive`); `regole.soglia_quota_doppia` per l'asterisco |
-| `ConfrontoGiocate.tsx` | griglia partite × giocatori, colori per esito, riga «Vincita potenziale», colonna «Scelta del gruppo» | §7 `partite` (righe, già in ordine) × `schedine[].righe` (celle), `partite[].scelta_gruppo`, `regole.soglia_quota_doppia` |
+| `ConfrontoGiocate.tsx` | griglia partite × giocatori, colori per esito, righe «Vincita potenziale» e «Punti fatti», colonna «Scelta del gruppo» | §7 `partite` (righe, già in ordine) × `schedine[].righe` (celle), `partite[].scelta_gruppo`, `regole.soglia_quota_doppia` |
 | `Statistiche.tsx` | timer ultima schedina vinta, protagonisti, giornata da incorniciare, Semper Fidelis, squadre amuleto/maledetta, per un soffio, tabella completa (+ ritirati) | §8 `statistiche` (titoli e descrizioni delle card sono testo del sito, §17.24) |
 | `Coppa.tsx` | tabellone a 16 su 4 turni, provvisorio/definitivo, campione, avviso «16 partecipanti» | §9 `coppa` (+ testi statici «Come funziona») |
 | `Regolamento.tsx` | bolletta, punteggi, regole, Cassa e premi | §10 `regole` (numeri) + testi statici del sito; gli importi dei premi: `obiettivo_cassa × percentuale / 100` |

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { descriviLive, haQuotaAlta, testoSceltaGruppo } from "./dati";
+import { descriviLive, haQuotaAlta, puntiSchedina, testoSceltaGruppo } from "./dati";
 import type { PartitaLive } from "../../tipi/snapshot";
 
 const live = (stato: string, gc: number | null = 1, go: number | null = 0, minuto?: number): PartitaLive => ({
@@ -15,6 +15,11 @@ it("asterisco: soglia inclusa, quota nulla mai", () => {
   expect(haQuotaAlta(3.5, 3.5)).toBe(true);
   expect(haQuotaAlta(3.49, 3.5)).toBe(false);
   expect(haQuotaAlta(null, 3.5)).toBe(false);
+});
+it("punti della schedina: somma delle righe, 0 senza righe", () => {
+  const riga = (punti: number) => ({ partita_id: 1, tipologia: null, pronostico: "1", quota: null, esito: "vinta" as const, punti });
+  expect(puntiSchedina([riga(12), riga(4), riga(0)])).toBe(16);
+  expect(puntiSchedina([])).toBe(0);
 });
 it("live: in corso, intervallo, finale", () => {
   expect(descriviLive(live("IN_PLAY", 2, 1, 34), "da_giocare")).toEqual({ tipo: "in_corso", etichetta: "34'", punteggio: [2, 1] });

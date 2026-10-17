@@ -2,7 +2,7 @@
  * Solo presentazione per Schedine Live e Confronto Giocate: etichette, testi, stato del live.
  * Nessun calcolo di dominio (i totali, la scelta del gruppo e il riepilogo arrivano dallo snapshot).
  */
-import type { Esito, PartitaLive, SceltaGruppo, Tipologia } from "../../tipi/snapshot";
+import type { Esito, PartitaLive, RigaSchedina, SceltaGruppo, Tipologia } from "../../tipi/snapshot";
 import { formattaOra, formattaGiornoEsteso } from "../../lib/format";
 
 export const TIPOLOGIA: Record<Tipologia, string> = {
@@ -14,6 +14,9 @@ export const TIPOLOGIA: Record<Tipologia, string> = {
 
 /** `soglia_quota_doppia` viene da regole (§10): non e' scritta nel React. */
 export const haQuotaAlta = (quota: number | null, soglia: number): boolean => quota !== null && quota >= soglia;
+
+/** Punti fatti finora da una schedina: somma dei «Punti Partita» scritti dal bot (§7, 0 finche' non e' vinta). */
+export const puntiSchedina = (righe: RigaSchedina[]): number => righe.reduce((tot, r) => tot + r.punti, 0);
 
 /** "1 / X · 3 su 7", "Tutti diversi", "—" (§7.1 scelta_gruppo). */
 export function testoSceltaGruppo(s: SceltaGruppo): string {

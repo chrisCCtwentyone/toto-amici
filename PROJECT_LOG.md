@@ -108,6 +108,13 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 17/10/2026 — Sito: storico giornate scorrevole, punti fatti in Confronto e Live
+
+- **Storico punteggi per giornata bloccato sulle prime giornate (telefono)**: in `ClassificaCassa.tsx` le due griglie avevano la colonna implicita `auto`, quindi la card della classifica si allargava alla larghezza della tabella e `Schede.tsx` (`overflow-x-clip`) la tagliava: la regione `overflow-x-auto` non aveva mai niente da scorrere. Fix: `grid-cols-[minmax(0,1fr)]` come gia' in `Coppa.tsx`/`Statistiche.tsx`. Regola: ogni griglia di scheda che contiene una tabella larga vuole `minmax(0,1fr)`, mai la colonna implicita.
+- **Confronto Giocate**: riga «Punti fatti» in fondo alla tabella, per giocatore.
+- **Schedine Live**: riquadro «Punti fatti» sotto Vinte/Perse/In corso.
+- Entrambi sommano `righe[].punti` (i «Punti Partita» del bot) con `puntiSchedina()` in `live-confronto/dati.ts`: nessun calcolo di dominio nel sito, quindi i punti salgono quando il bot ricalcola, come il contatore «Vinte». Verificato sullo snapshot di produzione: la somma coincide con `punti_per_giornata` in 111 schedine su 112; l'unica differenza e' PAOLO G1 (30 dalle righe, 40 in Classifica), da controllare nel foglio.
+
 ### 16/10/2026 — Quota Gemini: modelli lite e categoria dedotta dal pronostico
 
 - **La quota gratuita è di 20 richieste al giorno PER MODELLO** (lo dice il 429 con `quotaId` per giorno): ridurre le foto non serve. Aggiunti in coda alla catena `gemini-3.8-flash`, `gemini-flash-lite-latest`, `gemini-3.5-flash-lite` (quota separata; alla prova sulle foto vere 30/30 pronostici e quote). Commit `91d0384`.

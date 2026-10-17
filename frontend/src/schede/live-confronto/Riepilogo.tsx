@@ -16,7 +16,10 @@ const ALTRI: { chiave: keyof RiepilogoSchedina; singolare: string; plurale: stri
   { chiave: "annullate", singolare: "annullata", plurale: "annullate" },
 ];
 
-export default function Riepilogo({ riepilogo, vincita }: { riepilogo: RiepilogoSchedina; vincita: number }) {
+// fuori dal componente: una funzione nuova a ogni render farebbe ripartire l'animazione di NumeroAnimato
+const formattaPunti = (n: number) => `${formattaIntero(n)} pt`;
+
+export default function Riepilogo({ riepilogo, vincita, punti }: { riepilogo: RiepilogoSchedina; vincita: number; punti: number }) {
   const altri = ALTRI.filter((a) => riepilogo[a.chiave] > 0);
   return (
     <div className="grid gap-2">
@@ -33,6 +36,12 @@ export default function Riepilogo({ riepilogo, vincita }: { riepilogo: Riepilogo
           </div>
         ))}
       </dl>
+      <p className="m-0 flex flex-wrap items-baseline justify-between gap-x-4 border-l-[6px] border-l-vinta bg-superficie-2 px-3 py-2">
+        <span className="font-display text-lg font-extrabold uppercase tracking-[0.08em] text-ink-2">Punti fatti</span>
+        <span className="tabulare font-display text-[2.25rem] font-extrabold leading-none text-ink">
+          <NumeroAnimato valore={punti} formato={formattaPunti} durata={0.6} />
+        </span>
+      </p>
       {altri.length > 0 && (
         <p className="m-0 text-sm text-ink-2">
           Altro:{" "}

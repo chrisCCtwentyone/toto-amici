@@ -7,7 +7,7 @@ import { useLive } from "../lib/useLive";
 import { giocatoreEffettivo, giocatoriConSchedina, giornataEffettiva, giornateDisponibili, mappaPartite, type SceltaGiocatore } from "../lib/selettori";
 import CartaPronostico from "./live-confronto/CartaPronostico";
 import Riepilogo from "./live-confronto/Riepilogo";
-import { staGiocando } from "./live-confronto/dati";
+import { puntiSchedina, staGiocando } from "./live-confronto/dati";
 
 /** Aspetta che la giornata smetta di cambiare: scorrendo con le frecce non parte una chiamata a Football-Data per ogni giornata. */
 function useStabile<T>(valore: T, ms: number): T {
@@ -85,6 +85,7 @@ export default function SchedineLive() {
           <Riepilogo
             riepilogo={riepilogoVisualizzato(schedina.righe, liveDi)}
             vincita={schedina.vincita_potenziale}
+            punti={puntiSchedina(schedina.righe)}
           />
           {live.caricamento && live.partite.size === 0 && !live.nonDisponibile && (
             <p role="status" className="m-0 text-sm text-ink-2">Carico i risultati in diretta…</p>

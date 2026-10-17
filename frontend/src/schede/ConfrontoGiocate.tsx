@@ -2,10 +2,10 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Card, SelettoreGiornata, StatoVuoto } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
-import { etichettaGiornata, formattaEuro, formattaQuota } from "../lib/format";
+import { etichettaGiornata, formattaEuro, formattaIntero, formattaQuota } from "../lib/format";
 import { giornataEffettiva, giornateDisponibili } from "../lib/selettori";
 import CellaGiocata, { sfondoCella } from "./live-confronto/CellaGiocata";
-import { testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
+import { puntiSchedina, testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
 
 // Celle: bordo in basso e a destra (tabella "separate" perche' la colonna fissa non perda i bordi).
 const CELLA = "border-b border-r border-linea px-3 py-2.5 align-top";
@@ -110,6 +110,17 @@ export default function ConfrontoGiocate() {
                   {schedine.map((x) => (
                     <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-accento-testo`}>
                       {formattaEuro(x.vincita_potenziale)}
+                    </td>
+                  ))}
+                  <td className={`${CELLA} bg-superficie-2`} />
+                </tr>
+                <tr>
+                  <th scope="row" className={`${CELLA} ${FISSA} bg-superficie-2 font-normal`}>
+                    <span className="titolo-diretta text-lg text-ink-2">Punti fatti</span>
+                  </th>
+                  {schedine.map((x) => (
+                    <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-ink`}>
+                      {formattaIntero(puntiSchedina(x.righe))} pt
                     </td>
                   ))}
                   <td className={`${CELLA} bg-superficie-2`} />
