@@ -108,6 +108,18 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 20/10/2026 — Risultati provvisori di Football-Data (incidente Parma-Torino, Giornata 7)
+
+**Cosa e' successo.** Al giro delle 23:00 del 19/10 Football-Data dava Parma-Torino **FINISHED 0-3**; il gol del Parma e' stato registrato solo alle 00:25 (`lastUpdated` 22:25 UTC, 1-3). Il bot ha preso il primo FINISHED come definitivo: 6 GOAL persi (MICHELE, SILVIO, DAVIDE, VINCENZO, FAZIO, PAOLO: -2 ciascuno) e il NOGOAL di SIRACUSA vinto (+2). La logica di `controlla_esito` era giusta: era sbagliato il dato in ingresso.
+
+**Controllo totale.** Verificatore indipendente (scritto da zero dalle regole del regolamento, senza leggere il codice del bot) su tutte le 1.120 righe delle giornate 1-7 contro i risultati attuali di Football-Data, piu' Classifica e Cassa: **unici errori le 7 righe di Parma-Torino**. Giornate 1-6 identiche cella per cella. Unica nota: Cassa G1 PAOLO 430,00 EUR contro 427,85 attesi (meta' della Vincita Potenziale 855,70), da chiarire con l'utente.
+
+**Correzione.**
+- `risultato_definitivo(match)`: un FINISHED conta solo dopo `ORE_CONSOLIDAMENTO_RISULTATO` (4) ore dal calcio d'inizio; prima la riga resta IN CORSO (0 punti, schedina non chiusa, niente Cassa). Senza `utcDate` (risultato manuale) vale subito. Con i giri delle 23:00 e dell'01:00 la partita delle 20:45 si valuta all'01:00. Scelta dell'utente (alternativa scartata: punti subito e solo ricontrollo).
+- `task_aggiornamento_automatico` ricalcola anche la **giornata precedente** a ogni giro: prima solo la corrente, quindi una correzione tardiva arrivata dopo il cambio di giornata non sarebbe mai stata letta. Il report della precedente entra nell'impronta: se cambia qualcosa gli admin ricevono l'avviso.
+- Test: `TestInvarianteRisultatoProvvisorio` (fallisce con margine 0) e due test sul ricalcolo della precedente. Suite 1006 -> 1012.
+- Nota per il sito: «Punti fatti» (Live/Confronto) somma i Punti Partita e **non** include il bonus +10 di chiusura; era la differenza PAOLO G1 30/40 annotata il 17/10, non un errore.
+
 ### 17/10/2026 — Sito: storico giornate scorrevole, punti fatti in Confronto e Live
 
 - **Storico punteggi per giornata bloccato sulle prime giornate (telefono)**: in `ClassificaCassa.tsx` le due griglie avevano la colonna implicita `auto`, quindi la card della classifica si allargava alla larghezza della tabella e `Schede.tsx` (`overflow-x-clip`) la tagliava: la regione `overflow-x-auto` non aveva mai niente da scorrere. Fix: `grid-cols-[minmax(0,1fr)]` come gia' in `Coppa.tsx`/`Statistiche.tsx`. Regola: ogni griglia di scheda che contiene una tabella larga vuole `minmax(0,1fr)`, mai la colonna implicita.

@@ -200,6 +200,24 @@ class TestDeduplicaAutoUpdate:
         asyncio.run(bt.task_aggiornamento_automatico(None))
         assert len(inviati) == 1
 
+    def test_ricalcola_anche_la_giornata_precedente(self, monkeypatch):
+        """Football-Data corregge punteggi anche ore dopo il FINISHED (Parma-Torino,
+        19/10/2026): la giornata precedente va riletta a ogni giro."""
+        _, inviati = self._prepara(monkeypatch)
+        calcolate = []
+        monkeypatch.setattr(bt, "esegui_calcolo_risultati", lambda g: calcolate.append(g) or f"REPORT G{g}")
+        asyncio.run(bt.task_aggiornamento_automatico(None))
+        assert calcolate == [3, 2]
+
+    def test_correzione_nella_giornata_precedente_si_notifica(self, monkeypatch):
+        _, inviati = self._prepara(monkeypatch)
+        reports = {3: "REPORT G3", 2: "REPORT G2"}
+        monkeypatch.setattr(bt, "esegui_calcolo_risultati", lambda g: reports[g])
+        asyncio.run(bt.task_aggiornamento_automatico(None))
+        reports[2] = "REPORT G2 CORRETTO"
+        asyncio.run(bt.task_aggiornamento_automatico(None))
+        assert len(inviati) == 2
+
     def test_l_archiviazione_azzera_la_chiave(self):
         import inspect
         assert "CHIAVE_ULTIMO_AUTO_UPDATE" in inspect.getsource(bt.archivia_stagione)
