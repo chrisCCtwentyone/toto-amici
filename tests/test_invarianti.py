@@ -202,44 +202,6 @@ class TestInvariantiScritture:
             )
 
 
-class TestInvarianteRisultatoProvvisorio:
-    """INVARIANTE: un FINISHED di Football-Data non assegna punti prima di
-    ORE_CONSOLIDAMENTO_RISULTATO dal calcio d'inizio. Incidente 19/10/2026:
-    alle 23:00 Parma-Torino risultava finita 0-3, il punteggio vero (1-3) e'
-    arrivato alle 00:25 e il bot aveva gia' scritto 6 GOAL persi e un NOGOAL vinto."""
-
-    RIGHE = [
-        ["Giornata", "Giocatore", "Partita", "Tipologia", "Pronostico", "Quota", "Esito", "Vincita", "Punti"],
-        ["Giornata 7", "SIRACUSA", "Milan - Inter", "Variabili", "NOGOAL", "1,85", "", "1.000,00", ""],
-    ]
-
-    def _calcola(self, monkeypatch, ore_dal_via, gc=0, go=3):
-        service = FakeService([])
-        service.values_obj = _ValuesCheRicordaIValori([list(r) for r in self.RIGHE])
-        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
-        via = bt.datetime.now(bt.pytz.UTC) - bt.timedelta(hours=ore_dal_via)
-        match = dict(_match(SQUADRE[0], SQUADRE[1], gc, go), utcDate=via.strftime("%Y-%m-%dT%H:%M:%SZ"))
-        bt.esegui_calcolo_risultati("7", matches_api=[match])
-        return service.values_obj
-
-    def test_finished_appena_arrivato_resta_in_corso(self, monkeypatch):
-        valori = self._calcola(monkeypatch, ore_dal_via=2.25)  # giro delle 23:00, via alle 20:45
-        assert "IN CORSO" in valori.valori["Giocate!G2"]
-        assert valori.valori["Giocate!I2"] == 0
-        assert valori.cassa_scritta == []
-
-    def test_dopo_il_margine_il_risultato_conta(self, monkeypatch):
-        valori = self._calcola(monkeypatch, ore_dal_via=bt.ORE_CONSOLIDAMENTO_RISULTATO + 0.1, gc=1, go=3)
-        assert "PERSA" in valori.valori["Giocate!G2"]
-
-    def test_risultato_manuale_senza_orario_vale_subito(self):
-        assert bt.risultato_definitivo({"status": "FINISHED"}) is True
-
-    def test_mai_definitivo_se_non_finished(self):
-        for stato in ("IN_PLAY", "PAUSED", "TIMED", "POSTPONED"):
-            assert bt.risultato_definitivo({"status": stato, "utcDate": "2020-01-01T00:00:00Z"}) is False
-
-
 class _ValuesCheRicordaIValori(FakeValues):
     """Come FakeValues, ma ricorda anche i valori scritti: cella -> valore."""
 

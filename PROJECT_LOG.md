@@ -108,16 +108,16 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
-### 20/10/2026 — Risultati provvisori di Football-Data (incidente Parma-Torino, Giornata 7)
+### 20/10/2026 — Parma-Torino: Football-Data cambia idea per ore (falso allarme sui punteggi)
 
-**Cosa e' successo.** Al giro delle 23:00 del 19/10 Football-Data dava Parma-Torino **FINISHED 0-3**; il gol del Parma e' stato registrato solo alle 00:25 (`lastUpdated` 22:25 UTC, 1-3). Il bot ha preso il primo FINISHED come definitivo: 6 GOAL persi (MICHELE, SILVIO, DAVIDE, VINCENZO, FAZIO, PAOLO: -2 ciascuno) e il NOGOAL di SIRACUSA vinto (+2). La logica di `controlla_esito` era giusta: era sbagliato il dato in ingresso.
+**Cosa e' successo.** L'utente ha segnalato il NOGOAL di SIRACUSA vinto su Parma-Torino "finita 1-3". Football-Data quella notte ha cambiato il risultato piu' volte: **0-3 FINISHED alle 23:00** (il bot ha calcolato su questo), **1-3 dalle 00:25**, poi TIMED senza punteggio verso le 01:05, di nuovo 1-3 alle 01:09, e **0-3 definitivo alle 02:20** (primo tempo 0-2). Il risultato ufficiale e' 0-3: il calcolo del bot era giusto fin dall'inizio e sul foglio non e' mai stato scritto nulla di sbagliato.
 
-**Controllo totale.** Verificatore indipendente (scritto da zero dalle regole del regolamento, senza leggere il codice del bot) su tutte le 1.120 righe delle giornate 1-7 contro i risultati attuali di Football-Data, piu' Classifica e Cassa: **unici errori le 7 righe di Parma-Torino**. Giornate 1-6 identiche cella per cella. Unica nota: Cassa G1 PAOLO 430,00 EUR contro 427,85 attesi (meta' della Vincita Potenziale 855,70), da chiarire con l'utente.
+**Errore nostro.** Il controllo e' stato fatto sul solo Football-Data mentre dava 1-3, e ha "trovato" 7 righe sbagliate che non lo erano. Per fortuna il risultato manuale 1-3 inserito dall'admin non e' arrivato al bot (pulsanti di un menu aperto prima del riavvio del deploy, ignorati in silenzio). Lezione in CLAUDE.md: prima di dichiarare un errore di punteggio, confrontare con una seconda fonte.
 
-**Correzione.**
-- `risultato_definitivo(match)`: un FINISHED conta solo dopo `ORE_CONSOLIDAMENTO_RISULTATO` (4) ore dal calcio d'inizio; prima la riga resta IN CORSO (0 punti, schedina non chiusa, niente Cassa). Senza `utcDate` (risultato manuale) vale subito. Con i giri delle 23:00 e dell'01:00 la partita delle 20:45 si valuta all'01:00. Scelta dell'utente (alternativa scartata: punti subito e solo ricontrollo).
-- `task_aggiornamento_automatico` ricalcola anche la **giornata precedente** a ogni giro: prima solo la corrente, quindi una correzione tardiva arrivata dopo il cambio di giornata non sarebbe mai stata letta. Il report della precedente entra nell'impronta: se cambia qualcosa gli admin ricevono l'avviso.
-- Test: `TestInvarianteRisultatoProvvisorio` (fallisce con margine 0) e due test sul ricalcolo della precedente. Suite 1006 -> 1012.
+**Cosa resta nel codice.**
+- `task_aggiornamento_automatico` ricalcola anche la **giornata precedente** a ogni giro: prima solo la corrente, quindi un dato sbagliato di Football-Data letto all'ultimo giro prima del cambio di giornata sarebbe rimasto per sempre. Il report della precedente entra nell'impronta (avviso agli admin se cambia). Due test in `test_pausa_notturna.py`.
+- Un'**attesa di 4 ore dal calcio d'inizio** prima di assegnare i punti e' stata aggiunta e poi **tolta** su richiesta dell'utente: non avrebbe protetto da questo caso (il dato falso e' durato fino a 5h35 dal via) e ritardava i risultati.
+- **Verificatore indipendente** dei punteggi, scritto dalle regole del regolamento senza usare il codice del bot: `scripts/scarica_dati_verifica.py` (sola lettura) + `scripts/verifica_punteggi_indipendente.py`. Controllo totale del 20/10 alle 13:11 con lo 0-3: giornate 1-7, 1.120 righe, Classifica e Cassa tutte corrette. Unica nota aperta: Cassa G1 PAOLO 430,00 EUR contro 427,85 (meta' della Vincita Potenziale 855,70).
 - Nota per il sito: «Punti fatti» (Live/Confronto) somma i Punti Partita e **non** include il bonus +10 di chiusura; era la differenza PAOLO G1 30/40 annotata il 17/10, non un errore.
 
 ### 17/10/2026 — Sito: storico giornate scorrevole, punti fatti in Confronto e Live

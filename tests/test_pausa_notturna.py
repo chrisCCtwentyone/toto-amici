@@ -201,7 +201,7 @@ class TestDeduplicaAutoUpdate:
         assert len(inviati) == 1
 
     def test_ricalcola_anche_la_giornata_precedente(self, monkeypatch):
-        """Football-Data corregge punteggi anche ore dopo il FINISHED (Parma-Torino,
+        """Football-Data cambia punteggio anche ore dopo il FINISHED (Parma-Torino,
         19/10/2026): la giornata precedente va riletta a ogni giro."""
         _, inviati = self._prepara(monkeypatch)
         calcolate = []

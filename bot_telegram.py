@@ -1526,31 +1526,6 @@ ESITO_RINVIATA = "⏸️ RINVIATA"
 # regolamento dice di aspettare il recupero per assegnare i punti.
 STATI_PARTITA_RINVIATA = ("POSTPONED", "SUSPENDED", "CANCELLED")
 
-# Football-Data a volte segna FINISHED prima di aver registrato l'ultimo gol:
-# il 19/10/2026 alle 23:00 dava Parma-Torino 0-3 "finita" e l'ha corretta in 1-3
-# solo alle 00:25 (3h40 dopo il calcio d'inizio). Il bot aveva gia' scritto GOAL
-# persi e un NOGOAL vinto. Un FINISHED vale come definitivo solo dopo questo
-# margine dal calcio d'inizio; prima la riga resta IN CORSO (nessun punto, la
-# schedina non si chiude, niente Cassa). Con i giri di calcolo delle 23:00 e
-# dell'01:00 la partita delle 20:45 si valuta all'01:00, quella delle 18:00 alle 23:00.
-ORE_CONSOLIDAMENTO_RISULTATO = 4
-
-
-def risultato_definitivo(match, adesso=None):
-    """True se il risultato FINISHED di Football-Data si puo' usare per i punti.
-
-    Senza utcDate (risultato inserito a mano da applica_risultato_manuale) il
-    FINISHED vale subito: e' l'admin a garantire il punteggio.
-    """
-    if match.get("status") != "FINISHED":
-        return False
-    try:
-        inizio = datetime.strptime(match["utcDate"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
-    except (KeyError, TypeError, ValueError):
-        return True
-    adesso = adesso or datetime.now(pytz.UTC)
-    return adesso - inizio >= timedelta(hours=ORE_CONSOLIDAMENTO_RISULTATO)
-
 def valuta_singolo_segno(p, gol_casa, gol_ospite):
     """Valuta UN singolo segno (senza '+'). Ritorna:
        True  = vinto
@@ -1668,7 +1643,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         # Giornata 2, football-data.org). Si mantiene il dato gia salvato e non si riscrive nulla.
         gia_finalizzato = any(tag in esito_salvato for tag in ("VINTA", "PERSA", "ANNULLATA"))
 
-        if gia_finalizzato and (not match or not risultato_definitivo(match)):
+        if gia_finalizzato and (not match or match["status"] != "FINISHED"):
             punti_partita = int(estrai_numero(riga[8])) if len(riga) > 8 else 0
             if "VINTA" in esito_salvato: classifica[gio]["punti"] += punti_partita; classifica[gio]["vinte"] += 1
             elif "PERSA" in esito_salvato: classifica[gio]["perse"] += 1
@@ -1691,8 +1666,7 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
             # IN CORSO, il riepilogo di fine giornata non partirebbe mai.
             testo_esito, col = ESITO_RINVIATA, colore_grigio
             classifica[gio]["rinviate"] += 1
-        elif not risultato_definitivo(match):
-            # comprende il FINISHED ancora provvisorio (vedi ORE_CONSOLIDAMENTO_RISULTATO)
+        elif match["status"] != "FINISHED":
             testo_esito, col = "⏳ IN CORSO", colore_grigio
             classifica[gio]["in_corso"] += 1
         else:
@@ -2618,10 +2592,13 @@ async def task_aggiornamento_automatico(context: ContextTypes.DEFAULT_TYPE):
         logging.warning("task_aggiornamento_automatico: giornata corrente sconosciuta, giro saltato")
         return
     report = await asyncio.to_thread(esegui_calcolo_risultati, giornata)
-    # Anche la giornata precedente: Football-Data corregge i punteggi anche ore
-    # dopo il FINISHED (Parma-Torino, 19/10/2026), e quando la giornata corrente
-    # avanza una correzione tardiva non verrebbe piu' letta da nessuno. Il suo
-    # report entra nell'impronta: se cambia qualcosa, gli admin lo vedono.
+    # Anche la giornata precedente: Football-Data cambia idea anche ore dopo il
+    # FINISHED. Parma-Torino del 19/10/2026: 0-3 alle 23:00, 1-3 (sbagliato) dalle
+    # 00:25, poi "da giocare", di nuovo 1-3, e 0-3 definitivo solo alle 02:20.
+    # Ricalcolando a ogni giro anche la precedente, un dato sbagliato letto in un
+    # momento sfortunato viene rimesso a posto dal giro dopo, anche quando la
+    # giornata corrente e' gia' avanzata. Il suo report entra nell'impronta: se
+    # cambia qualcosa, gli admin lo vedono.
     if giornata > 1:
         report_prec = await asyncio.to_thread(esegui_calcolo_risultati, giornata - 1)
         report = f"{report}\n\n🔁 *Ricontrollo giornata precedente*\n{report_prec}"
