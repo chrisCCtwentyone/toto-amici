@@ -116,6 +116,8 @@ Toto_Amici_Progetto/
 - Verificato sui dati veri: Giornata 7 -> avviso (ultima partita 19/10 20:45), Giornata 8 -> nessun avviso. Test: `tests/test_giornata_passata.py` (9). Suite 1008 -> 1017.
 - Non coperto: il clic su una giornata FUTURA (es. 9 invece di 8).
 
+**Stessa sera — lettura sbagliata del modello lite (Giornata 8, DARIO).** La combo Inter-Fiorentina e' stata letta `1+UNDER_2.5` invece di `1+OVER_2.5` (quota 1,72; gli altri 8 giocatori con `1+OVER_2.5` erano a 1,65-1,72). Letta da `gemini-3.5-flash-lite`, primo della catena dal pomeriggio. Corretta a mano la cella `Giocate!E1232` alle 22:52 su richiesta dell'utente, partita non ancora valutata (nessun punto da rifare). Il confronto delle quote fra giocatori aveva segnalato anche due doppie chance `12` di DARIO con la quota di `X2`/`1X`: l'utente ha confermato che erano giuste. Idea per il futuro: avviso all'admin quando una quota letta coincide con quella di un ALTRO pronostico della stessa partita nelle schedine gia' salvate.
+
 ### 23/10/2026 — Lettura schedine: i modelli "lite" passano davanti, regola sulle doppie chance a parole
 
 - **Sintomo** (segnalato dall'utente): la lettura delle schedine fallisce spesso e riprovando funziona. **Causa probabile** (log di Render non disponibili, 503 del loro servizio): i "lite" erano in fondo alla catena e con i flash saturi (503, o 60 s di timeout ciascuno) il tetto di `TEMPO_MAX_SCANSIONE_S` (180 s) finiva prima di raggiungerli. Durante la prova `gemini-3.5-flash` rispondeva proprio 503 "high demand".
