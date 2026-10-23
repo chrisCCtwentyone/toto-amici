@@ -2138,22 +2138,82 @@ async def ricevi_foto_multipla(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
     await update.message.reply_text(f"📸 Foto #{tot} ricevuta! Mandane altre oppure clicca **Finito**.", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
+def tastiera_giornate_schedina():
+    kb = [[InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(r, r+5)] for r in range(1, 39, 5)]
+    kb[-1] = [InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(36, 39)]
+    kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
+    return InlineKeyboardMarkup(kb)
+
+
+def ultimo_calcio_inizio_passato(matches, adesso=None):
+    """Orario (datetime UTC) dell'ultima partita della giornata se e' GIA' iniziata,
+    altrimenti None. Serve a fermare un clic sbagliato sulla giornata (es. 7 invece
+    di 8, 23/10/2026): una giornata la cui ultima partita e' iniziata e' finita, e
+    caricarci una schedina e' quasi sempre un errore. Una partita senza orario o
+    rinviata a data futura tiene la giornata aperta: nessun avviso."""
+    orari = []
+    for m in matches:
+        try:
+            orari.append(datetime.strptime(m["utcDate"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC))
+        except (KeyError, TypeError, ValueError):
+            return None
+    if not orari:
+        return None
+    ultimo = max(orari)
+    return ultimo if ultimo < (adesso or datetime.now(pytz.UTC)) else None
+
+
+def partite_della_giornata(giornata):
+    url = f"https://api.football-data.org/v4/competitions/SA/matches?matchday={giornata}"
+    return richiedi_con_retry(url, headers={"X-Auth-Token": FOOTBALL_DATA_KEY}).json().get("matches", [])
+
+
 async def fine_invio_foto_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     if not context.user_data.get('foto_ricevute'):
         await query.edit_message_text("⚠️ Non hai inviato nessuna foto! Mandane almeno una.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]))
         return ATTESA_FOTO_MULTIPLE
         
-    kb = [[InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(r, r+5)] for r in range(1, 39, 5)]
-    kb[-1] = [InlineKeyboardButton(str(i), callback_data=f"giornata_{i}") for i in range(36, 39)]
-    kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
-    await query.edit_message_text("📅 A quale **Giornata** si riferisce questa bolletta?", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+    await query.edit_message_text("📅 A quale **Giornata** si riferisce questa bolletta?", reply_markup=tastiera_giornate_schedina(), parse_mode='Markdown')
     return SCELTA_GIORNATA
 
 async def scegli_giornata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
+    giornata = query.data.split('_')[1]
+    context.user_data['giornata'] = giornata
+
+    # Blocco di sicurezza: giornata gia' finita -> doppia conferma, non un blocco
+    # (una schedina vera caricata in ritardo deve restare possibile). Se
+    # Football-Data non risponde si lascia passare: e' un aiuto contro il clic
+    # sbagliato, non una guardia da cui dipenda il caricamento.
+    try:
+        ultimo = ultimo_calcio_inizio_passato(await asyncio.to_thread(partite_della_giornata, giornata))
+    except Exception as e:
+        logging.warning("Controllo giornata conclusa non riuscito (si procede): %s", e)
+        ultimo = None
+    if ultimo:
+        quando = ultimo.astimezone(TZ_ROMA).strftime('%d/%m alle %H:%M')
+        kb = [[InlineKeyboardButton(f"✅ Sì, è la Giornata {giornata}", callback_data=f"giornataok_{giornata}")],
+              [InlineKeyboardButton("🔙 Scegli un'altra giornata", callback_data="cambia_giornata")],
+              [InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")]]
+        await query.edit_message_text(
+            f"⚠️ *Attenzione: la Giornata {giornata} è già finita* (ultima partita iniziata il {quando}).\n\n"
+            f"Sei sicuro che questa bolletta sia della *Giornata {giornata}*?",
+            reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+        return SCELTA_GIORNATA
+    return await chiedi_giocatore(query, context)
+
+
+async def conferma_giornata_passata(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    if query.data == "cambia_giornata":
+        await query.edit_message_text("📅 A quale **Giornata** si riferisce questa bolletta?", reply_markup=tastiera_giornate_schedina(), parse_mode='Markdown')
+        return SCELTA_GIORNATA
     context.user_data['giornata'] = query.data.split('_')[1]
-    
+    return await chiedi_giocatore(query, context)
+
+
+async def chiedi_giocatore(query, context):
     kb = [[InlineKeyboardButton(GIOCATORI[i].capitalize(), callback_data=f"giocatore_{GIOCATORI[i]}") for i in range(r, r+4)] for r in range(0, len(GIOCATORI), 4)]
     kb.append([InlineKeyboardButton("❌ Annulla", callback_data="annulla_azione")])
     await query.edit_message_text(text=f"✅ Giornata: {context.user_data['giornata']}\n\n👤 Di chi è?", reply_markup=InlineKeyboardMarkup(kb))
@@ -3525,7 +3585,8 @@ def main():
             ],
             SCELTA_GIORNATA: [
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$"),
-                CallbackQueryHandler(scegli_giornata, pattern="^giornata_")
+                CallbackQueryHandler(scegli_giornata, pattern="^giornata_"),
+                CallbackQueryHandler(conferma_giornata_passata, pattern="^(giornataok_|cambia_giornata$)")
             ],
             SCELTA_GIOCATORE: [
                 CallbackQueryHandler(annulla_azione_callback, pattern="^annulla_azione$"),

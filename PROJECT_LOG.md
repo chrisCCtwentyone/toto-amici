@@ -108,6 +108,14 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 23/10/2026 — Caricamento schedina: doppia conferma se la giornata e' gia' finita
+
+- Richiesta dell'utente: un clic sbagliato sulla giornata (7 invece di 8, con la 8 che inizia oggi) non deve passare in silenzio.
+- `scegli_giornata`: legge le partite della giornata scelta (`partite_della_giornata`, una chiamata a Football-Data) e, se **l'ultima partita e' gia' iniziata** (`ultimo_calcio_inizio_passato`), mostra "la Giornata N e' gia' finita (ultima partita iniziata il ...)" con tre pulsanti: *Si', e' la Giornata N* / *Scegli un'altra giornata* / *Annulla*. Doppia conferma e non blocco: una schedina vera caricata in ritardo resta possibile.
+- Se Football-Data non risponde, o una partita non ha orario (rinvio), **nessun avviso**: e' un aiuto contro il clic sbagliato, non una guardia da cui dipende il caricamento (stessa regola del controllo anticipato dei doppioni).
+- Verificato sui dati veri: Giornata 7 -> avviso (ultima partita 19/10 20:45), Giornata 8 -> nessun avviso. Test: `tests/test_giornata_passata.py` (9). Suite 1008 -> 1017.
+- Non coperto: il clic su una giornata FUTURA (es. 9 invece di 8).
+
 ### 23/10/2026 — Lettura schedine: i modelli "lite" passano davanti, regola sulle doppie chance a parole
 
 - **Sintomo** (segnalato dall'utente): la lettura delle schedine fallisce spesso e riprovando funziona. **Causa probabile** (log di Render non disponibili, 503 del loro servizio): i "lite" erano in fondo alla catena e con i flash saturi (503, o 60 s di timeout ciascuno) il tetto di `TEMPO_MAX_SCANSIONE_S` (180 s) finiva prima di raggiungerli. Durante la prova `gemini-3.5-flash` rispondeva proprio 503 "high demand".
