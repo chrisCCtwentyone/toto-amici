@@ -599,10 +599,16 @@ ERRORI_SENZA_SECONDO_TENTATIVO = ("504", "DEADLINE", "TIMED OUT", "TIMEOUT")
 # La congestione SI SPOSTA da un modello all'altro nel giro di minuti: nessun
 # singolo modello e' affidabile da solo, per questo serve una catena e non
 # semplicemente un modello diverso (Sessione 15).
-MODELLI_GEMINI = ("gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.8-flash",
-                  # I "lite" hanno una quota gratuita separata (il 16/10 i flash erano a 20/giorno ciascuno)
-                  # e alla prova sulle schedine vere hanno letto 20/20, compresa una bet365 a parole.
-                  "gemini-flash-lite-latest", "gemini-3.5-flash-lite")
+# 23/10/2026: i "lite" passano DAVANTI. In coda non venivano quasi mai raggiunti:
+# con i flash saturi (503 o 60s di timeout ciascuno) il tetto di TEMPO_MAX_SCANSIONE_S
+# finiva prima, la lettura falliva e riprovando funzionava. Tutti i modelli sono
+# gratuiti, con quota separata (20/giorno ciascuno). Prova sulle 16 schedine vere
+# della Giornata 1 (scripts/prova_qualita_lettura.py): gemini-3.5-flash-lite
+# 160/160 pronostici e quote, ~15s; gemini-flash-lite-latest 30/30 ma ~31s.
+# 160/160 solo DOPO la regola sulle doppie chance a parole nel prompt: senza,
+# il lite leggeva "Venezia o Lecce" (bet365) come 1X invece di 12.
+MODELLI_GEMINI = ("gemini-3.5-flash-lite", "gemini-flash-lite-latest",
+                  "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.8-flash")
 
 # Il minimo accettato dall'API e' 10s. Senza un tetto, un modello congestionato
 # tiene occupato il bot per oltre un minuto e mezzo (96s misurati) mentre
@@ -912,6 +918,7 @@ PROMPT_LETTURA_SCHEDINA = """
        - NON INCLUDERE MAI i nomi delle squadre (es. 'MILAN', 'ROMA') nel pronostico. Sostituisci il nome con il segno `1` o `2` corrispondente, o `X` se c'è scritto 'PAREGGIO'.
        - Converti qualsiasi abbreviazione come 'O' o 'U' in 'OVER_2.5' o 'UNDER_2.5'.
        - Converti 'GG' o 'G' in 'GOAL', e 'NG' in 'NOGOAL'.
+       - DOPPIA CHANCE SCRITTA A PAROLE (es. bet365 "Venezia o Lecce", mercato "Doppia chance"): conta CHI c'e' nella frase, non l'ordine. Squadra di casa O squadra ospite = `12`; squadra di casa O pareggio = `1X`; pareggio O squadra ospite = `X2`. "Venezia o Lecce" con Venezia in casa e Lecce fuori e' `12`, MAI `1X`.
        - NON RESTITUIRE MAI un pronostico bare come 'SI', 'SÌ' o 'NO': alcuni bookmaker mostrano il mercato "Entrambe le squadre segnano" come una domanda con risposta Sì/No. In quel caso guarda il nome del mercato nella schermata e converti: 'Sì' → `GOAL`, 'No' → `NOGOAL`. Applica lo stesso ragionamento per qualsiasi altro mercato mostrato come Sì/No: individua a cosa si riferisce e restituisci sempre uno dei valori esatti elencati sopra, mai la risposta letterale.
     """
 

@@ -108,6 +108,15 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 23/10/2026 — Lettura schedine: i modelli "lite" passano davanti, regola sulle doppie chance a parole
+
+- **Sintomo** (segnalato dall'utente): la lettura delle schedine fallisce spesso e riprovando funziona. **Causa probabile** (log di Render non disponibili, 503 del loro servizio): i "lite" erano in fondo alla catena e con i flash saturi (503, o 60 s di timeout ciascuno) il tetto di `TEMPO_MAX_SCANSIONE_S` (180 s) finiva prima di raggiungerli. Durante la prova `gemini-3.5-flash` rispondeva proprio 503 "high demand".
+- **Tutti i modelli sono gratuiti** (la chiave non ha fatturazione): la differenza e' solo la quota separata (20/giorno per modello) e la congestione.
+- **Prova di qualita'** (`scripts/prova_qualita_lettura.py`, 16 schedine vere della Giornata 1): `gemini-3.5-flash-lite` 128/130 pronostici, 130/130 quote, ~15 s. I 2 errori erano entrambi di NICO (bet365): "Venezia o Lecce" e "Parma o Cagliari" letti `1X` invece di `12`.
+- **Prompt**: nuova regola sulle doppie chance scritte a parole (conta chi c'e' nella frase: casa o ospite = `12`). Dopo: NICO 10/10, DAVIDE e DARIO 10/10 (`gemini-3.5-flash-lite`); `gemini-flash-lite-latest` 30/30 su NICO, DAVIDE e PAOLO ma ~31 s.
+- **Nuovo ordine** `MODELLI_GEMINI`: `gemini-3.5-flash-lite`, `gemini-flash-lite-latest`, poi i cinque flash come riserva. Test 1008 verdi.
+- Da verificare alla prossima giornata: nei log `Gemini: risposta ottenuta dal modello di riserva` deve diventare raro, e nessuna lettura deve fallire per "tempo massimo di scansione raggiunto".
+
 ### 20/10/2026 — Parma-Torino: Football-Data cambia idea per ore (falso allarme sui punteggi)
 
 **Cosa e' successo.** L'utente ha segnalato il NOGOAL di SIRACUSA vinto su Parma-Torino "finita 1-3". Football-Data quella notte ha cambiato il risultato piu' volte: **0-3 FINISHED alle 23:00** (il bot ha calcolato su questo), **1-3 dalle 00:25**, poi TIMED senza punteggio verso le 01:05, di nuovo 1-3 alle 01:09, e **0-3 definitivo alle 02:20** (primo tempo 0-2). Il risultato ufficiale e' 0-3: il calcolo del bot era giusto fin dall'inizio e sul foglio non e' mai stato scritto nulla di sbagliato.
