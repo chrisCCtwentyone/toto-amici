@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import "./font.css";
 import "./index.css";
 import App from "./App";
+import { installaRicaricaDopoDeploy } from "./lib/ricaricaDopoDeploy";
+
+installaRicaricaDopoDeploy();
 
 // Solo in sviluppo: /?vetrina mostra i componenti condivisi con dati veri.
 const Vetrina = import.meta.env.DEV ? lazy(() => import("./vetrina/Vetrina")) : null;

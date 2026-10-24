@@ -108,6 +108,14 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 24/10/2026 — Sito: ricarica automatica se una scheda non si trova dopo un deploy
+
+- **Problema**: con la pagina aperta da prima di un deploy, aprire una scheda chiede un blocco di codice (`Statistiche-xxxx.js`) che il deploy ha cancellato; il fallback SPA risponde con l'HTML e l'import fallisce ("MIME type text/html"). Senza un riquadro d'errore React smonta tutto: pagina bianca.
+- **Fix**: `src/lib/ricaricaDopoDeploy.ts`, installato in `main.tsx`. Sull'evento `vite:preloadError` (Vite lo emette anche per gli `import()` delle schede, verificato nella build) ricarica la pagina **una volta**: orario dell'ultima ricarica in `sessionStorage` (`toto-ricarica-dopo-deploy`), niente seconda ricarica entro 60 s (con 10 s una connessione lenta poteva ricaricare in ciclo su un deploy rotto), quindi un deploy davvero rotto non manda in ciclo. Se `sessionStorage` non funziona non ricarica (meglio una scheda rotta che un ciclo). Test: `ricaricaDopoDeploy.test.ts`.
+- **Verificato con il Worker vero in locale** (nuova configurazione di anteprima `sito-worker`: `wrangler dev --local`, snapshot finto caricato nel KV locale con `npx wrangler kv key put snapshot --path ../restyling/snapshot-locale.json --binding SNAPSHOT --local`, idem `segnale`): pagina aperta, blocco di Statistiche rinominato come farebbe un deploy, clic sulla scheda → una ricarica, scheda aperta col blocco nuovo e `#statistiche` conservato. Blocco tolto del tutto → una sola ricarica, poi niente ciclo.
+- **404 per `/assets/*` mancanti: valutato e non fatto.** Servirebbe `run_worker_first` anche su `/assets/*`, cioè far passare dal Worker ogni file del sito (oggi gratis e senza Worker); la ricarica scatta lo stesso, sia con l'HTML sia con un 404. Il fallback HTML su `/assets/` ha `max-age=0, must-revalidate`, quindi non resta in cache.
+- **Non coperto**: (1) se manca lo script **principale** (HTML vecchio da una cache, il caso del browser di prova) il codice non parte e la ricarica non può scattare; (2) il sito non ha un riquadro d'errore (`ErrorBoundary`): quando la ricarica non si fa, la pagina resta bianca invece di dire "ricarica la pagina".
+
 ### 24/10/2026 — Confronto Giocate: punti fatti/massimo e colonna fissa sotto la barra
 
 - **Sovrapposizione**: la cella "Partita" (sticky, `z-20`) scorrendo passava sopra la barra delle schede (anch'essa `z-20`, ma prima nel DOM) e la colonna fissa (`z-10`) sopra il ticker. Fix: `isolate` sul contenitore della tabella, cosi' le z-index della colonna fissa restano dentro la tabella.

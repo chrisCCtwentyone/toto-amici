@@ -30,6 +30,12 @@
         "--strictPort"
       ],
       "port": 5173
+    },
+    {
+      "name": "sito-worker",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd frontend && npx wrangler dev --local --port 8787"],
+      "port": 8787
     }
   ]
 }
