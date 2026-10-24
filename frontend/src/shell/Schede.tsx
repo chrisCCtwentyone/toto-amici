@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { SCHEDE } from "../schede/registro";
 import BarraSchede, { idPannello, idTab } from "./BarraSchede";
+import ErroreScheda from "./ErroreScheda";
 import { Scheletro } from "../componenti";
 
 const daHash = (): number => {
@@ -54,9 +55,11 @@ export default function Schede() {
             transition={{ duration: 0.22, ease: [0.2, 0.8, 0.2, 1] }}
             className="outline-offset-4"
           >
-            <Suspense fallback={<Scheletro righe={5} />}>
-              <Corpo />
-            </Suspense>
+            <ErroreScheda>
+              <Suspense fallback={<Scheletro righe={5} />}>
+                <Corpo />
+              </Suspense>
+            </ErroreScheda>
           </motion.div>
         </AnimatePresence>
       </div>
