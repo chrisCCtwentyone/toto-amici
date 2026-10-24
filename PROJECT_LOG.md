@@ -108,6 +108,13 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 24/10/2026 — Confronto Giocate: punti fatti/massimo e colonna fissa sotto la barra
+
+- **Sovrapposizione**: la cella "Partita" (sticky, `z-20`) scorrendo passava sopra la barra delle schede (anch'essa `z-20`, ma prima nel DOM) e la colonna fissa (`z-10`) sopra il ticker. Fix: `isolate` sul contenitore della tabella, cosi' le z-index della colonna fissa restano dentro la tabella.
+- **Punti fatti** ora mostra `fatti/massimo pt`: massimo = punti fatti + punti delle righe non ancora decise come se fossero vinte (`puntiMassimi()` in `live-confronto/dati.ts`, con `regole.punti` e `soglia_quota_doppia` dallo snapshot, tipologia ricavata dal pronostico come fa il bot). **Senza** bonus di chiusura (scelta dell'utente). Perse e annullate a zero; a giornata finita massimo = fatti. Verificato sul sito vero (es. DARIO G8 8/30).
+- Verifica di conformita' 24/10: nessuna criticita'; `npm audit` segnala 7 avvisi solo negli strumenti di sviluppo (0 nel sito).
+- Nota: il browser di prova ha mostrato pagina bianca caricando un HTML vecchio rimasto in memoria (chiedeva `index-DTYjBD6o.js`, non piu' sul server: il fallback SPA risponde HTML e il modulo non parte). Il server serve sempre l'HTML nuovo (`max-age=0, must-revalidate`), ma un giocatore con una scheda aperta da prima di un deploy potrebbe avere lo stesso problema aprendo una scheda caricata a richiesta. Possibile rimedio: ricarica automatica su `vite:preloadError`.
+
 ### 24/10/2026 — Risultato manuale: "formato non valido" per qualsiasi testo
 
 - **Sintomo**: le partite di sabato pomeriggio (Cagliari-Bologna, Como-Sassuolo, Napoli-Roma) non si aggiornavano. **Causa**: Football-Data le ha rimesse TIMED senza punteggio verso le 17 e le 20 dopo averle date FINISHED. Cagliari-Bologna e Napoli-Roma erano gia' state chiuse dal bot e sono rimaste protette (`gia_finalizzato`); Como-Sassuolo e' rimasta IN CORSO. Il bot non aveva errori.
