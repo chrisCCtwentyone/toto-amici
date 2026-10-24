@@ -108,6 +108,16 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 25/10/2026 — Storico ordinabile per giornata, grafici dell'andamento in Statistiche
+
+- **Storico punteggi per giornata** (Classifica): toccando l'intestazione G1, G2... o Tot. la tabella si ordina per quella colonna (prima dal piu' alto, al secondo tocco dal piu' basso); "Giocatore" torna all'ordine della Classifica. Chi non ha giocato quella giornata va in fondo, i ritirati restano dopo gli attivi, a parita' vale l'ordine di Classifica. `aria-sort` sulle intestazioni, colonna scelta evidenziata. Logica in `classifica-cassa-regolamento/storico.ts` (+ test). Aggiunto anche `isolate` al contenitore (stessa sovrapposizione della colonna fissa di Confronto Giocate).
+- **Statistiche, "L'andamento giornata per giornata"**: due grafici a linee (`statistiche-coppa/AndamentoGrafici.tsx` + `GraficoLinee.tsx`, logica in `andamento.ts` + 14 test), SVG scritto a mano, nessuna dipendenza nuova.
+  - *Punti in classifica* (somma progressiva, `null` = 0) e *Posizione in classifica* (asse invertito; a pari punti stessa posizione, 1-1-3; nell'ultima giornata la `posizione` ufficiale dello snapshot, cosi' coincide con la Classifica).
+  - Forma "enfasi" (skill dataviz): tutti i giocatori in grigio, fino a 4 evidenziati con `--serie-1..4` (blu, arancio, acqua, giallo; validati con `validate_palette.js` su #ffffff e #0a1438: tutti i controlli superati, in chiaro acqua e giallo < 3:1 quindi nome a fine linea e vista tabella obbligatori). Il colore segue la persona. Default: primi 3 della Classifica; "Tutti" azzera; scelta ricordata in `localStorage` (`andamento-giocatori`).
+  - Scorrimento orizzontale con asse y fisso, apertura sulle ultime giornate; riquadro dei valori al tocco/passaggio, frecce da tastiera, "Mostra come tabella".
+  - Eccezione dichiarata alla regola di `GUIDA-SCHEDE.md` (niente calcoli nel React): somme e posizioni servono solo al disegno, i numeri ufficiali restano quelli dello snapshot.
+  - Limite noto: su telefono con "Tutti" il riquadro di 16 righe copre parte del grafico mentre si tocca.
+
 ### 24/10/2026 — Sito: ricarica automatica se una scheda non si trova dopo un deploy
 
 - **Problema**: con la pagina aperta da prima di un deploy, aprire una scheda chiede un blocco di codice (`Statistiche-xxxx.js`) che il deploy ha cancellato; il fallback SPA risponde con l'HTML e l'import fallisce ("MIME type text/html"). Senza un riquadro d'errore React smonta tutto: pagina bianca.
