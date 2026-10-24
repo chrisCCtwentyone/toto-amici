@@ -2,7 +2,7 @@
  * Solo presentazione per Schedine Live e Confronto Giocate: etichette, testi, stato del live.
  * Nessun calcolo di dominio (i totali, la scelta del gruppo e il riepilogo arrivano dallo snapshot).
  */
-import type { Esito, PartitaLive, RigaSchedina, SceltaGruppo, Tipologia } from "../../tipi/snapshot";
+import type { Esito, PartitaLive, Regole, RigaSchedina, SceltaGruppo, Tipologia } from "../../tipi/snapshot";
 import { formattaOra, formattaGiornoEsteso } from "../../lib/format";
 
 export const TIPOLOGIA: Record<Tipologia, string> = {
@@ -17,6 +17,30 @@ export const haQuotaAlta = (quota: number | null, soglia: number): boolean => qu
 
 /** Punti fatti finora da una schedina: somma dei «Punti Partita» scritti dal bot (§7, 0 finche' non e' vinta). */
 export const puntiSchedina = (righe: RigaSchedina[]): number => righe.reduce((tot, r) => tot + r.punti, 0);
+
+const ESITI_CHIUSI: ReadonlySet<Esito> = new Set(["vinta", "persa", "annullata"]);
+
+/** Tipologia come la ricava il bot dal pronostico (calcola_punteggio_partita), non dalla colonna del foglio. */
+function tipologiaDaPronostico(p: string): Tipologia {
+  if (p.includes("+")) return "combo";
+  if (p === "1" || p === "X" || p === "2") return "fisse";
+  if (p === "1X" || p === "X2" || p === "12") return "doppie_chance";
+  return "variabili";
+}
+
+/**
+ * Massimo dei punti ancora raggiungibili: quelli gia' fatti + quelli delle righe non ancora decise
+ * (vinte tutte), con i valori di regole.punti e la soglia della quota doppia. Senza il bonus di
+ * chiusura (scelta dell'utente, 24/10/2026). Perse e annullate non danno piu' niente.
+ */
+export function puntiMassimi(righe: RigaSchedina[], regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
+  return righe.reduce((tot, r) => {
+    if (r.esito === "vinta") return tot + r.punti;
+    if (ESITI_CHIUSI.has(r.esito)) return tot;
+    const p = regole.punti[tipologiaDaPronostico(r.pronostico)];
+    return tot + (haQuotaAlta(r.quota, regole.soglia_quota_doppia) ? p.quota_alta : p.base);
+  }, 0);
+}
 
 /** "1 / X · 3 su 7", "Tutti diversi", "—" (§7.1 scelta_gruppo). */
 export function testoSceltaGruppo(s: SceltaGruppo): string {

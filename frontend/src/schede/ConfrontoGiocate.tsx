@@ -5,7 +5,7 @@ import { useSnapshot } from "../lib/DatiContext";
 import { etichettaGiornata, formattaEuro, formattaIntero, formattaQuota } from "../lib/format";
 import { giornataEffettiva, giornateDisponibili } from "../lib/selettori";
 import CellaGiocata, { sfondoCella } from "./live-confronto/CellaGiocata";
-import { puntiSchedina, testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
+import { puntiMassimi, puntiSchedina, testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
 
 // Celle: bordo in basso e a destra (tabella "separate" perche' la colonna fissa non perda i bordi).
 const CELLA = "border-b border-r border-linea px-3 py-2.5 align-top";
@@ -44,12 +44,14 @@ export default function ConfrontoGiocate() {
           </p>
           {/* regione scorrevole con tastiera (tabIndex): lo scroll orizzontale e' dentro il contenitore, non nella pagina.
               "relative" serve: i testi .solo-lettori sono absolute e, senza un antenato posizionato, uscirebbero dal
-              contenitore e allargherebbero la pagina; min-w-0 evita che la griglia genitrice si allarghi al contenuto. */}
+              contenitore e allargherebbero la pagina; min-w-0 evita che la griglia genitrice si allarghi al contenuto.
+              "isolate": le z-index della colonna fissa (z-10/z-20) restano dentro la tabella, altrimenti la cella
+              "Partita" scorrendo passava sopra la barra delle schede (anch'essa z-20) e sopra il ticker in basso. */}
           <div
             role="region"
             aria-label={`Tabella dei pronostici, ${etichettaGiornata(giornata ?? 0)}`}
             tabIndex={0}
-            className="relative min-w-0 overflow-x-auto overscroll-x-contain rounded-diretta border-l border-t border-linea bg-superficie shadow-card"
+            className="relative isolate min-w-0 overflow-x-auto overscroll-x-contain rounded-diretta border-l border-t border-linea bg-superficie shadow-card"
           >
             <table className="w-max min-w-full border-separate border-spacing-0 text-left">
               <caption className="solo-lettori">
@@ -118,18 +120,26 @@ export default function ConfrontoGiocate() {
                   <th scope="row" className={`${CELLA} ${FISSA} bg-superficie-2 font-normal`}>
                     <span className="titolo-diretta text-lg text-ink-2">Punti fatti</span>
                   </th>
-                  {schedine.map((x) => (
-                    <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-ink`}>
-                      {formattaIntero(puntiSchedina(x.righe))} pt
-                    </td>
-                  ))}
+                  {schedine.map((x) => {
+                    const fatti = puntiSchedina(x.righe);
+                    const massimo = puntiMassimi(x.righe, s.regole);
+                    return (
+                      <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-ink`}>
+                        <span aria-hidden="true">
+                          {formattaIntero(fatti)}
+                          <span className="text-ink-2">/{formattaIntero(massimo)}</span> pt
+                        </span>
+                        <span className="solo-lettori">{fatti} punti fatti su {massimo} ancora possibili</span>
+                      </td>
+                    );
+                  })}
                   <td className={`${CELLA} bg-superficie-2`} />
                 </tr>
               </tfoot>
             </table>
           </div>
           <p className="m-0 text-sm text-ink-2">
-            * quota ≥ {formattaQuota(soglia)}: punti raddoppiati. <span className="text-vinta">✓</span> vinta, <span className="text-persa">✕</span> persa: nelle altre celle l'esito non è ancora deciso.
+            «Punti fatti»: punti ottenuti / massimo ancora possibile se vincesse tutte le partite rimaste (bonus di chiusura escluso). * quota ≥ {formattaQuota(soglia)}: punti raddoppiati. <span className="text-vinta">✓</span> vinta, <span className="text-persa">✕</span> persa: nelle altre celle l'esito non è ancora deciso.
           </p>
         </>
       )}
