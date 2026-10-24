@@ -2538,25 +2538,47 @@ async def scegli_partita_manuale(update: Update, context: ContextTypes.DEFAULT_T
     )
     return ATTESA_RISULTATO_MANUALE
 
+# Il 24/10/2026 un admin non riusciva a inserire un risultato a mano: qualunque cosa
+# scrivesse tornava "formato non valido". Si accettava solo "2-1" col trattino ASCII,
+# ma le tastiere dei telefoni mettono lineette (– — −), spazi e caratteri invisibili.
+_SEPARATORI_RISULTATO = "-–—−‐‑‒:"
+_INVISIBILI = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u00a0"), " ")
+
+
+def leggi_risultato_manuale(testo):
+    """(gol_casa, gol_ospite) da "2-1", "2 – 1", "2:1"..., oppure None.
+
+    Resta rigida su cio' che conta: solo due numeri da 1-2 cifre e un separatore,
+    niente altro testo. I gol diventano int, quindi nulla di scritto dall'utente
+    finisce come testo su Sheets.
+    """
+    t = str(testo).translate(_INVISIBILI).strip()
+    m = re.fullmatch(rf"(\d{{1,2}})\s*[{re.escape(_SEPARATORI_RISULTATO)}]\s*(\d{{1,2}})", t)
+    if not m:
+        return None
+    try:
+        return int(m.group(1)), int(m.group(2))
+    except ValueError:
+        return None
+
+
 async def ricevi_risultato_manuale(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not e_admin(update.effective_user.id): return
     casa = context.user_data.get('manuale_casa', '')
     ospite = context.user_data.get('manuale_ospite', '')
     testo = update.message.text.strip()
 
-    # Validazione rigida: SOLO cifre-trattino-cifre. Niente altro viene mai accettato,
-    # quindi niente rischio che un testo scritto male (es. che inizia con "=") finisca
-    # su una cella di Sheets con valueInputOption=USER_ENTERED e venga letto come formula.
-    match_formato = re.match(r'^(\d{1,2})-(\d{1,2})$', testo)
-    if not match_formato:
+    gol = leggi_risultato_manuale(testo)
+    if gol is None:
         await update.message.reply_text(
-            f"⚠️ Formato non valido. Scrivi **solo** due numeri separati da un trattino, es. `2-1`.\n\n"
+            f"⚠️ Formato non valido (ho ricevuto: «{escape_markdown(testo[:20])}»). "
+            f"Scrivi due numeri separati da un trattino, es. `2-1`.\n\n"
             f"Riprova per **{casa} - {ospite}**:",
             parse_mode='Markdown'
         )
         return ATTESA_RISULTATO_MANUALE
 
-    gol_casa, gol_ospite = int(match_formato.group(1)), int(match_formato.group(2))
+    gol_casa, gol_ospite = gol
     if gol_casa > 20 or gol_ospite > 20:
         await update.message.reply_text(
             f"⚠️ Numero di gol non plausibile. Riprova per **{casa} - {ospite}**:",

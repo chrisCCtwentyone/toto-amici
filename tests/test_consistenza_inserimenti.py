@@ -334,7 +334,7 @@ class TestRisultatoManuale:
         assert stato == bt.CONFERMA_RISULTATO_MANUALE
         assert (ctx.user_data["manuale_gol_casa"], ctx.user_data["manuale_gol_ospite"]) == gol
 
-    @pytest.mark.parametrize("testo", ["=1+1", "2 - 1", "2:1", "due-uno", "", "2-1-0", "-1-2", "21-3", "0-99"])
+    @pytest.mark.parametrize("testo", ["=1+1", "2-1 fine", "due-uno", "", "2-1-0", "-1-2", "21-3", "0-99"])
     def test_formati_non_validi_rifiutati_senza_toccare_i_dati(self, admin, testo):
         stato, ctx, upd = self._invia(testo)
         assert stato == bt.ATTESA_RISULTATO_MANUALE, f"'{testo}' non doveva essere accettato"

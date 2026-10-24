@@ -108,6 +108,12 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 24/10/2026 — Risultato manuale: "formato non valido" per qualsiasi testo
+
+- **Sintomo**: le partite di sabato pomeriggio (Cagliari-Bologna, Como-Sassuolo, Napoli-Roma) non si aggiornavano. **Causa**: Football-Data le ha rimesse TIMED senza punteggio verso le 17 e le 20 dopo averle date FINISHED. Cagliari-Bologna e Napoli-Roma erano gia' state chiuse dal bot e sono rimaste protette (`gia_finalizzato`); Como-Sassuolo e' rimasta IN CORSO. Il bot non aveva errori.
+- **Secondo guasto, vero bug**: un admin ha provato il risultato manuale e riceveva sempre "formato non valido". La validazione accettava solo `2-1` con il trattino ASCII e senza spazi; le tastiere dei telefoni mettono lineette (– — −), spazi e caratteri invisibili. Nei log non c'era traccia, perche' il rifiuto non logga nulla.
+- **Fix**: `leggi_risultato_manuale()` accetta qualsiasi trattino, i due punti, spazi e caratteri invisibili, sempre e solo "numero separatore numero" (1-2 cifre; testo extra, `=`, tre numeri ancora rifiutati; i gol restano int). Il messaggio d'errore ora ripete il testo ricevuto, cosi' la prossima volta si capisce subito. Test aggiornati (due vecchi test pretendevano il rifiuto di `2 - 1` e `2:1`). Suite 1018.
+
 ### 23/10/2026 — Caricamento schedina: doppia conferma se la giornata e' gia' finita
 
 - Richiesta dell'utente: un clic sbagliato sulla giornata (7 invece di 8, con la 8 che inizia oggi) non deve passare in silenzio.

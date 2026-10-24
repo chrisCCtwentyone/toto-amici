@@ -102,3 +102,16 @@ class TestSceltaGiornata:
         import inspect
         sorgente = inspect.getsource(bt)
         assert 'conferma_giornata_passata, pattern="^(giornataok_|cambia_giornata$)"' in sorgente
+
+
+class TestRisultatoManuale:
+    """24/10/2026: ogni risultato scritto a mano tornava 'formato non valido'
+    perche' le tastiere dei telefoni mettono lineette, spazi e caratteri invisibili."""
+
+    def test_accetta_le_varianti_delle_tastiere(self):
+        for testo in ("2-1", "2 - 1", "2–1", "2 — 1", "2−1", "2:1", " 2-1 ", "‎2-1", "2 - 1"):
+            assert bt.leggi_risultato_manuale(testo) == (2, 1), testo
+
+    def test_rifiuta_tutto_il_resto(self):
+        for testo in ("2-1 fine", "=2-1", "2", "2--1", "123-1", "a-b", ""):
+            assert bt.leggi_risultato_manuale(testo) is None, testo
