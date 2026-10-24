@@ -1,5 +1,6 @@
 import { StatoVuoto, TitoloSezione } from "../componenti";
 import { useSnapshot } from "../lib/DatiContext";
+import Andamento from "./statistiche-coppa/AndamentoGrafici";
 import { Protagonisti, SquadreSerieA } from "./statistiche-coppa/Premi";
 import PerUnSoffio from "./statistiche-coppa/PerUnSoffio";
 import TabellaGiocatori from "./statistiche-coppa/TabellaGiocatori";
@@ -7,7 +8,7 @@ import TimerUltimaVinta from "./statistiche-coppa/TimerUltimaVinta";
 
 /** Scheda "Statistiche" (§8): solo presentazione, tutti i numeri e i vincitori arrivano gia' calcolati dallo snapshot. */
 export default function Statistiche() {
-  const { statistiche: s } = useSnapshot();
+  const { statistiche: s, classifica } = useSnapshot();
   const vuota = s.giocatori.length === 0 && s.ritirati.length === 0 && s.ultima_schedina_vinta === null && s.per_un_soffio.length === 0;
 
   return (
@@ -24,6 +25,12 @@ export default function Statistiche() {
       ) : (
         <>
           <TimerUltimaVinta ultima={s.ultima_schedina_vinta} />
+          <section>
+            <TitoloSezione livello={3} evidenza="giornata per giornata">
+              L'andamento
+            </TitoloSezione>
+            <Andamento giocatori={classifica.giocatori} />
+          </section>
           <section>
             <TitoloSezione livello={3} evidenza="protagonisti">
               I

@@ -55,6 +55,13 @@
   --avviso-fondo: light-dark(#fff4c2, #3a2f00);
   --avviso-bordo: light-dark(#d9a900, #ffd400);
 
+  /* serie dei grafici (4 giocatori evidenziati), validate su --superficie. Slot 3 e 4 hanno contrasto < 3:1
+     sul chiaro: nei grafici il nome e' sempre scritto in colore ink e c'e' la vista tabella. */
+  --serie-1: light-dark(#2a78d6, #3987e5);
+  --serie-2: light-dark(#eb6834, #d95926);
+  --serie-3: light-dark(#1baf7a, #199e70);
+  --serie-4: light-dark(#eda100, #c98500);
+
   --focus: light-dark(#1d4fd1, #19e3ff);
   --ombra-card: light-dark(0 6px 22px #1f3a8a1f, none);
 
