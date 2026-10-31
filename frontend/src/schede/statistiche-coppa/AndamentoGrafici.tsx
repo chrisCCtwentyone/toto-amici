@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, Pulsante, StatoVuoto } from "../../componenti";
 import { formattaIntero, formattaOrdinale } from "../../lib/format";
 import type { RigaClassifica } from "../../tipi/snapshot";
@@ -68,13 +68,16 @@ export default function Andamento({ giocatori }: { giocatori: RigaClassifica[] }
   const [scelti, setScelti] = useState<Scelto[]>(() => leggiSalvati(nomi) ?? sceltiIniziali(nomi));
   const [tabella, setTabella] = useState(false);
 
-  useEffect(() => {
+  // Si salva solo una scelta FATTA dal visitatore: salvando anche il default, chi non tocca mai nulla
+  // vedrebbe per sempre i primi 3 del giorno della prima visita (verifica conformita' 31/10/2026).
+  const scegli = (nuovi: Scelto[]) => {
+    setScelti(nuovi);
     try {
-      localStorage.setItem(CHIAVE, JSON.stringify(scelti));
+      localStorage.setItem(CHIAVE, JSON.stringify(nuovi));
     } catch {
       /* la scelta vale solo per questa visita */
     }
-  }, [scelti]);
+  };
 
   if (dati.giornate.length === 0) {
     return <StatoVuoto titolo="Ancora nessun punteggio">I grafici compariranno dopo la prima giornata con dei punti.</StatoVuoto>;
@@ -94,7 +97,7 @@ export default function Andamento({ giocatori }: { giocatori: RigaClassifica[] }
           <button
             type="button"
             aria-pressed={attivi.length === 0}
-            onClick={() => setScelti([])}
+            onClick={() => scegli([])}
             className={`obliquo min-h-11 flex-none cursor-pointer px-4 transition-colors duration-150 ${attivi.length === 0 ? "bg-accento text-su-accento" : "border border-linea bg-superficie-2 text-ink-2 hover:text-ink"}`}
           >
             <span className="contro-obliquo block font-display text-lg font-extrabold uppercase tracking-wide">Tutti</span>
@@ -107,7 +110,7 @@ export default function Andamento({ giocatori }: { giocatori: RigaClassifica[] }
                 type="button"
                 aria-pressed={c !== undefined}
                 disabled={!c && pieno}
-                onClick={() => setScelti(alternaScelto(attivi, nome))}
+                onClick={() => scegli(alternaScelto(attivi, nome))}
                 className={`obliquo min-h-11 flex-none cursor-pointer px-4 transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${c ? "border-b-4 bg-superficie-2 text-ink" : "border border-linea text-ink-2 hover:text-ink"}`}
                 style={c ? { borderBottomColor: coloreSerie(c.slot) } : undefined}
               >
