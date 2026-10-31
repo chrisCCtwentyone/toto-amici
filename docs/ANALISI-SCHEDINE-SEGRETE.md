@@ -156,6 +156,8 @@ Ai servizi gratuiti non pesa niente: circa 16-50 scritture KV a giornata su 1.00
 - **«Correggi una schedina»**: cambiare la vincita potenziale e le caselle ≥ 3,50, con avviso all'altro admin. Il resto si corregge sul foglio Google. Serve per gli errori di inserimento (deciso: **se sito e bolletta non coincidono, vale la bolletta**).
 - **`/password NOME`**, come sopra.
 
+*Fatto il 31/10/2026, prima della prova:* `/correggi NOME` (vincita potenziale, stella quota ≥ 3,50, pronostico), solo sulle giornate già chiuse. «Inserisci per un giocatore»: per ora basta rigenerargli la password con `/password` e compilare la schedina sul sito al suo posto (l'altro admin riceve l'avviso della nuova password).
+
 **Rischi:**
 - Il sito diventa un posto dove si **scrive**, non solo si legge: va aggiornato `docs/CONFORMITA-SICUREZZA.md`. Non servono e-mail né foto, quindi i dati personali in più sono pochi (password e orari d'invio).
 - Se il sito o Cloudflare non rispondono a ridosso della scadenza serve una via di riserva, per esempio mandare la schedina a un admin come oggi.

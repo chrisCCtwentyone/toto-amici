@@ -3231,15 +3231,33 @@ def _errore_leggibile(e):
     return testo[:300]
 
 
-def scrivi_kv(chiave, corpo):
+def _url_kv(chiave):
+    return (f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}"
+            f"/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{chiave}")
+
+
+def scrivi_kv(chiave, corpo, scadenza_s=None):
     """PUT di un valore (bytes) su Workers KV, con retry e timeout espliciti.
-    Corpo grezzo (application/octet-stream), come previsto dalla documentazione."""
-    url = (f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}"
-           f"/storage/kv/namespaces/{CLOUDFLARE_KV_NAMESPACE_ID}/values/{chiave}")
+    Corpo grezzo (application/octet-stream), come previsto dalla documentazione.
+    `scadenza_s`: il valore sparisce da solo dopo quei secondi (expiration_ttl)."""
+    url = _url_kv(chiave) + (f"?expiration_ttl={int(scadenza_s)}" if scadenza_s else "")
     richiedi_con_retry(
         url, metodo="PUT", dati=corpo, timeout=TIMEOUT_CLOUDFLARE_S,
         headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}", "Content-Type": "application/octet-stream"},
     )
+
+
+def leggi_kv(chiave):
+    """GET di un valore da Workers KV: bytes, oppure None se la chiave non esiste."""
+    try:
+        return richiedi_con_retry(
+            _url_kv(chiave), timeout=TIMEOUT_CLOUDFLARE_S, tentativi=2,
+            headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"},
+        ).content
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            return None
+        raise
 
 
 def _partita_ridotta(m):
@@ -3531,6 +3549,25 @@ PAROLE_PASSWORD = (
 _ultima_giornata_aperta = {"corpo": None}
 
 
+def _partite_per_giornata(partite):
+    per_giornata = {}
+    for m in partite:
+        if m.get("matchday"):
+            per_giornata.setdefault(m["matchday"], []).append(m)
+    return per_giornata
+
+
+def scadenze_schedine(partite):
+    """{giornata: scadenza UTC} = prima partita di TUTTA la giornata meno 5 minuti.
+    Le giornate senza nessun orario noto non compaiono."""
+    scadenze = {}
+    for numero, lista in _partite_per_giornata(partite).items():
+        orari = [o for o in (leggi_orario_utc(m.get("utcDate")) for m in lista) if o]
+        if orari:
+            scadenze[numero] = min(orari) - timedelta(minutes=MINUTI_SCADENZA_SCHEDINA)
+    return scadenze
+
+
 def giornata_aperta(partite, adesso, giocatori=None):
     """La prima giornata la cui scadenza (prima partita meno 5 minuti) e' ancora
     futura, con le sue partite in ordine d'orario. None a stagione finita.
@@ -3539,19 +3576,11 @@ def giornata_aperta(partite, adesso, giocatori=None):
     una giornata vecchia, che cade nel futuro, non la fa sembrare aperta perche'
     le altre sue partite sono gia' nel passato. Una partita senza orario non
     conta per la scadenza ma resta nella schedina (va pronosticata comunque)."""
-    per_giornata = {}
-    for m in partite:
-        if m.get("matchday"):
-            per_giornata.setdefault(m["matchday"], []).append(m)
-    for numero in sorted(per_giornata):
-        lista = per_giornata[numero]
-        orari = [o for o in (leggi_orario_utc(m.get("utcDate")) for m in lista) if o]
-        if not orari:
-            continue
-        scadenza = min(orari) - timedelta(minutes=MINUTI_SCADENZA_SCHEDINA)
+    per_giornata = _partite_per_giornata(partite)
+    for numero, scadenza in sorted(scadenze_schedine(partite).items()):
         if scadenza <= adesso:
             continue
-        lista = sorted(lista, key=lambda m: m.get("utcDate") or "9999")
+        lista = sorted(per_giornata[numero], key=lambda m: m.get("utcDate") or "9999")
         nome = lambda squadra: squadra.get("shortName") or squadra.get("name") or "?"
         return {
             "giornata": numero,
@@ -3623,6 +3652,160 @@ async def password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await traccia_azione(update, context, f"ha creato una nuova password per {nome.upper()}")
 
 
+# ------------------------------------------
+# /correggi: gli admin correggono una schedina del sito DOPO la scadenza
+# ------------------------------------------
+# Regola dell'utente (31/10/2026): se schedina del sito e bolletta non
+# coincidono vale la bolletta; gli errori di inserimento li corregge un admin.
+# Prima della scadenza la schedina e' segreta anche per gli admin, quindi qui
+# non si legge ne' si corregge niente di una giornata ancora aperta.
+DURATA_CONSEGNA_S = 60 * 24 * 3600   # come DURATA_CONSEGNA_S in frontend/worker/index.ts
+_COMBO_FISSE = ("1", "X", "2")
+_COMBO_VARIABILI = ("OVER_2.5", "UNDER_2.5", "GOAL", "NOGOAL")
+
+ISTRUZIONI_CORREGGI = (
+    "Correzioni delle schedine del sito (solo dopo la scadenza):\n"
+    "/correggi NOME  -> mostra la schedina, righe numerate\n"
+    "/correggi NOME vincita 150,50  -> cambia la vincita potenziale\n"
+    "/correggi NOME 3 quota  -> accende/spegne la stella quota >= 3,50 della riga 3\n"
+    "/correggi NOME 3 X  -> cambia il pronostico della riga 3 (1, X, 2, 1X, X2, 12, Over, Under, GG, NG, Pari, Dispari, 1+Over...)\n"
+    "Vale l'ultima giornata chiusa; per un'altra aggiungi G10 dopo il nome."
+)
+
+
+def pronostico_da_admin(testo):
+    """Pronostico scritto dall'admin -> forma normalizzata, o None se non e' valido.
+    Stesse regole della scheda Gioca: la Combo e' 1X2 + Over/Under o Goal/NoGoal."""
+    t = re.sub(r"\b(OVER|UNDER)\b(?!\s*[0-9])", r"\1 2.5", str(testo).upper())
+    p = normalizza_pronostico(t)
+    if "+" in p:
+        parti = p.split("+")
+        ok = len(parti) == 2 and parti[0] in _COMBO_FISSE and parti[1] in _COMBO_VARIABILI
+        return p if ok else None
+    return p if p in _CATEGORIA_PER_PRONOSTICO else None
+
+
+def applica_correzione(consegna, argomenti):
+    """Applica UNA correzione a una schedina (dict come salvato dal Worker) e
+    restituisce (nuova schedina, descrizione). Solleva ValueError con un messaggio
+    leggibile se la correzione non e' valida: mai indovinare."""
+    nuova = json.loads(json.dumps(consegna))
+    if len(argomenti) >= 2 and argomenti[0].lower() == "vincita":
+        valore = estrai_numero(" ".join(argomenti[1:]))
+        if not valore or valore <= 0:
+            raise ValueError("Vincita non valida: scrivi per esempio /correggi NOME vincita 150,50")
+        prima = nuova.get("vincita")
+        nuova["vincita"] = round(valore, 2)
+        return nuova, f"vincita {formatta_euro_kv(prima)} -> {formatta_euro_kv(nuova['vincita'])}"
+    if len(argomenti) >= 2 and argomenti[0].isdigit():
+        righe = nuova.get("righe", [])
+        indice = int(argomenti[0])
+        if not 1 <= indice <= len(righe):
+            raise ValueError(f"Riga {indice} inesistente: le righe vanno da 1 a {len(righe)}.")
+        riga = righe[indice - 1]
+        if argomenti[1].lower() in ("quota", "stella", "3.50", "3,50"):
+            riga["quota_alta"] = not riga.get("quota_alta")
+            stato = "accesa" if riga["quota_alta"] else "spenta"
+            return nuova, f"riga {indice} ({riga.get('partita', '?')}): stella quota >= 3,50 {stato}"
+        pronostico = pronostico_da_admin(" ".join(argomenti[1:]))
+        if pronostico is None:
+            raise ValueError(f"Pronostico non riconosciuto: {' '.join(argomenti[1:])}")
+        prima = riga.get("pronostico")
+        riga["pronostico"] = pronostico
+        return nuova, f"riga {indice} ({riga.get('partita', '?')}): {prima} -> {pronostico}"
+    raise ValueError(ISTRUZIONI_CORREGGI)
+
+
+def formatta_euro_kv(valore):
+    try:
+        return f"{float(valore):,.2f} EUR".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return "?"
+
+
+def testo_consegna(consegna):
+    """La schedina con le righe numerate, testo semplice (va inviata senza parse_mode:
+    i pronostici contengono underscore)."""
+    righe = [f"{i}. {r.get('partita', '?')}: {r.get('pronostico', '?')}{' *' if r.get('quota_alta') else ''}"
+             for i, r in enumerate(consegna.get("righe", []), start=1)]
+    conteggi = {c: 0 for c in LIMITI_SCHEDINA}
+    for r in consegna.get("righe", []):
+        categoria = categoria_da_pronostico(r.get("pronostico", ""))
+        if categoria in conteggi:
+            conteggi[categoria] += 1
+    sbagliati = [f"{c} {conteggi[c]}/{n}" for c, n in LIMITI_SCHEDINA.items() if conteggi[c] != n]
+    testo = (f"{consegna.get('giocatore', '?')} - Giornata {consegna.get('giornata', '?')}\n"
+             + "\n".join(righe)
+             + f"\nVincita potenziale: {formatta_euro_kv(consegna.get('vincita'))}"
+             + "\n(* = quota >= 3,50)")
+    if sbagliati:
+        testo += "\nAttenzione, composizione diversa dal regolamento: " + ", ".join(sbagliati)
+    for c in consegna.get("correzioni", [])[-3:]:
+        testo += f"\nCorretta da {c.get('da', '?')}: {c.get('cosa', '?')}"
+    return testo
+
+
+async def correggi_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not e_admin(update.effective_user.id): return
+    chi = update.effective_user.id
+    rispondi = lambda testo: avvisa_admin(context, testo, destinatari=chi, parse_mode=None)
+    argomenti = list(context.args or [])
+    if not argomenti or argomenti[0].lower() not in GIOCATORI:
+        await rispondi(ISTRUZIONI_CORREGGI + "\n\nGiocatori: " + ", ".join(g.upper() for g in GIOCATORI))
+        return
+    nome = argomenti.pop(0).upper()
+    giornata = None
+    if argomenti and re.fullmatch(r"[Gg]\d{1,2}", argomenti[0]):
+        giornata = int(argomenti.pop(0)[1:])
+    if not pubblicazione_attiva():
+        await rispondi("ℹ️ Il collegamento con il sito non e' attivo (mancano le variabili Cloudflare).")
+        return
+    try:
+        scadenze = scadenze_schedine(await asyncio.to_thread(partite_football_data))
+    except Exception as e:
+        await rispondi(f"❌ Non riesco a leggere il calendario da Football-Data: {_errore_leggibile(e)}")
+        return
+    adesso = datetime.now(pytz.UTC)
+    chiuse = [g for g, s in scadenze.items() if s <= adesso]
+    if giornata is None:
+        if not chiuse:
+            await rispondi("Nessuna giornata chiusa.")
+            return
+        giornata = max(chiuse)
+    elif giornata not in chiuse:
+        await rispondi(f"🔒 La Giornata {giornata} non e' ancora chiusa: le schedine restano segrete fino alla scadenza.")
+        return
+    chiave = f"consegna_G{giornata}_{nome}"
+    try:
+        grezza = await asyncio.to_thread(leggi_kv, chiave)
+    except Exception as e:
+        await rispondi(f"❌ Non riesco a leggere la schedina: {_errore_leggibile(e)}")
+        return
+    if grezza is None:
+        await rispondi(f"Nessuna schedina dal sito per {nome} in Giornata {giornata}.")
+        return
+    consegna = json.loads(grezza)
+    if not argomenti:
+        await rispondi(testo_consegna(consegna) + "\n\n" + ISTRUZIONI_CORREGGI)
+        return
+    try:
+        nuova, descrizione = applica_correzione(consegna, argomenti)
+    except ValueError as e:
+        await rispondi(f"⚠️ {e}")
+        return
+    nuova.setdefault("correzioni", []).append({
+        "il": adesso.strftime("%Y-%m-%dT%H:%M:%SZ"), "da": nome_attore(update), "cosa": descrizione})
+    corpo = json.dumps(nuova, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    try:
+        await asyncio.to_thread(scrivi_kv, chiave, corpo, DURATA_CONSEGNA_S)
+    except Exception as e:
+        await rispondi(f"❌ Correzione non salvata, riprova fra poco: {_errore_leggibile(e)}")
+        return
+    await rispondi(f"✅ Corretto: {descrizione}\n(sul sito entro qualche minuto)\n\n" + testo_consegna(nuova))
+    await traccia_azione(update, context, f"ha corretto la schedina dal sito di {escape_markdown(nome)} "
+                                          f"(Giornata {giornata}): {escape_markdown(descrizione)}")
+
+
 COMANDI_ADMIN = [
     ("start", "Apri il menu principale"),
     ("status", "Giornata corrente e schedine mancanti"),
@@ -3631,6 +3814,7 @@ COMANDI_ADMIN = [
     ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
     ("pubblica", "Pubblica subito lo snapshot per il sito nuovo"),
     ("password", "Nuova password di un giocatore per il sito"),
+    ("correggi", "Correggi una schedina del sito (dopo la scadenza)"),
 ]
 
 # Riservati all'owner: toccano una credenziale e cancellano dati.
@@ -3777,6 +3961,7 @@ def main():
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
     app.add_handler(CommandHandler("pubblica", pubblica_command))
     app.add_handler(CommandHandler("password", password_command))
+    app.add_handler(CommandHandler("correggi", correggi_command))
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("archiviastagione", archivia_stagione_command)],
         states={CONFERMA_ARCHIVIA_STAGIONE: [

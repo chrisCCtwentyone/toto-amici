@@ -135,3 +135,75 @@ class TestPassword:
         import inspect
         assert "password" in [c for c, _ in bt.COMANDI_ADMIN]
         assert 'CommandHandler("password", password_command)' in inspect.getsource(bt.main)
+
+
+def consegna_finta():
+    pronostici = ["1+OVER_2.5", "1", "X", "2", "1", "1X", "X2", "GOAL", "PARI", "UNDER_2.5"]
+    return {"giocatore": "DAVIDE", "giornata": 10, "vincita": 150.5, "consegnata_il": "2026-10-30T18:00:00Z",
+            "righe": [{"partita_id": 900 + i, "pronostico": p, "quota_alta": False, "partita": f"Casa{i}-Ospite{i}"}
+                      for i, p in enumerate(pronostici)]}
+
+
+class TestCorreggi:
+    """/correggi: vale la bolletta (decisione dell'utente), e una giornata aperta
+    resta segreta anche per gli admin."""
+
+    def test_correzioni_valide(self):
+        c = consegna_finta()
+        nuova, cosa = bt.applica_correzione(c, ["vincita", "1.674,56"])
+        assert nuova["vincita"] == 1674.56 and "1.674,56" in cosa
+        nuova, _ = bt.applica_correzione(c, ["2", "quota"])
+        assert nuova["righe"][1]["quota_alta"] is True
+        nuova, cosa = bt.applica_correzione(c, ["3", "gg"])
+        assert nuova["righe"][2]["pronostico"] == "GOAL" and "X -> GOAL" in cosa
+        nuova, _ = bt.applica_correzione(c, ["1", "2+under"])
+        assert nuova["righe"][0]["pronostico"] == "2+UNDER_2.5"
+        assert c["righe"][2]["pronostico"] == "X", "l'originale non va toccato"
+
+    @pytest.mark.parametrize("argomenti", [["vincita", "zero"], ["11", "X"], ["0", "X"], ["3", "ciao"],
+                                           ["1", "1+pari"], ["boh"], ["3"]])
+    def test_correzioni_non_valide_non_indovinano(self, argomenti):
+        with pytest.raises(ValueError):
+            bt.applica_correzione(consegna_finta(), argomenti)
+
+    def test_testo_numerato_e_composizione(self):
+        testo = bt.testo_consegna(consegna_finta())
+        assert "1. Casa0-Ospite0: 1+OVER_2.5" in testo and "10. Casa9-Ospite9" in testo
+        assert "Attenzione" not in testo
+        storta, _ = bt.applica_correzione(consegna_finta(), ["6", "1"])
+        assert "Fisse 5/4" in bt.testo_consegna(storta)
+
+    def _esegui(self, monkeypatch, argomenti, partite, kv):
+        bt.ADMIN_IDS = [ADMIN_DI_TEST, 777]
+        inviati, scritte = [], {}
+        monkeypatch.setattr(bt, "pubblicazione_attiva", lambda: True)
+        monkeypatch.setattr(bt, "partite_football_data", lambda *a, **k: partite)
+        monkeypatch.setattr(bt, "leggi_kv", lambda chiave: kv.get(chiave))
+        monkeypatch.setattr(bt, "scrivi_kv", lambda chiave, corpo, scadenza_s=None: scritte.update({chiave: (json.loads(corpo), scadenza_s)}))
+
+        async def send_message(chat_id, text, **_):
+            inviati.append((chat_id, text))
+        update = SimpleNamespace(effective_user=SimpleNamespace(id=ADMIN_DI_TEST, full_name="Silvio", first_name="Silvio"))
+        asyncio.run(bt.correggi_command(update, SimpleNamespace(args=argomenti, bot=SimpleNamespace(send_message=send_message))))
+        return inviati, scritte
+
+    def test_corregge_l_ultima_giornata_chiusa_e_avvisa_l_altro_admin(self, monkeypatch):
+        partite = [partita(1, 10, "2026-10-30T19:45:00Z"), partita(2, 11, "2099-11-06T19:45:00Z")]
+        kv = {"consegna_G10_DAVIDE": json.dumps(consegna_finta()).encode()}
+        inviati, scritte = self._esegui(monkeypatch, ["davide", "vincita", "150"], partite, kv)
+        salvata, durata = scritte["consegna_G10_DAVIDE"]
+        assert salvata["vincita"] == 150 and durata == bt.DURATA_CONSEGNA_S
+        assert salvata["correzioni"][0]["da"] == "Silvio"
+        assert any(c == 777 and "DAVIDE" in t for c, t in inviati)
+
+    def test_giornata_aperta_resta_segreta_anche_agli_admin(self, monkeypatch):
+        partite = [partita(1, 10, "2026-10-30T19:45:00Z"), partita(2, 11, "2099-11-06T19:45:00Z")]
+        kv = {"consegna_G11_DAVIDE": json.dumps(consegna_finta()).encode()}
+        inviati, scritte = self._esegui(monkeypatch, ["davide", "G11"], partite, kv)
+        assert scritte == {}
+        assert "1+OVER_2.5" not in inviati[0][1] and "segrete" in inviati[0][1]
+
+    def test_comando_registrato(self):
+        import inspect
+        assert "correggi" in [c for c, _ in bt.COMANDI_ADMIN]
+        assert 'CommandHandler("correggi", correggi_command)' in inspect.getsource(bt.main)
