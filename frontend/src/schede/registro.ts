@@ -1,5 +1,5 @@
 /**
- * Registro delle sei schede. Per aggiungere/rinominare una scheda si tocca SOLO qui
+ * Registro delle sette schede. Per aggiungere/rinominare una scheda si tocca SOLO qui
  * (e il file della scheda). Ogni scheda e' caricata a richiesta (un blocco di codice a parte):
  * il peso di una scheda non rallenta le altre.
  */
@@ -14,6 +14,7 @@ export interface DefinizioneScheda {
 
 export const SCHEDE: readonly DefinizioneScheda[] = [
   { id: "classifica", etichetta: "Classifica & Cassa", Componente: lazy(() => import("./ClassificaCassa")) },
+  { id: "gioca", etichetta: "Gioca", Componente: lazy(() => import("./Gioca")) },
   { id: "live", etichetta: "Schedine Live", Componente: lazy(() => import("./SchedineLive")) },
   { id: "confronto", etichetta: "Confronto Giocate", Componente: lazy(() => import("./ConfrontoGiocate")) },
   { id: "statistiche", etichetta: "Statistiche", Componente: lazy(() => import("./Statistiche")) },

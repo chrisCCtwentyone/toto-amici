@@ -140,5 +140,10 @@ Regole:
 |---|---|
 | `GET /api/snapshot`, `/api/segnale` | restituisce così com'è (senza `JSON.parse`) la chiave KV `snapshot` / `segnale`; cache 60 s; 404 se non pubblicato |
 | `GET /api/live?giornata=N` | `{giornata, partite: [{id, stato, gol_casa, gol_ospite, inizio_il, minuto?}], errore?}`; N in 1-38 (400 altrimenti); cache condivisa 120 s; se Football-Data non risponde: **200** con `partite: []` e `errore`, mai 500 |
+| `GET /api/giornata-aperta` | la chiave KV `giornata_aperta` scritta dal bot: `{giornata, scadenza_il, partite: [{id, casa, ospite, inizio_il}], giocatori}`; 404 se assente |
+| `POST /api/schedina` | scheda «Gioca»: `{giocatore, giornata, righe: [{partita_id, pronostico, quota_alta}], vincita, password}` → `{consegnata_il}`. Controlla, nell'ordine: forma, scadenza (ora del server), composizione (`erroriSchedina`), tentativi (5 sbagliati per nome e IP = 15 minuti di blocco), password. Errori `{errore, errori?}` già leggibili |
+| `GET /api/consegne?giornata=N` | prima della scadenza **solo** `{chiusa: false, consegnate: [{giocatore, consegnata_il}]}`; dopo, `{chiusa: true, schedine: Consegna[]}` |
+
+Le regole della schedina stanno in `worker/schedina.ts`, condiviso fra scheda e Worker: **la verifica che conta è quella del Worker**.
 
 La chiave Football-Data è il secret `FOOTBALL_DATA_KEY` (`wrangler secret put`), in locale in `.dev.vars` (gitignored). **Non si fa deploy da qui**: lo decide l'utente.

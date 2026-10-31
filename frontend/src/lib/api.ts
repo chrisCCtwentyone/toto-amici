@@ -1,4 +1,5 @@
 import type { RispostaLive, Segnale, Snapshot } from "../tipi/snapshot";
+import { normalizzaPassword, type Consegna, type GiornataAperta, type Schedina } from "../../worker/schedina";
 
 export class ErroreHttp extends Error {
   constructor(public stato: number, percorso: string) {
@@ -30,3 +31,41 @@ export const caricaSegnale = (signal?: AbortSignal) => leggiJson<Segnale>(`/api/
 export const caricaSnapshot = (signal?: AbortSignal) => leggiJson<Snapshot>(`/api/snapshot${paramDev()}`, signal);
 export const caricaLive = (giornata: number, signal?: AbortSignal) =>
   leggiJson<RispostaLive>(`/api/live?giornata=${giornata}`, signal);
+
+// ---- Schedina composta sul sito (scheda «Gioca») ----
+
+export const caricaGiornataAperta = (signal?: AbortSignal) => leggiJson<GiornataAperta>("/api/giornata-aperta", signal);
+
+export type RispostaConsegne =
+  | { giornata: number; chiusa: false; consegnate: { giocatore: string; consegnata_il: string }[] }
+  | { giornata: number; chiusa: true; schedine: Consegna[] };
+
+export const caricaConsegne = (giornata: number, signal?: AbortSignal) =>
+  leggiJson<RispostaConsegne>(`/api/consegne?giornata=${giornata}`, signal);
+
+/** Errore del server all'invio: `messaggio` e `errori` sono gia' testi da mostrare cosi' come sono. */
+export class ErroreInvio extends Error {
+  constructor(public stato: number, messaggio: string, public errori: string[] = []) {
+    super(messaggio);
+  }
+}
+
+export async function inviaSchedina(s: Schedina, password: string): Promise<{ consegnata_il: string }> {
+  let r: Response;
+  try {
+    r = await fetch("/api/schedina", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ ...s, password: normalizzaPassword(password) }),
+    });
+  } catch {
+    throw new ErroreInvio(0, "Non riesco a collegarmi. Controlla la connessione e riprova: la schedina non è stata consegnata.");
+  }
+  const dati = (await r.json().catch(() => null)) as { errore?: string; errori?: string[]; consegnata_il?: string } | null;
+  if (r.ok && typeof dati?.consegnata_il === "string") return { consegnata_il: dati.consegnata_il };
+  throw new ErroreInvio(
+    r.status,
+    typeof dati?.errore === "string" ? dati.errore : "Qualcosa non ha funzionato: la schedina non è stata consegnata. Riprova fra poco.",
+    Array.isArray(dati?.errori) ? dati.errori : [],
+  );
+}

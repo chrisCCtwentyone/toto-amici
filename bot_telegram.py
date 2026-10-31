@@ -6,6 +6,7 @@ import ctypes
 import json
 import logging
 import random
+import secrets
 import re
 import io
 import base64
@@ -15,7 +16,7 @@ import asyncio
 import requests
 from api_utils import richiedi_con_retry
 from statistiche import (abbina_partita, abbina_partita_con_ordine, e_ritirato, estrai_numero, etichetta_stagione, nome_senza_ritiro,
-                         costruisci_snapshot_con_avvisi, costruisci_segnale, impronta_snapshot)
+                         costruisci_snapshot_con_avvisi, costruisci_segnale, impronta_snapshot, leggi_orario_utc)
 from datetime import time as dt_time, datetime, timedelta
 import pytz
 import threading
@@ -3333,6 +3334,7 @@ def pubblica_snapshot_bloccante(forza=False):
         adesso = datetime.now(pytz.UTC)
         classifica, cassa, giocate = leggi_fogli_per_snapshot()
         partite = partite_football_data(aggiorna=forza)
+        pubblica_giornata_aperta(partite, adesso, forza)
         try:
             snapshot, esito["avvisi"] = costruisci_snapshot_con_avvisi(classifica, cassa, giocate, partite, adesso)
         except Exception as e:  # ValueError di norma: dati vuoti o illeggibili (§17.13)
@@ -3507,6 +3509,120 @@ async def pubblica_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             testo += f"\n... e altri {len(esito['avvisi']) - MAX_AVVISI_NEL_MESSAGGIO}"
     await avvisa_admin(context, testo, destinatari=chi, parse_mode=None)
 
+# ==========================================
+# SCHEDINE DAL SITO (prova dal 31/10/2026, docs/ANALISI-SCHEDINE-SEGRETE.md)
+# ==========================================
+# Il giocatore compone la schedina sulla scheda «Gioca» del sito; il Worker la
+# tiene segreta in KV fino alla scadenza. Il bot fa due cose sole:
+# 1. pubblica in KV la giornata aperta (partite, orari, scadenza, giocatori),
+#    che il Worker usa per controllare scadenza e composizione;
+# 2. crea le password dei giocatori (/password NOME).
+# In prova i punti si calcolano ancora dalle foto: il bot non legge le schedine del sito.
+
+MINUTI_SCADENZA_SCHEDINA = 5   # regolamento: bolletta 5 minuti prima della prima partita
+# Parole corte, senza accenti e senza doppie ambigue: si dettano a voce e si scrivono dal telefono.
+PAROLE_PASSWORD = (
+    "ape", "arco", "baia", "bosco", "cane", "capra", "cielo", "cigno", "corvo", "duna",
+    "faro", "fiume", "foca", "gatto", "gufo", "isola", "lago", "lama", "lepre", "lince",
+    "luna", "lupo", "mare", "melo", "monte", "mora", "neve", "noce", "nube", "oca",
+    "onda", "orso", "pera", "pino", "porto", "prato", "rana", "riva", "rosa", "sole",
+    "tigre", "topo", "torre", "trota", "vela", "vento", "volpe", "zebra",
+)
+_ultima_giornata_aperta = {"corpo": None}
+
+
+def giornata_aperta(partite, adesso, giocatori=None):
+    """La prima giornata la cui scadenza (prima partita meno 5 minuti) e' ancora
+    futura, con le sue partite in ordine d'orario. None a stagione finita.
+
+    La scadenza si calcola su TUTTE le partite della giornata: un recupero di
+    una giornata vecchia, che cade nel futuro, non la fa sembrare aperta perche'
+    le altre sue partite sono gia' nel passato. Una partita senza orario non
+    conta per la scadenza ma resta nella schedina (va pronosticata comunque)."""
+    per_giornata = {}
+    for m in partite:
+        if m.get("matchday"):
+            per_giornata.setdefault(m["matchday"], []).append(m)
+    for numero in sorted(per_giornata):
+        lista = per_giornata[numero]
+        orari = [o for o in (leggi_orario_utc(m.get("utcDate")) for m in lista) if o]
+        if not orari:
+            continue
+        scadenza = min(orari) - timedelta(minutes=MINUTI_SCADENZA_SCHEDINA)
+        if scadenza <= adesso:
+            continue
+        lista = sorted(lista, key=lambda m: m.get("utcDate") or "9999")
+        nome = lambda squadra: squadra.get("shortName") or squadra.get("name") or "?"
+        return {
+            "giornata": numero,
+            "scadenza_il": scadenza.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "partite": [{"id": m["id"], "casa": nome(m.get("homeTeam") or {}), "ospite": nome(m.get("awayTeam") or {}),
+                         "inizio_il": m.get("utcDate")} for m in lista],
+            "giocatori": [g.upper() for g in (giocatori or GIOCATORI)],
+        }
+    return None
+
+
+def pubblica_giornata_aperta(partite, adesso, forza=False):
+    """Scrive in KV la giornata aperta se e' cambiata. NON SOLLEVA MAI: come lo
+    snapshot, la pubblicazione non deve far fallire nient'altro."""
+    try:
+        aperta = giornata_aperta(partite, adesso)
+        if aperta is None:
+            return
+        corpo = json.dumps(aperta, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if forza or corpo != _ultima_giornata_aperta["corpo"]:
+            scrivi_kv("giornata_aperta", corpo)
+            _ultima_giornata_aperta["corpo"] = corpo
+            logging.info("Giornata aperta pubblicata: G%s, scadenza %s", aperta["giornata"], aperta["scadenza_il"])
+    except Exception as e:
+        logging.error("Giornata aperta non pubblicata: %s", _errore_leggibile(e))
+
+
+def genera_password():
+    """Tipo «tigre-lago-pino-42»: ~10 milioni di combinazioni. Con due parole sole (~200.000)
+    il blocco dei tentativi, che conta per nome e IP, si aggirava cambiando indirizzo (verifica
+    di conformita' del 31/10/2026, problema 7)."""
+    parole = "-".join(secrets.choice(PAROLE_PASSWORD) for _ in range(3))
+    return f"{parole}-{secrets.randbelow(90) + 10}"
+
+
+def impronta_password(sale, password):
+    """La stessa di improntaPassword in frontend/worker/schedina.ts: SHA-256 di sale + password."""
+    return hashlib.sha256((sale + password).encode("utf-8")).hexdigest()
+
+
+async def password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/password NOME: nuova password per la scheda «Gioca» del sito. La vecchia
+    smette di valere. La password arriva solo a chi l'ha chiesta; gli altri admin
+    vedono che e' stata cambiata, non la password."""
+    if not e_admin(update.effective_user.id): return
+    chi = update.effective_user.id
+    nome = (context.args[0] if context.args else "").strip().lower()
+    if nome not in GIOCATORI:
+        await avvisa_admin(context, "Uso: /password NOME\nGiocatori: " + ", ".join(g.upper() for g in GIOCATORI),
+                           destinatari=chi, parse_mode=None)
+        return
+    if not pubblicazione_attiva():
+        await avvisa_admin(context, "ℹ️ Il collegamento con il sito non e' attivo (mancano le variabili Cloudflare).",
+                           destinatari=chi, parse_mode=None)
+        return
+    password, sale = genera_password(), secrets.token_hex(16)
+    corpo = json.dumps({"sale": sale, "impronta": impronta_password(sale, password),
+                        "creata_il": datetime.now(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}).encode("utf-8")
+    try:
+        await asyncio.to_thread(scrivi_kv, f"password_{nome.upper()}", corpo)
+    except Exception as e:
+        logging.error("Password di %s non salvata: %s", nome.upper(), _errore_leggibile(e))
+        await avvisa_admin(context, f"❌ Password di {nome.upper()} non salvata, riprova fra poco.",
+                           destinatari=chi, parse_mode=None)
+        return
+    await avvisa_admin(context, f"🔑 Nuova password di {nome.upper()}:\n\n{password}\n\n"
+                       "Girala al giocatore in privato. Vale entro un minuto; la vecchia non vale piu'.",
+                       destinatari=chi, parse_mode=None)
+    await traccia_azione(update, context, f"ha creato una nuova password per {nome.upper()}")
+
+
 COMANDI_ADMIN = [
     ("start", "Apri il menu principale"),
     ("status", "Giornata corrente e schedine mancanti"),
@@ -3514,6 +3630,7 @@ COMANDI_ADMIN = [
     ("backup", "Esporta subito un backup dei dati"),
     ("riepilogo", "Riepilogo giornata pronto per WhatsApp"),
     ("pubblica", "Pubblica subito lo snapshot per il sito nuovo"),
+    ("password", "Nuova password di un giocatore per il sito"),
 ]
 
 # Riservati all'owner: toccano una credenziale e cancellano dati.
@@ -3659,6 +3776,7 @@ def main():
     app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("riepilogo", riepilogo_command))
     app.add_handler(CommandHandler("pubblica", pubblica_command))
+    app.add_handler(CommandHandler("password", password_command))
     app.add_handler(ConversationHandler(
         entry_points=[CommandHandler("archiviastagione", archivia_stagione_command)],
         states={CONFERMA_ARCHIVIA_STAGIONE: [

@@ -108,6 +108,16 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/10/2026 — Schedine segrete: scheda «Gioca» per comporre la schedina sul sito (in prova)
+
+- **Problema** (segnalato dall'utente): i giocatori in alto aspettavano gli ultimi minuti per pubblicare la bolletta nel gruppo e copiavano quelle già pubblicate. Analisi, opzioni a confronto, limiti dei servizi gratuiti con le fonti e tutte le decisioni dell'utente in `docs/ANALISI-SCHEDINE-SEGRETE.md`. Scelta la proposta di Salvatore: la schedina si compone sul sito con i pulsanti e resta segreta fino alla scadenza.
+- **Trovato durante l'analisi**: il sito mostrava già un pronostico appena salvato dall'admin, anche prima del calcio d'inizio (snapshot senza filtro). Da chiudere nella fase 2 (opzione F del documento).
+- **Bot**: `giornata_aperta()` (prima giornata con scadenza futura; scadenza = prima partita di tutta la giornata meno 5 minuti) pubblicata in KV da `pubblica_giornata_aperta()` a ogni giro di pubblicazione, solo se cambiata, senza mai sollevare. Nuovo comando admin **`/password NOME`**: password tipo `tigre-lago-pino-42` mandata solo a chi la chiede, in KV solo sale + impronta SHA-256, gli altri admin ricevono «ha creato una nuova password per NOME». Test: `tests/test_schedine_sito.py` (11).
+- **Worker**: `GET /api/giornata-aperta`, `POST /api/schedina` (forma, scadenza con l'ora del server, composizione, 5 tentativi sbagliati per nome e IP = 15 minuti di blocco in memoria, password), `GET /api/consegne` (prima della scadenza solo nomi e orari). Regole in `worker/schedina.ts`, condivise con la pagina; il vettore dell'impronta è lo stesso nei test Python e TypeScript.
+- **Sito**: scheda **«Gioca»** (seconda): nome, contatori fissi in alto, una carta per partita con pulsanti e interruttore Combo, casella «quota ≥ 3,50», vincita potenziale (formato italiano), password, riepilogo con conteggi verde/rosso e casella «Ho controllato», ricevuta con l'orario, «Chi ha consegnato» (e chi manca); dopo la scadenza le schedine di tutti. Nel browser resta solo il nome scelto.
+- **Verificato in locale** (`wrangler dev` con dati finti, telefono, tema chiaro e scuro): invio riuscito, password sbagliata, blocco dopo 5 tentativi, schedina incompleta respinta con gli errori, segreto prima della scadenza, elenco completo dopo. 1029 test del bot e 98 del sito verdi, build ok.
+- **In prova**: per i punti conta ancora la bolletta pubblicata nel gruppo; il bot non legge le schedine del sito. **Fase 2** (dopo la prova): il bot preleva le schedine del sito e le scrive su Giocate; correzioni dal bot di vincita potenziale e caselle ≥ 3,50 con avviso all'altro admin; giocate nascoste sullo snapshot fino alla scadenza; regolamento; `docs/CONFORMITA-SICUREZZA.md`.
+
 ### 31/10/2026 — Cassa: versamenti reali di VINCENZO e DAVIDE (Giornata 8), importi arrotondati
 
 - Il bot aveva scritto la meta' esatta della vincita: VINCENZO 156,74 EUR, DAVIDE 151,55 EUR. Versato davvero: **150,00 EUR a testa** (comunicato dall'utente). Corrette a mano le celle `Cassa!C3:D4` (Entrate 150/150, Saldo Totale 580/730). **Fondo attuale: 730,00 EUR** (430 + 150 + 150).
