@@ -108,6 +108,12 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/10/2026 — Cassa: versamenti reali di VINCENZO e DAVIDE (Giornata 8), importi arrotondati
+
+- Il bot aveva scritto la meta' esatta della vincita: VINCENZO 156,74 EUR, DAVIDE 151,55 EUR. Versato davvero: **150,00 EUR a testa** (comunicato dall'utente). Corrette a mano le celle `Cassa!C3:D4` (Entrate 150/150, Saldo Totale 580/730). **Fondo attuale: 730,00 EUR** (430 + 150 + 150).
+- **Confronto Giocate, riga "Punti fatti"**: ora `fatti/massimo della giornata pt` (massimo = tutti i pronostici azzeccati, fisso, annullate escluse: `puntiMassimiGiornata()`) e sotto, in piccolo, `rimanenti N pt` (il massimo ancora raggiungibile, che scende a ogni persa: `puntiRimanenti()`, il valore che prima stava dopo la barra). Bonus di chiusura sempre escluso.
+- **Regola**: gli importi della Cassa sono **arrotondati a mano** dagli admin rispetto alla meta' esatta calcolata dal bot (gia' successo con PAOLO G1, 427,85 -> 430). Annotato in CLAUDE.md: non "correggerli" e non segnalarli come errori.
+
 ### 25/10/2026 — Storico ordinabile per giornata, grafici dell'andamento in Statistiche
 
 - **Storico punteggi per giornata** (Classifica): toccando l'intestazione G1, G2... o Tot. la tabella si ordina per quella colonna (prima dal piu' alto, al secondo tocco dal piu' basso); "Giocatore" torna all'ordine della Classifica. Chi non ha giocato quella giornata va in fondo, i ritirati restano dopo gli attivi, a parita' vale l'ordine di Classifica. `aria-sort` sulle intestazioni, colonna scelta evidenziata. Logica in `classifica-cassa-regolamento/storico.ts` (+ test). Aggiunto anche `isolate` al contenitore (stessa sovrapposizione della colonna fissa di Confronto Giocate).

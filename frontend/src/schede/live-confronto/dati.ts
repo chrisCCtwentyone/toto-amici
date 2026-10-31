@@ -18,8 +18,6 @@ export const haQuotaAlta = (quota: number | null, soglia: number): boolean => qu
 /** Punti fatti finora da una schedina: somma dei «Punti Partita» scritti dal bot (§7, 0 finche' non e' vinta). */
 export const puntiSchedina = (righe: RigaSchedina[]): number => righe.reduce((tot, r) => tot + r.punti, 0);
 
-const ESITI_CHIUSI: ReadonlySet<Esito> = new Set(["vinta", "persa", "annullata"]);
-
 /** Tipologia come la ricava il bot dal pronostico (calcola_punteggio_partita), non dalla colonna del foglio. */
 function tipologiaDaPronostico(p: string): Tipologia {
   if (p.includes("+")) return "combo";
@@ -28,18 +26,27 @@ function tipologiaDaPronostico(p: string): Tipologia {
   return "variabili";
 }
 
+/** Punti di una riga se fosse vinta, con regole.punti e la soglia della quota doppia (come calcola_punteggio_partita). */
+function puntiSeVinta(r: RigaSchedina, regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
+  if (r.esito === "vinta") return r.punti;
+  const p = regole.punti[tipologiaDaPronostico(r.pronostico)];
+  return haQuotaAlta(r.quota, regole.soglia_quota_doppia) ? p.quota_alta : p.base;
+}
+
 /**
- * Massimo dei punti ancora raggiungibili: quelli gia' fatti + quelli delle righe non ancora decise
- * (vinte tutte), con i valori di regole.punti e la soglia della quota doppia. Senza il bonus di
- * chiusura (scelta dell'utente, 24/10/2026). Perse e annullate non danno piu' niente.
+ * Massimo della giornata: i punti che la schedina darebbe azzeccando tutto. Fisso per tutta la
+ * giornata (le annullate non contano). Senza il bonus di chiusura (scelta dell'utente, 24/10/2026).
  */
-export function puntiMassimi(righe: RigaSchedina[], regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
-  return righe.reduce((tot, r) => {
-    if (r.esito === "vinta") return tot + r.punti;
-    if (ESITI_CHIUSI.has(r.esito)) return tot;
-    const p = regole.punti[tipologiaDaPronostico(r.pronostico)];
-    return tot + (haQuotaAlta(r.quota, regole.soglia_quota_doppia) ? p.quota_alta : p.base);
-  }, 0);
+export function puntiMassimiGiornata(righe: RigaSchedina[], regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
+  return righe.reduce((tot, r) => (r.esito === "annullata" ? tot : tot + puntiSeVinta(r, regole)), 0);
+}
+
+/**
+ * "Rimanenti": il massimo che si puo' ancora raggiungere, cioe' punti fatti + righe non ancora decise
+ * come se fossero vinte. Scende a ogni pronostico perso; a giornata finita coincide con i punti fatti.
+ */
+export function puntiRimanenti(righe: RigaSchedina[], regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
+  return righe.reduce((tot, r) => (r.esito === "persa" || r.esito === "annullata" ? tot : tot + puntiSeVinta(r, regole)), 0);
 }
 
 /** "1 / X · 3 su 7", "Tutti diversi", "—" (§7.1 scelta_gruppo). */

@@ -5,7 +5,7 @@ import { useSnapshot } from "../lib/DatiContext";
 import { etichettaGiornata, formattaEuro, formattaIntero, formattaQuota } from "../lib/format";
 import { giornataEffettiva, giornateDisponibili } from "../lib/selettori";
 import CellaGiocata, { sfondoCella } from "./live-confronto/CellaGiocata";
-import { puntiMassimi, puntiSchedina, testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
+import { puntiMassimiGiornata, puntiRimanenti, puntiSchedina, testoOrario, testoSceltaGruppo } from "./live-confronto/dati";
 
 // Celle: bordo in basso e a destra (tabella "separate" perche' la colonna fissa non perda i bordi).
 const CELLA = "border-b border-r border-linea px-3 py-2.5 align-top";
@@ -122,14 +122,20 @@ export default function ConfrontoGiocate() {
                   </th>
                   {schedine.map((x) => {
                     const fatti = puntiSchedina(x.righe);
-                    const massimo = puntiMassimi(x.righe, s.regole);
+                    const massimo = puntiMassimiGiornata(x.righe, s.regole);
+                    const rimanenti = puntiRimanenti(x.righe, s.regole);
                     return (
                       <td key={x.giocatore} className={`${CELLA} tabulare bg-superficie-2 font-display text-xl font-extrabold text-ink`}>
                         <span aria-hidden="true">
-                          {formattaIntero(fatti)}
-                          <span className="text-ink-2">/{formattaIntero(massimo)}</span> pt
+                          <span className="block">
+                            {formattaIntero(fatti)}
+                            <span className="text-ink-2">/{formattaIntero(massimo)}</span> pt
+                          </span>
+                          <span className="block font-testo text-xs font-normal text-ink-2">rimanenti {formattaIntero(rimanenti)} pt</span>
                         </span>
-                        <span className="solo-lettori">{fatti} punti fatti su {massimo} ancora possibili</span>
+                        <span className="solo-lettori">
+                          {fatti} punti fatti su {massimo} possibili nella giornata; al massimo può ancora arrivare a {rimanenti}
+                        </span>
                       </td>
                     );
                   })}
@@ -139,7 +145,7 @@ export default function ConfrontoGiocate() {
             </table>
           </div>
           <p className="m-0 text-sm text-ink-2">
-            «Punti fatti»: punti ottenuti / massimo ancora possibile se vincesse tutte le partite rimaste (bonus di chiusura escluso). * quota ≥ {formattaQuota(soglia)}: punti raddoppiati. <span className="text-vinta">✓</span> vinta, <span className="text-persa">✕</span> persa: nelle altre celle l'esito non è ancora deciso.
+            «Punti fatti»: punti ottenuti / massimo della giornata (tutti i pronostici azzeccati); sotto, «rimanenti»: il massimo a cui può ancora arrivare, che scende a ogni pronostico perso. Bonus di chiusura escluso. * quota ≥ {formattaQuota(soglia)}: punti raddoppiati. <span className="text-vinta">✓</span> vinta, <span className="text-persa">✕</span> persa: nelle altre celle l'esito non è ancora deciso.
           </p>
         </>
       )}
