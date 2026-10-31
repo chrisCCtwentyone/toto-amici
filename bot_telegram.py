@@ -3647,7 +3647,8 @@ async def password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                            destinatari=chi, parse_mode=None)
         return
     await avvisa_admin(context, f"🔑 Nuova password di {nome.upper()}:\n\n{password}\n\n"
-                       "Girala al giocatore in privato. Vale entro un minuto; la vecchia non vale piu'.",
+                       "Girala al giocatore in privato. Funziona dopo circa un minuto e NON scade: "
+                       "resta valida finche' non ne crei una nuova. Quella di prima non vale piu'.",
                        destinatari=chi, parse_mode=None)
     await traccia_azione(update, context, f"ha creato una nuova password per {nome.upper()}")
 
