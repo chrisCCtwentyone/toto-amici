@@ -27,6 +27,8 @@ function tipologiaDaPronostico(p: string): Tipologia {
 }
 
 /** Punti di una riga se fosse vinta, con regole.punti e la soglia della quota doppia (come calcola_punteggio_partita). */
+const FINALI: ReadonlySet<Esito> = new Set(["vinta", "persa", "annullata"]);
+
 function puntiSeVinta(r: RigaSchedina, regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
   if (r.esito === "vinta") return r.punti;
   const p = regole.punti[tipologiaDaPronostico(r.pronostico)];
@@ -42,11 +44,12 @@ export function puntiMassimiGiornata(righe: RigaSchedina[], regole: Pick<Regole,
 }
 
 /**
- * "Rimanenti": il massimo che si puo' ancora raggiungere, cioe' punti fatti + righe non ancora decise
- * come se fossero vinte. Scende a ogni pronostico perso; a giornata finita coincide con i punti fatti.
+ * "Rimanenti": i punti che si possono ancora fare con le partite non ancora decise (come se fossero
+ * tutte vinte). Non contiene i punti gia' fatti: scende a ogni partita decisa, vinta o persa, e a
+ * giornata finita vale 0. Fatti + rimanenti = il massimo a cui si puo' ancora arrivare.
  */
 export function puntiRimanenti(righe: RigaSchedina[], regole: Pick<Regole, "punti" | "soglia_quota_doppia">): number {
-  return righe.reduce((tot, r) => (r.esito === "persa" || r.esito === "annullata" ? tot : tot + puntiSeVinta(r, regole)), 0);
+  return righe.reduce((tot, r) => (FINALI.has(r.esito) ? tot : tot + puntiSeVinta(r, regole)), 0);
 }
 
 /** "1 / X · 3 su 7", "Tutti diversi", "—" (§7.1 scelta_gruppo). */
@@ -61,8 +64,6 @@ export function testoOrario(iso: string | null | undefined): string | null {
   if (!iso) return null;
   return `${formattaGiornoEsteso(iso)} · ${formattaOra(iso)}`;
 }
-
-const FINALI: ReadonlySet<Esito> = new Set(["vinta", "persa", "annullata"]);
 
 export interface StatoVisto {
   /** nessuno = niente da mostrare (live assente o non significativo) */

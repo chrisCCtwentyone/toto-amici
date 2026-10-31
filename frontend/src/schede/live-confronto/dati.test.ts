@@ -32,11 +32,11 @@ it("massimo della giornata e rimanenti", () => {
     r("X2", "da_giocare"), r("GOAL", "da_giocare"), r("X", "persa"), r("12", "annullata")];
   // massimo: tutto vinto tranne l'annullata = 4 + 6 + 8 + 1 + 2 + 4 (la fissa persa)
   expect(puntiMassimiGiornata(righe, regole)).toBe(25);
-  // rimanenti: senza la persa
-  expect(puntiRimanenti(righe, regole)).toBe(21);
-  // a giornata finita i rimanenti coincidono con i punti fatti, il massimo resta quello di partenza
+  // rimanenti: solo le righe non decise (niente vinta, persa, annullata) = 6 + 8 + 1 + 2
+  expect(puntiRimanenti(righe, regole)).toBe(17);
+  // a giornata finita non resta niente da fare, il massimo resta quello di partenza
   const finita = [r("1", "vinta", 4), r("GOAL", "persa")];
-  expect(puntiRimanenti(finita, regole)).toBe(4);
+  expect(puntiRimanenti(finita, regole)).toBe(0);
   expect(puntiMassimiGiornata(finita, regole)).toBe(6);
 });
 it("live: in corso, intervallo, finale", () => {

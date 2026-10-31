@@ -108,6 +108,10 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 31/10/2026 — Confronto Giocate: nomi fissi in alto, colonne piu' strette, «rimanenti» corretto
+- I nomi dei giocatori restano in cima scorrendo verso il basso; colonne giocatore da 128 a 112 px.
+- «rimanenti» ora conta solo i punti delle partite non ancora decise (prima includeva anche quelli gia' fatti, quindi per chi non aveva perso nulla restava uguale al massimo e sembrava non funzionare). Fatti + rimanenti = massimo ancora raggiungibile; a giornata finita vale 0.
+
 ### 31/10/2026 — Schedine segrete: scheda «Gioca» per comporre la schedina sul sito (in prova)
 
 - **Problema** (segnalato dall'utente): i giocatori in alto aspettavano gli ultimi minuti per pubblicare la bolletta nel gruppo e copiavano quelle già pubblicate. Analisi, opzioni a confronto, limiti dei servizi gratuiti con le fonti e tutte le decisioni dell'utente in `docs/ANALISI-SCHEDINE-SEGRETE.md`. Scelta la proposta di Salvatore: la schedina si compone sul sito con i pulsanti e resta segreta fino alla scadenza.
