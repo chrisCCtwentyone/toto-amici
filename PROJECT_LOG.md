@@ -108,6 +108,13 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 01/11/2026 — Render sospeso per ore esaurite: la pausa notturna non funzionava
+
+- **Fatti** (eventi e metriche Render): `suspender_added` "Free Tier Usage Exceeded" il 31/10 alle 23:53 UTC (00:53 italiane del 01/11), `service_resumed` alle 01:19 UTC con le ore del nuovo mese. La memoria del bot e' presente in OGNI fascia di due ore di tutto ottobre, notte compresa: il processo non si e' mai spento. Nei log del 30/10 ping in entrata ogni ~600 s anche fra le 02:00 e le 07:30: e' cron-job.org, che pinga ogni 10 minuti 24/7 (il `task_autoping` interno salta correttamente la pausa).
+- **Conti**: ottobre = 31 giorni = 744 ore del solo bot, piu' le sovrapposizioni dei deploy (due istanze per qualche minuto a ogni push) e il vecchio sito Streamlit acceso i primi giorni del mese: oltre le 750 ore gratuite dell'account. Settembre (30 giorni, 720 ore) era rimasto sotto per poco.
+- **Effetti collaterali**: cron-job.org ha disattivato il job dopo i fallimenti; il 01/11 Render ha riattivato il servizio ma nessuno lo ha svegliato alle 07:30 (svegliato a mano con una richiesta HTTP).
+- **Rimedio** (lato utente, su cron-job.org): riattivare il job e limitarlo alle ore 0-1 e 7-23, fuso Europe/Rome. Con la pausa vera: circa 18,5 ore al giorno = ~555 ore a novembre, ~573 a dicembre.
+
 ### 31/10/2026 — Confronto Giocate: nomi fissi in alto, colonne piu' strette, «rimanenti» corretto
 - I nomi dei giocatori restano in cima scorrendo verso il basso; colonne giocatore da 128 a 112 px.
 - «rimanenti» ora conta solo i punti delle partite non ancora decise (prima includeva anche quelli gia' fatti, quindi per chi non aveva perso nulla restava uguale al massimo e sembrava non funzionare). Fatti + rimanenti = massimo ancora raggiungibile; a giornata finita vale 0.
