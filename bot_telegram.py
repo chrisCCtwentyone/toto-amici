@@ -51,7 +51,7 @@ TZ_ROMA = pytz.timezone('Europe/Rome')
 
 # Pausa notturna: il piano gratuito di Render da' 750 ore al mese, e un bot
 # tenuto sveglio 24/7 ne consuma 744 in un mese da 31 giorni: zero margine.
-# Di notte nessuno gioca, quindi il bot dorme: cron-job.org smette di pingare
+# Di notte nessuno gioca, quindi il bot dorme: la sveglia del Worker (frontend/worker/sveglia.ts) smette di pingare
 # in questa fascia (e lo risveglia alle 07:30), task_autoping fa lo stesso, e
 # Render lo spegne da solo dopo 15 minuti senza richieste in entrata.
 PAUSA_NOTTURNA_INIZIO = dt_time(2, 0)
@@ -404,7 +404,7 @@ def home():
             # impedire l'allarme agli altri, quindi il try sta DENTRO il ciclo.
             testo_allarme = (
                 f"⚠️ **ALLARME KEEP-ALIVE**\nSono passati {int(delta/60)} minuti dall'ultimo ping "
-                f"(Render spegne il servizio dopo 15).\nControlla che il job su cron-job.org sia attivo e riuscito."
+                f"(Render spegne il servizio dopo 15).\nControlla nei log del Worker Cloudflare che la sveglia (Cron Trigger ogni 10 minuti) risponda «bot sveglio»."
             )
             for admin_id in ADMIN_IDS:
                 try:

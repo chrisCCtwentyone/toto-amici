@@ -10,7 +10,7 @@
 | Componente | Piattaforma | Sorgente | Note |
 |---|---|---|---|
 | Web Dashboard (`app.py`) | **Render** (Web Service, free) | **GitLab** `main` | Pubblica. Si spegne dopo 15 min di inattività e si riaccende da sola alla prima visita (~1 min) |
-| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + cron-job.org ogni 10 min. Render spegne dopo 15 min senza traffico **in entrata**. **Dorme di proposito 02:00–07:30** per stare nelle 750 h/mese gratuite (Sessione 26) |
+| Bot Telegram (`bot_telegram.py`) | Render (Web Service) | GitHub `main` | Sveglio grazie a **due** fonti di keep-alive: auto-ping interno ogni 5 min + **Cron Trigger del Worker Cloudflare** ogni 10 min (dal 02/11/2026, al posto di cron-job.org; `frontend/worker/sveglia.ts`). Render spegne dopo 15 min senza traffico **in entrata**. **Dorme di proposito 02:00–07:30** per stare nelle 750 h/mese gratuite (Sessione 26) |
 | Database | Google Sheets | — | SPREADSHEET_ID: `1q0aaYXl7VYiUzEbttGaoQjNq7ta5wiHD4Qvg5Si7IvE` |
 
 ### Variabili d'Ambiente Necessarie
@@ -107,6 +107,13 @@ Toto_Amici_Progetto/
 ---
 
 ## 🔄 Changelog Sessioni
+
+### 02/11/2026 — Il bot non si risvegliava dopo la pausa notturna: sveglia dal Worker Cloudflare
+
+- **Fatti** (dalla nota lasciata da una sessione da telefono, che ha letto log ed eventi Render): la pausa notturna ha funzionato per la prima volta (ultimo ping di cron-job.org all'01:50, ultimo `task_autoping` all'01:59:55, "Application is stopping" alle 02:14:55). Dalle 02:15 alle 14:50 zero righe di log: i ping di cron-job.org dalle 07:00 non hanno mai riacceso il container, sono falliti tutti e cron-job.org ha disattivato il job. Svegliato a mano alle 14:50: 53 s fra avvio Render e risposta.
+- **Causa**: cron-job.org gratuito si arrende a 30 s, il bot ne impiega ~53 per partire; il risveglio delle 07:30 progettato in Sessione 26 non era mai stato collaudato (a ottobre il bot non dormiva mai).
+- **Fix**: Cron Trigger `*/10 * * * *` nel Worker `toto-amici` (`frontend/wrangler.jsonc`), handler `scheduled` in `worker/index.ts`, logica in `worker/sveglia.ts`: fuori dalla pausa [02:00, 07:30) ora italiana (calcolata con `Intl` su Europe/Rome, mai UTC) fa una GET al bot aspettando fino a 120 s, con un secondo tentativo; esito nei log del Worker (`sveglia: ...`). La CPU del Worker non conta l'attesa di rete. Test vitest dei confini 02:00/07:30 con ora legale e solare. Provato in locale con `wrangler dev --test-scheduled` e `/cdn-cgi/handler/scheduled` (la vecchia `/__scheduled` qui la prende il fallback SPA degli asset): "bot sveglio: HTTP 200 in 0.3 s".
+- **Da fare dopo il collaudo** (prima mattina dopo il deploy, "Running 'python bot_telegram.py'" fra le 07:30 e le 07:40 nei log Render): lasciare disattivato o cancellare il job di cron-job.org.
 
 ### 01/11/2026 — Render sospeso per ore esaurite: la pausa notturna non funzionava
 
