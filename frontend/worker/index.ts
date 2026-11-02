@@ -1,4 +1,5 @@
 import { consumaBudget, riduciPartite, validaGiornata } from "./live";
+import { svegliaBot } from "./sveglia";
 import {
   erroriSchedina, improntaPassword, leggiInvio, normalizzaPassword, type Consegna, type GiornataAperta,
 } from "./schedina";
@@ -248,5 +249,11 @@ export default {
       default:
         return risposta(JSON.stringify({ errore: "non trovato" }), {}, 404);
     }
+  },
+
+  // Cron Trigger (wrangler.jsonc, ogni 10 minuti): tiene sveglio il bot fuori dalla pausa notturna
+  // e lo risveglia alle 07:30. Vedi worker/sveglia.ts.
+  async scheduled(controller: ScheduledController, _env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(svegliaBot(new Date(controller.scheduledTime)).then((esito) => console.log(`sveglia: ${esito}`)));
   },
 } satisfies ExportedHandler<Env>;

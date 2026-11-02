@@ -34,8 +34,20 @@
     {
       "name": "sito-worker",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd frontend && npx wrangler dev --local --port 8787"],
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && npx wrangler dev --local --port 8787"
+      ],
       "port": 8787
+    },
+    {
+      "name": "sito-worker-cron",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && npx wrangler dev --local --test-scheduled --port 8788"
+      ],
+      "port": 8788
     }
   ]
 }

@@ -17,5 +17,8 @@
   "kv_namespaces": [
     { "binding": "SNAPSHOT", "id": "8d3b3469dfc04ab8a760adb74cd6173c" }
   ],
+  // Sveglia del bot su Render (worker/sveglia.ts): ogni 10 minuti, orari UTC; la pausa notturna
+  // 02:00-07:30 italiana la decide il codice, non questa riga.
+  "triggers": { "crons": ["*/10 * * * *"] },
   "observability": { "enabled": true }
 }
