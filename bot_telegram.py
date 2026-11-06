@@ -1636,7 +1636,17 @@ def esegui_calcolo_risultati(giornata, matches_api=None):
         richieste_stile.append({"repeatCell": {"range": {"sheetId": sheet_id_giocate, "startRowIndex": idx, "endRowIndex": idx+1, "startColumnIndex": 6, "endColumnIndex": 7}, "cell": {"userEnteredFormat": {"backgroundColor": col}}, "fields": "userEnteredFormat.backgroundColor"}})
 
     for idx, riga in enumerate(righe_giocate):
-        if len(riga) < 6 or not riga_e_della_giornata(riga[0], giornata): continue
+        if not riga or not riga_e_della_giornata(riga[0], giornata): continue
+        # Google Sheets NON restituisce le celle vuote in fondo a una riga: una
+        # schedina compilata sul sito non ha la quota (solo la stella, che diventa
+        # 3,50), quindi le sue righe senza stella e ancora senza esito arrivano
+        # lunghe 5 invece di 9. Il vecchio `len(riga) < 6` le scartava in silenzio:
+        # il 06/11/2026 il risultato manuale di Venezia-Udinese ha segnato 10
+        # schedine su 16 e lasciato vuote 60 righe di 7 giocatori (G11). Si
+        # completa la riga e si decide sul contenuto, non sulla lunghezza.
+        riga = list(riga) + [""] * (9 - len(riga))
+        if not str(riga[1]).strip() or not (str(riga[2]).strip() or str(riga[4]).strip()):
+            continue  # niente giocatore, o ne' partita ne' pronostico: non e' una giocata
         gio, partita, pron, quota = str(riga[1]).strip(), str(riga[2]).strip(), str(riga[4]).strip().upper(), estrai_numero(riga[5])
         vincita = estrai_numero(riga[7]) if len(riga) > 7 else 0.0
         esito_salvato = str(riga[6]).strip() if len(riga) > 6 else ""

@@ -578,3 +578,59 @@ class TestCategoriaSalvataDalRegolamento:
         assert len(scritte) == len(pronostici)
         for riga, p in zip(sorted(scritte, key=lambda r: int(r[2].split("-")[0][1:])), pronostici):
             assert riga[3] == self.ATTESE[p], f"{p}: scritto in {riga[3]}"
+
+
+def _come_la_restituisce_sheets(riga):
+    """Google Sheets (values.get) NON restituisce le celle vuote in fondo a una riga."""
+    riga = list(riga)
+    while riga and str(riga[-1]) == "":
+        riga.pop()
+    return riga
+
+
+class TestInvarianteRigheTroncate:
+    """INVARIANTE: il calcolo non dipende da quante celle vuote ci sono in fondo
+    alla riga. I fogli finti dei test avevano sempre 9 celle, quello vero no.
+
+    Incidente 06/11/2026 (G11): le schedine compilate sul sito non hanno la quota,
+    quindi le righe senza stella e senza esito arrivavano lunghe 5; `len(riga) < 6`
+    le scartava in silenzio e il risultato manuale di Venezia-Udinese ha lasciato
+    vuote 60 righe di 7 giocatori, senza nessun avviso."""
+
+    RIGHE = [
+        ["Giornata", "Giocatore", "Partita", "Tipologia", "Pronostico", "Quota", "Esito", "Vincita", "Punti"],
+        # schedina dal sito: vincita solo sulla prima riga, quota solo con la stella
+        ["Giornata 11", "DARIO", "Milan - Inter", "Fisse", "1", "", "", "1442,78", ""],
+        ["Giornata 11", "DARIO", "Juventus - Napoli", "Variabili", "UNDER_2.5", "", "", "", ""],
+        ["Giornata 11", "DARIO", "Roma - Lazio", "Fisse", "X", "3,50", "", "", ""],
+        # schedina da foto, con tutte le quote
+        ["Giornata 11", "MARIO", "Juventus - Napoli", "Variabili", "UNDER_2.5", "1,80", "", "1200,00", ""],
+    ]
+    PARTITE = [
+        _match(SQUADRE[0], SQUADRE[1], 2, 0),
+        _match(SQUADRE[2], SQUADRE[3], 1, 0),
+        _match(SQUADRE[4], SQUADRE[5], 1, 1),
+    ]
+
+    def _calcola(self, righe, monkeypatch):
+        service = FakeService(righe)
+        service.values_obj = _ValuesCheRicordaIValori(righe)
+        monkeypatch.setattr(bt, "connetti_sheets", lambda: service)
+        bt.esegui_calcolo_risultati("11", matches_api=self.PARTITE)
+        return service.values_obj.valori
+
+    def test_righe_troncate_danno_lo_stesso_calcolo_di_quelle_complete(self, monkeypatch):
+        complete = self._calcola(self.RIGHE, monkeypatch)
+        troncate = self._calcola([_come_la_restituisce_sheets(r) for r in self.RIGHE], monkeypatch)
+        assert troncate == complete
+
+    def test_la_riga_del_sito_senza_quota_viene_calcolata(self, monkeypatch):
+        v = self._calcola([_come_la_restituisce_sheets(r) for r in self.RIGHE], monkeypatch)
+        assert "VINTA" in v["Giocate!G3"] and v["Giocate!I3"] == 2, "riga senza quota non calcolata"
+        assert "VINTA" in v["Giocate!G4"] and v["Giocate!I4"] == 8, "la stella (3,50) deve raddoppiare i punti"
+        assert all(f"Giocate!G{i}" in v for i in range(2, 6)), "nessuna riga della giornata puo' restare senza esito"
+
+    def test_una_riga_vuota_o_senza_giocata_non_diventa_un_esito(self, monkeypatch):
+        righe = self.RIGHE + [["Giornata 11"], ["Giornata 11", "PAOLO"], ["Giornata 11", "", "Milan - Inter", "", "1"]]
+        v = self._calcola([_come_la_restituisce_sheets(r) for r in righe], monkeypatch)
+        assert not any(k in v for k in ("Giocate!G6", "Giocate!G7", "Giocate!G8"))

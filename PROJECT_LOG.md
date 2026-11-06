@@ -108,6 +108,18 @@ Toto_Amici_Progetto/
 
 ## 🔄 Changelog Sessioni
 
+### 06/11/2026 — Le schedine del sito non venivano calcolate: righe senza quota scartate
+
+**Sintomo**: Venezia 2-1 Udinese (G11) inserita a mano da Salvatore alle 21:39 UTC; nel Confronto Giocate 10 schedine su 16 colorate, 6 no (DARIO, GIOVANNI, MICHELE, MIRKO, NICO, SIRACUSA).
+
+**Fatti** (snapshot pubblicato + log Render): nello snapshot G11, 60 righe con esito vuoto (`da_giocare`) dopo un calcolo che aveva letto tutte le 1771 righe. Sono **tutte e sole** righe senza quota: 60 su 60. Le righe con la stella (quota 3,50) erano calcolate; le uniche 2 righe senza quota calcolate erano le prime di una schedina, quelle con la vincita in colonna H. Coinvolte 7 schedine, cioè quelle compilate sul sito (anche GIACOMO, che per caso aveva le prime due righe con la stella).
+
+**Causa**: `esegui_calcolo_risultati` scartava le righe con `len(riga) < 6`. Google Sheets non restituisce le celle vuote in fondo a una riga: una riga del sito senza quota e senza esito arriva lunga 5. Con le schedine da foto non succedeva mai (la quota c'e' sempre), per questo e' esploso solo con le prime schedine importate dal sito. Non c'entra il risultato manuale: anche il calcolo automatico le avrebbe saltate. I test non lo vedevano perche' i fogli finti avevano sempre righe complete da 9 celle.
+
+**Correzione**: la riga si completa a 9 celle e si decide sul contenuto: si salta solo se non ha giocatore o non ha ne' partita ne' pronostico. Una quota vuota vale 0 (= senza stella, punti base, come da regolamento). Nuovo invariante in `tests/test_invarianti.py` (`TestInvarianteRigheTroncate`): il calcolo con le righe tagliate come le restituisce Sheets deve essere identico a quello con le righe complete. I due test sul guasto falliscono sul codice vecchio. Suite: 1045 test verdi. Dry-run sui dati veri non eseguito (sessione cloud senza credenziali Google): da fare prima del push.
+
+**Dopo il deploy**: ricalcolare la G11 (se Football-Data riporta gia' Venezia-Udinese FINISHED basta «Aggiorna risultati», altrimenti reinserire a mano 2-1: le 10 righe gia' chiuse restano com'erano).
+
 ### 02/11/2026 — Il bot non si risvegliava dopo la pausa notturna: sveglia dal Worker Cloudflare
 
 - **Fatti** (dalla nota lasciata da una sessione da telefono, che ha letto log ed eventi Render): la pausa notturna ha funzionato per la prima volta (ultimo ping di cron-job.org all'01:50, ultimo `task_autoping` all'01:59:55, "Application is stopping" alle 02:14:55). Dalle 02:15 alle 14:50 zero righe di log: i ping di cron-job.org dalle 07:00 non hanno mai riacceso il container, sono falliti tutti e cron-job.org ha disattivato il job. Svegliato a mano alle 14:50: 53 s fra avvio Render e risposta.
